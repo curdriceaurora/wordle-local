@@ -21,3 +21,4 @@ yarn-error.log
 .parcel-cache/
 .turbo/
 .next/
+public/dist/

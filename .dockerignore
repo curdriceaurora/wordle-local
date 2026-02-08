@@ -24,3 +24,4 @@ docker-compose.yml
 .vscode
 .idea
 *.log
+public/dist

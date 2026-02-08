@@ -1,6 +1,7 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 
@@ -15,7 +16,9 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
-const PUBLIC_PATH = path.join(__dirname, "public");
+const PUBLIC_ROOT = path.join(__dirname, "public");
+const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
+const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
 const DICT_PATH = path.join(__dirname, "data", "dictionaries");
 
 const MIN_LEN = 3;
@@ -288,8 +291,24 @@ app.use(
     message: { error: "Too many requests. Try again later." }
   })
 );
+app.use(compression());
 app.use(express.json());
-app.use(express.static(PUBLIC_PATH));
+const STATIC_MAX_AGE = NODE_ENV === "production" ? 60 * 60 * 1000 : 0;
+app.use(
+  express.static(PUBLIC_PATH, {
+    etag: true,
+    maxAge: STATIC_MAX_AGE,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) {
+        res.setHeader("Cache-Control", "no-store");
+        return;
+      }
+      if (NODE_ENV === "production") {
+        res.setHeader("Cache-Control", "public, max-age=3600");
+      }
+    }
+  })
+);
 
 ensureWordData();
 

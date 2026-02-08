@@ -1,3 +1,15 @@
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY public ./public
+COPY scripts ./scripts
+
+RUN npm run build
+
 FROM node:20-alpine
 
 ENV NODE_ENV=production
@@ -12,7 +24,7 @@ USER node
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node public ./public
+COPY --chown=node:node --from=build /app/public/dist ./public/dist
 COPY --chown=node:node data ./data
 COPY --chown=node:node server.js ./server.js
 

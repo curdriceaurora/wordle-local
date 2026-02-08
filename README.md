@@ -12,6 +12,10 @@ npm start
 
 App runs on `http://localhost:3000` by default.
 
+## Build
+- `npm run build` generates minified assets in `public/dist`.
+- The server will serve `public/dist` automatically when present.
+
 ## Tests
 - `npm test` for API tests.
 - `npm run test:ui` for UI tests across Chromium, Firefox, and WebKit.

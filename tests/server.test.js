@@ -371,6 +371,20 @@ describe("Wordle API", () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/3-12/);
   });
+
+  test("serves index with no-store cache headers", async () => {
+    const app = loadApp();
+    const response = await request(app).get("/");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toMatch(/no-store/);
+  });
+
+  test("serves static assets with cache headers in production", async () => {
+    const app = loadApp({ nodeEnv: "production" });
+    const response = await request(app).get("/styles.css");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toMatch(/max-age=3600/);
+  });
 });
 
 describe("Admin auth", () => {
