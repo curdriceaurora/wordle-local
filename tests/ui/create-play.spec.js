@@ -64,9 +64,9 @@ test("high contrast toggle updates theme", async ({ page }) => {
 
 test("language selection updates minimum length", async ({ page }) => {
   await page.goto("/");
-  await page.selectOption("#langSelect", "es");
-  await expect(page.locator("#lengthInput")).toHaveAttribute("min", "5");
-  await expect(page.locator(".hint")).toContainText("5-12");
+  await page.selectOption("#langSelect", "en");
+  await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
+  await expect(page.locator(".hint")).toContainText("3-12");
 });
 
 test("share link info modal opens and closes", async ({ page }) => {

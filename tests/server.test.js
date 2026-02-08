@@ -166,7 +166,7 @@ describe("Wordle API", () => {
 
     const invalidLen = await request(app)
       .post("/api/puzzle")
-      .send({ code: "FOTN", lang: "es", guesses: 6 });
+      .send({ code: "FO", lang: "en", guesses: 6 });
     expect(invalidLen.status).toBe(400);
 
     const invalidLang = await request(app)
@@ -297,11 +297,11 @@ describe("Wordle API", () => {
   });
 
   test("random handles no words available for requested length", async () => {
-    await withTempDictionary("es.txt", "APPLE\n", async () => {
+    await withTempDictionary("en.txt", "APPLE\n", async () => {
       const app = loadApp();
       const response = await request(app)
         .post("/api/random")
-        .send({ lang: "es", length: 6 });
+        .send({ lang: "en", length: 6 });
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/No words available/);
     });
@@ -317,22 +317,38 @@ describe("Wordle API", () => {
   });
 
   test("meta omits languages with missing or empty dictionaries", async () => {
-    await withMissingDictionary("fr.txt", async () => {
+    await withMissingDictionary("en.txt", async () => {
       const app = loadApp();
       const response = await request(app).get("/api/meta");
       expect(response.status).toBe(200);
       const ids = response.body.languages.map((lang) => lang.id);
-      expect(ids).not.toContain("fr");
+      expect(ids).not.toContain("en");
       expect(ids).toContain("none");
     });
 
-    await withTempDictionary("de.txt", "", async () => {
+    await withTempDictionary("en.txt", "", async () => {
       const app = loadApp();
       const response = await request(app).get("/api/meta");
       expect(response.status).toBe(200);
       const ids = response.body.languages.map((lang) => lang.id);
-      expect(ids).not.toContain("de");
+      expect(ids).not.toContain("en");
     });
+  });
+
+  test("returns null when default language is unavailable and no fallback exists", async () => {
+    const app = loadApp();
+    const original = new Map(app.locals.availableLanguages);
+    app.locals.availableLanguages.clear();
+    try {
+      const response = await request(app)
+        .post("/api/encode")
+        .send({ word: "CRANE", lang: "en" });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/Unknown language/i);
+    } finally {
+      app.locals.availableLanguages.clear();
+      original.forEach((value, key) => app.locals.availableLanguages.set(key, value));
+    }
   });
 
   test("falls back to no-dictionary language when default language is missing", async () => {
@@ -346,24 +362,14 @@ describe("Wordle API", () => {
     });
   });
 
-  test("rejects languages that are configured but unavailable", async () => {
-    await withMissingDictionary("fr.txt", async () => {
-      const app = loadApp();
-      const response = await request(app)
-        .post("/api/encode")
-        .send({ word: "CRANE", lang: "fr" });
-      expect(response.status).toBe(400);
-    });
-  });
-
-  test("enforces minimum length for non-English languages", async () => {
+  test("enforces minimum length", async () => {
     const app = loadApp();
     const response = await request(app)
       .post("/api/encode")
-      .send({ word: "TREE", lang: "es" });
+      .send({ word: "TO", lang: "en" });
 
     expect(response.status).toBe(400);
-    expect(response.body.error).toMatch(/5-12/);
+    expect(response.body.error).toMatch(/3-12/);
   });
 });
 
@@ -471,12 +477,12 @@ describe("Daily word data recovery and daily route", () => {
     const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
       today.getDate()
     ).padStart(2, "0")}`;
-    writeWordData({ word: "TIGER", lang: "es", date, updatedAt: new Date().toISOString() });
+    writeWordData({ word: "TIGER", lang: "none", date, updatedAt: new Date().toISOString() });
     const app = loadApp();
     const response = await request(app).get("/daily");
     expect(response.status).toBe(302);
     expect(response.headers.location).toMatch(/word=/);
-    expect(response.headers.location).toMatch(/lang=es/);
+    expect(response.headers.location).toMatch(/lang=none/);
   });
 
   test("redirects using default language when stored lang is unknown", async () => {
@@ -486,5 +492,51 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location.startsWith("/?word=")).toBe(true);
     expect(response.headers.location).not.toMatch(/lang=/);
+  });
+});
+
+describe("Server startup", () => {
+  test("logs admin warning when admin key is optional", () => {
+    const app = loadApp({ requireAdminKey: false });
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const listener = jest.fn((port, host, cb) => {
+      cb();
+      return { close: jest.fn() };
+    });
+
+    app.startServer(listener);
+
+    expect(listener).toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Wordle local server running at http://localhost:")
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "Admin mode is open. Set ADMIN_KEY to protect /admin updates."
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  test("warns when admin key is required but missing", () => {
+    const app = loadApp({ requireAdminKey: true });
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const listener = jest.fn((port, host, cb) => {
+      cb();
+      return { close: jest.fn() };
+    });
+
+    app.startServer(listener);
+
+    expect(listener).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "ADMIN_KEY is required for admin endpoints in production."
+    );
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });

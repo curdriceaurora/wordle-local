@@ -29,7 +29,6 @@
   - enters a specific word, or
   - requests a random word (dictionary required).
 - User chooses word length (3–12) and guesses (4–10).
-- Spanish/French/German require a minimum word length of 5.
 - On submit, the puzzle opens immediately (no extra open step).
 - A share link is generated and displayed below the keyboard.
 
@@ -95,9 +94,8 @@
 - Unauthorized updates are rejected when `ADMIN_KEY` is set.
 
 ### 3.8 Dictionary Management
-- Languages: English (local dictionary), Spanish/French/German (lightweight lists), or “No dictionary”.
+- Languages: English (local dictionary) or “No dictionary”.
 - If dictionary selected, guesses are validated against it.
-- Spanish/French/German enforce a minimum word length of 5.
 - Languages with missing dictionary files are omitted from language options.
 
 **Acceptance criteria:**
@@ -210,11 +208,20 @@
 
 ## 11. Known Limitations
 - Encoded link can be decoded by anyone who knows the cipher.
-- Dictionaries for non‑English languages are minimal.
+- English-only dictionaries; other languages are not supported.
 
 ---
 
-## 12. Related Docs
+## 12. Open Source Readiness
+- MIT license with clear copyright holder.
+- Code of Conduct and Contributing guidelines.
+- Security policy for reporting vulnerabilities.
+- Trademark disclaimer clarifying no affiliation with Wordle’s trademark holder.
+- Dictionary source attribution and licensing notes.
+
+---
+
+## 13. Related Docs
 - Milestones: `MILESTONES.md`
 - Risks: `RISKS.md`
 - Launch checklist: `LAUNCH_CHECKLIST.md`

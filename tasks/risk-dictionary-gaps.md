@@ -1,30 +1,30 @@
-# Task: Mitigate Non-English Dictionary Gaps
+# Task: Address Dictionary Licensing
 
 ## Risk
-Dictionary gaps for non-English languages reduce usability.
+Dictionary source licensing is unclear for an open-source release.
 
 ## Goal
-Improve coverage for supported languages or clearly communicate limitations.
+Ensure the English word list has clear licensing/attribution or replace it with a permissive list.
 
 ## Scope
-- Inventory existing word lists and identify low-coverage languages.
-- Add or replace dictionaries with higher-quality word lists.
-- Ensure dictionaries are normalized to A-Z (no accents).
+- Identify the current English word list source and license.
+- Replace the list if licensing is unclear or incompatible.
+- Keep normalization to A–Z only (no accents).
 
 ## Acceptance Criteria
-- Each supported language has a documented word count and source.
-- Dictionaries for Spanish/French/German meet an agreed minimum size.
-- All dictionary entries are normalized to A-Z.
+- English dictionary source and license are documented.
+- Word count and normalization details are recorded in `data/dictionaries/README.md`.
+- If the source is unclear, a permissive, documented list is used instead.
 
 ## Decisions
-- Spanish/French/German enforce a minimum word length of 5.
+- Non-English dictionaries removed; English-only support.
 
 ## Implementation Notes
 - Dictionary counts documented in `data/dictionaries/README.md`.
 - Dictionaries are normalized to A–Z only by the loader.
 
 ## Open Items
-- Source attribution for word lists is not yet documented.
+- Source attribution for the English list is not yet documented.
 
 ## Status
 - In progress (2026-02-08)

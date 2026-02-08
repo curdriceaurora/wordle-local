@@ -3,7 +3,7 @@
 | Risk | Impact | Likelihood | Mitigation |
 | --- | --- | --- | --- |
 | Encoded links are easily decoded | Medium | High | Document as limitation; keep “security” out of scope. |
-| Dictionary gaps for non‑English | Medium | Medium | Expand dictionaries or allow no‑dictionary mode. |
+| Dictionary source licensing unclear | High | Medium | Document source licensing or replace with a permissive word list. |
 | Accessibility regressions | High | Medium | Keep WCAG checks in CI; add a11y smoke checks. |
 | Strict mode logic edge cases | Medium | Medium | Add more tests for repeated letters. |
 | Mobile layout regressions | High | Low | Device testing on iOS/Android, use responsive constraints. |

@@ -6,6 +6,7 @@ Local, privacy-first Wordle you can run anywhere.
 
 ```bash
 npm install
+cp .env.example .env
 npm start
 ```
 
@@ -42,11 +43,20 @@ When running the public Docker image (NODE_ENV=production), admin endpoints requ
 - Container runs as a non-root user and includes a `/api/health` healthcheck.
 
 ## Languages & Dictionaries
-- Supported: `en`, `es`, `fr`, `de`, and `none` (no dictionary).
-- Spanish/French/German require a minimum word length of 5.
+- Supported: `en` and `none` (no dictionary).
+- Minimum word length is 3.
 - Dictionaries only accept A–Z (no accents).
 - If a dictionary file is missing or empty, that language is not shown in the UI.
 
 ## Daily Link
 - Visit `/daily` to play the configured daily word.
 - If no daily word is set (or the date doesn’t match today), a friendly error page is shown.
+
+## License
+MIT. See `LICENSE`.
+
+## Contributing
+See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+
+## Trademark
+Wordle is a trademark of The New York Times Company. This project is not affiliated with or endorsed by The New York Times.

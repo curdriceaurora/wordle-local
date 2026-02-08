@@ -25,17 +25,8 @@ const MAX_GUESSES = 10;
 const DEFAULT_GUESSES = 6;
 const KEY = "WORDLE";
 const DEFAULT_LANG = "en";
-const LANGUAGE_MIN_LENGTHS = {
-  es: 5,
-  fr: 5,
-  de: 5
-};
-
 const LANGUAGES = {
   en: { label: "English", file: "en.txt" },
-  es: { label: "Spanish", file: "es.txt" },
-  fr: { label: "French", file: "fr.txt" },
-  de: { label: "German", file: "de.txt" },
   none: { label: "No dictionary", file: null }
 };
 
@@ -110,8 +101,8 @@ function normalizeWord(raw) {
   return String(raw || "").trim().toUpperCase();
 }
 
-function getMinLengthForLang(lang) {
-  return LANGUAGE_MIN_LENGTHS[lang] || MIN_LEN;
+function getMinLengthForLang() {
+  return MIN_LEN;
 }
 
 function assertWord(word, minLength = MIN_LEN) {
@@ -217,6 +208,8 @@ for (const [key, info] of Object.entries(LANGUAGES)) {
     });
   }
 }
+
+app.locals.availableLanguages = availableLanguages;
 
 function getDictionary(lang) {
   if (lang === "none") return null;
@@ -542,8 +535,8 @@ function renderDailyMissing(message) {
 </html>`;
 }
 
-if (require.main === module) {
-  app.listen(PORT, HOST, () => {
+function startServer(listener = app.listen.bind(app)) {
+  return listener(PORT, HOST, () => {
     console.log(`Wordle local server running at http://localhost:${PORT}`);
     if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {
       console.log("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
@@ -554,4 +547,9 @@ if (require.main === module) {
   });
 }
 
+if (require.main === module) {
+  startServer();
+}
+
 module.exports = app;
+module.exports.startServer = startServer;
