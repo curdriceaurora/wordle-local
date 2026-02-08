@@ -537,7 +537,7 @@ function renderDailyMissing(message) {
 
 function startServer(listener = app.listen.bind(app)) {
   return listener(PORT, HOST, () => {
-    console.log(`Wordle local server running at http://localhost:${PORT}`);
+    console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {
       console.log("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
     }

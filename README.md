@@ -1,4 +1,4 @@
-# MyWordle Local
+# local-hosted-wordle
 
 Local, privacy-first Wordle you can run anywhere.
 

@@ -1,4 +1,4 @@
-# MyWordle Local — Launch Checklist
+# local-hosted-wordle — Launch Checklist
 
 ## Product
 - [ ] Create flow starts puzzle directly.

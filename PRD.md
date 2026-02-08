@@ -1,7 +1,7 @@
-# MyWordle Local — Product Requirements Document (PRD)
+# local-hosted-wordle — Product Requirements Document (PRD)
 
 ## 1. Overview
-**Product name:** MyWordle Local
+**Product name:** local-hosted-wordle
 
 **Purpose:** Provide a locally hosted, privacy‑preserving Wordle experience that enables anyone to create and share custom word puzzles without login, tracking, or external services.
 

@@ -1,4 +1,4 @@
-# MyWordle Local — Milestones
+# local-hosted-wordle — Milestones
 
 ## M1 — Core Play & Share (Complete)
 - One‑step puzzle start flow.

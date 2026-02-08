@@ -509,7 +509,7 @@ describe("Server startup", () => {
 
     expect(listener).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Wordle local server running at http://localhost:")
+      expect.stringContaining("local-hosted-wordle server running at http://localhost:")
     );
     expect(logSpy).toHaveBeenCalledWith(
       "Admin mode is open. Set ADMIN_KEY to protect /admin updates."

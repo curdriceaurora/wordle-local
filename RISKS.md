@@ -1,4 +1,4 @@
-# MyWordle Local — Risks
+# local-hosted-wordle — Risks
 
 | Risk | Impact | Likelihood | Mitigation |
 | --- | --- | --- | --- |
