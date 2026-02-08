@@ -37,10 +37,31 @@ test("strict mode enforces revealed hints", async ({ page }) => {
   await expect(page.locator("#message")).toContainText("Strict mode");
 });
 
+test("strict mode requires repeated letters when revealed", async ({ page }) => {
+  await page.goto("/");
+  await page.selectOption("#langSelect", "none");
+  await page.fill("#wordInput", "LEVEL");
+  await page.click("form#createForm button[type=submit]");
+  await page.check("#strictToggle");
+  await page.keyboard.type("ALLOT");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#board .row:nth-child(1) .tile.present")).toHaveCount(2);
+  await page.keyboard.type("LAMER");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("L x2");
+});
+
 test("high contrast toggle updates theme", async ({ page }) => {
   await page.goto("/");
   await page.check("#contrastToggle");
   await expect(page.locator("body")).toHaveClass(/high-contrast/);
+});
+
+test("language selection updates minimum length", async ({ page }) => {
+  await page.goto("/");
+  await page.selectOption("#langSelect", "es");
+  await expect(page.locator("#lengthInput")).toHaveAttribute("min", "5");
+  await expect(page.locator(".hint")).toContainText("5-12");
 });
 
 test("share link info modal opens and closes", async ({ page }) => {
@@ -60,4 +81,17 @@ test("share link info modal opens and closes", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(modal).not.toHaveClass(/is-open/);
   await expect(modal).toHaveAttribute("aria-hidden", "true");
+});
+
+test("invalid share link shows interstitial and redirects", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalSetInterval = window.setInterval;
+    window.setInterval = (fn, delay, ...args) => originalSetInterval(fn, 100, ...args);
+  });
+
+  await page.goto("/?word=!!!");
+  await expect(page.locator("#errorPanel")).toBeVisible();
+  await expect(page.locator("#errorMessage")).toContainText("That link doesn't work");
+  await expect(page.locator("#errorCountdown")).toContainText("Going back in");
+  await page.waitForURL("/", { timeout: 2000 });
 });

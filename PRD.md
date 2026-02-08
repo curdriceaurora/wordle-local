@@ -29,6 +29,7 @@
   - enters a specific word, or
   - requests a random word (dictionary required).
 - User chooses word length (3–12) and guesses (4–10).
+- Spanish/French/German require a minimum word length of 5.
 - On submit, the puzzle opens immediately (no extra open step).
 - A share link is generated and displayed below the keyboard.
 
@@ -96,6 +97,7 @@
 ### 3.8 Dictionary Management
 - Languages: English (local dictionary), Spanish/French/German (lightweight lists), or “No dictionary”.
 - If dictionary selected, guesses are validated against it.
+- Spanish/French/German enforce a minimum word length of 5.
 - Languages with missing dictionary files are omitted from language options.
 
 **Acceptance criteria:**

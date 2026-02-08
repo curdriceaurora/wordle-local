@@ -15,3 +15,10 @@ Add automated and manual checks that guard the core accessibility requirements.
 - CI runs an a11y smoke check and fails on violations.
 - Manual checklist includes screen reader and keyboard-only verification steps.
 - High-contrast mode and non-color indicators are verified during QA.
+
+## Implementation Notes
+- Added axe-core Playwright checks in `tests/ui/a11y.spec.js` for create + play screens.
+- `npm run test:ui` now enforces a11y smoke checks.
+
+## Status
+- Done (2026-02-08)

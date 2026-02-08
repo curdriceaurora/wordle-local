@@ -18,6 +18,9 @@ const shareInfoBtn = document.getElementById("shareInfoBtn");
 const shareModal = document.getElementById("shareModal");
 const shareModalClose = document.getElementById("shareModalClose");
 const shareModalBackdrop = shareModal ? shareModal.querySelector("[data-modal-close]") : null;
+const errorPanel = document.getElementById("errorPanel");
+const errorMessageEl = document.getElementById("errorMessage");
+const errorCountdownEl = document.getElementById("errorCountdown");
 
 const boardEl = document.getElementById("board");
 const keyboardEl = document.getElementById("keyboard");
@@ -46,6 +49,9 @@ let minGuesses = 4;
 let maxGuessesAllowed = 10;
 let defaultGuesses = 6;
 let lastFocusedElement = null;
+let languageMinLengths = {};
+let defaultLang = "en";
+let errorTimer = null;
 
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
@@ -86,11 +92,37 @@ function setSrStatus(text) {
 function showCreate() {
   createPanel.classList.remove("hidden");
   playPanel.classList.add("hidden");
+  if (errorPanel) {
+    errorPanel.classList.add("hidden");
+  }
 }
 
 function showPlay() {
   playPanel.classList.remove("hidden");
   createPanel.classList.add("hidden");
+  if (errorPanel) {
+    errorPanel.classList.add("hidden");
+  }
+}
+
+function showErrorPanel(message) {
+  if (!errorPanel) return;
+  clearInterval(errorTimer);
+  createPanel.classList.add("hidden");
+  playPanel.classList.add("hidden");
+  errorPanel.classList.remove("hidden");
+  errorMessageEl.textContent = message || "That link doesn't work. Let's make a new puzzle.";
+
+  let remaining = 10;
+  errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+  errorTimer = setInterval(() => {
+    remaining -= 1;
+    errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+    if (remaining <= 0) {
+      clearInterval(errorTimer);
+      window.location.href = "/";
+    }
+  }, 1000);
 }
 
 function buildBoard() {
@@ -407,10 +439,7 @@ async function loadMeta() {
     minGuesses = data.minGuesses || minGuesses;
     maxGuessesAllowed = data.maxGuesses || maxGuessesAllowed;
     defaultGuesses = data.defaultGuesses || defaultGuesses;
-
-    if (hintEl) {
-      hintEl.textContent = `A-Z only · ${minLen}-${maxLen} letters`;
-    }
+    defaultLang = data.defaultLang || defaultLang;
 
     lengthInput.min = String(minLen);
     lengthInput.max = String(maxLen);
@@ -419,16 +448,21 @@ async function loadMeta() {
     }
 
     langSelect.innerHTML = "";
+    languageMinLengths = {};
     data.languages.forEach((lang) => {
       const option = document.createElement("option");
       option.value = lang.id;
       option.textContent = lang.label + (lang.id !== "none" ? "" : "");
       langSelect.appendChild(option);
+      languageMinLengths[lang.id] = lang.minLength || minLen;
     });
 
     if (!langSelect.value) {
-      langSelect.value = "en";
+      langSelect.value = languageMinLengths[defaultLang]
+        ? defaultLang
+        : data.languages[0]?.id || "none";
     }
+    updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = langSelect.value === "none";
 
     guessInput.min = String(minGuesses);
@@ -478,8 +512,9 @@ async function handleRandom() {
   }
 
   const length = Number(lengthInput.value);
-  if (!Number.isInteger(length) || length < minLen || length > maxLen) {
-    setCreateStatus(`Length must be ${minLen}-${maxLen}.`);
+  const minLength = getMinLengthForLang(lang);
+  if (!Number.isInteger(length) || length < minLength || length > maxLen) {
+    setCreateStatus(`Length must be ${minLength}-${maxLen}.`);
     return;
   }
 
@@ -505,6 +540,21 @@ function sanitizeInputWord(value) {
   return value.toUpperCase().replace(/[^A-Z]/g, "");
 }
 
+function getMinLengthForLang(lang) {
+  return languageMinLengths[lang] || minLen;
+}
+
+function updateLanguageConstraints(lang) {
+  const minLength = getMinLengthForLang(lang);
+  if (hintEl) {
+    hintEl.textContent = `A-Z only · ${minLength}-${maxLen} letters`;
+  }
+  lengthInput.min = String(minLength);
+  if (Number(lengthInput.value) < minLength) {
+    lengthInput.value = String(minLength);
+  }
+}
+
 function updatePlayMeta() {
   if (!baseMeta) return;
   const strictLabel = strictMode ? " · Strict mode" : "";
@@ -527,9 +577,7 @@ async function initPlay(code, lang, guessesCount) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    setMessage(data.error || "Invalid puzzle link.");
-    playMetaEl.textContent = "Invalid puzzle";
-    return;
+    return { ok: false, message: data.error || "That link doesn't work." };
   }
 
   cols = data.length;
@@ -543,6 +591,7 @@ async function initPlay(code, lang, guessesCount) {
   updatePlayMeta();
   updatedEl.textContent = "Game ready";
   updateShareLink(buildShareLink(code, puzzleLang, maxGuesses));
+  return { ok: true };
 }
 
 function initCreate() {
@@ -554,7 +603,12 @@ async function startPuzzle(code, lang, guessesCount) {
   maxGuesses = guessesCount || defaultGuesses;
   const link = buildShareLink(code, lang, maxGuesses);
   updateShareLink(link);
-  await initPlay(code, lang, guessesCount);
+  const result = await initPlay(code, lang, guessesCount);
+  if (!result.ok) {
+    showCreate();
+    setCreateStatus(result.message || "Could not start puzzle.");
+    return;
+  }
   setCreateStatus("");
 }
 
@@ -626,7 +680,8 @@ wordInput.addEventListener("input", () => {
 lengthInput.addEventListener("change", () => {
   const value = Number(lengthInput.value);
   if (Number.isNaN(value)) return;
-  if (value < minLen) lengthInput.value = String(minLen);
+  const minLength = getMinLengthForLang(langSelect.value);
+  if (value < minLength) lengthInput.value = String(minLength);
   if (value > maxLen) lengthInput.value = String(maxLen);
 });
 
@@ -636,6 +691,7 @@ guessInput.addEventListener("change", () => {
 
 langSelect.addEventListener("change", () => {
   randomBtn.disabled = langSelect.value === "none";
+  updateLanguageConstraints(langSelect.value);
 });
 
 contrastToggle.addEventListener("change", () => {
@@ -665,14 +721,49 @@ async function init() {
 
   const params = new URLSearchParams(window.location.search);
   const codeParam = params.get("word");
-  const langParam = params.get("lang") || "en";
+  const langParam = params.get("lang");
   const guessesParam = params.get("g");
-  const guessesCount = sanitizeGuessCount(guessesParam || guessInput.value);
 
   if (codeParam) {
-    const link = buildShareLink(codeParam, langParam, guessesCount);
+    const trimmedCode = String(codeParam).trim();
+    const resolvedLang = langParam
+      ? String(langParam).trim().toLowerCase()
+      : defaultLang;
+    const availableLang = languageMinLengths[resolvedLang]
+      ? resolvedLang
+      : null;
+
+    if (!trimmedCode || !/^[a-zA-Z]+$/.test(trimmedCode)) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+    if (!availableLang) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+
+    const minLength = getMinLengthForLang(availableLang);
+    if (trimmedCode.length < minLength || trimmedCode.length > maxLen) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+
+    let guessesCount = defaultGuesses;
+    if (guessesParam !== null) {
+      const parsed = Number(guessesParam);
+      if (!Number.isInteger(parsed) || parsed < minGuesses || parsed > maxGuessesAllowed) {
+        showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+        return;
+      }
+      guessesCount = parsed;
+    }
+
+    const link = buildShareLink(trimmedCode, availableLang, guessesCount);
     updateShareLink(link);
-    await initPlay(codeParam, langParam, guessesCount);
+    const result = await initPlay(trimmedCode, availableLang, guessesCount);
+    if (!result.ok) {
+      showErrorPanel(result.message || "That link doesn't work. Let's make a new puzzle.");
+    }
   } else {
     initCreate();
   }

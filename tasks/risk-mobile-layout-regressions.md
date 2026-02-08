@@ -15,3 +15,9 @@ Keep mobile layout stable across common device sizes.
 - Manual checks pass on at least one iOS and one Android device.
 - Board and keyboard remain fully usable at common mobile widths.
 - Safe-area insets and 100dvh behavior are verified.
+
+## Implementation Notes
+- Added Playwright viewport checks for iPhone 13 and Pixel 7 in `tests/ui/mobile.spec.js`.
+
+## Status
+- Done (2026-02-08)

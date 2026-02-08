@@ -17,6 +17,12 @@ const MIN_GUESSES = 4;
 const MAX_GUESSES = 10;
 const DEFAULT_GUESSES = 6;
 const KEY = "WORDLE";
+const DEFAULT_LANG = "en";
+const LANGUAGE_MIN_LENGTHS = {
+  es: 5,
+  fr: 5,
+  de: 5
+};
 
 const LANGUAGES = {
   en: { label: "English", file: "en.txt" },
@@ -26,27 +32,59 @@ const LANGUAGES = {
   none: { label: "No dictionary", file: null }
 };
 
-function readWordData() {
-  try {
-    const raw = fs.readFileSync(DATA_PATH, "utf8");
-    const data = JSON.parse(raw);
-    if (data && typeof data.word === "string") {
-      return data;
-    }
-  } catch (err) {
-    // Ignore and fall back to default.
-  }
-
+function buildDefaultWordData() {
   return {
-    word: "CRANE",
-    lang: "en",
+    word: "",
+    lang: DEFAULT_LANG,
     date: null,
     updatedAt: new Date().toISOString()
   };
 }
 
+function isValidWordData(data) {
+  if (!data || typeof data !== "object") return false;
+  if (typeof data.word !== "string") return false;
+  if (typeof data.lang !== "string") return false;
+  if (!(data.date === null || typeof data.date === "string")) return false;
+  return true;
+}
+
+function normalizeWordData(data) {
+  const fallback = buildDefaultWordData();
+  const normalized = { ...fallback, ...data };
+  normalized.word = normalizeWord(normalized.word || "");
+  normalized.lang = normalizeLang(normalized.lang) || fallback.lang;
+  normalized.date = normalized.date ? String(normalized.date) : null;
+  normalized.updatedAt = normalized.updatedAt
+    ? String(normalized.updatedAt)
+    : new Date().toISOString();
+  return normalized;
+}
+
+function readWordData() {
+  try {
+    const raw = fs.readFileSync(DATA_PATH, "utf8");
+    const data = JSON.parse(raw);
+    if (isValidWordData(data)) {
+      return normalizeWordData(data);
+    }
+  } catch (err) {
+    // Ignore and fall back to default.
+  }
+  return null;
+}
+
 function saveWordData(data) {
   fs.writeFileSync(DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function ensureWordData() {
+  const data = readWordData();
+  if (data) return data;
+  const fallback = buildDefaultWordData();
+  saveWordData(fallback);
+  console.warn("Daily word data was invalid and has been reset.");
+  return fallback;
 }
 
 function isAuthorized(req) {
@@ -54,22 +92,27 @@ function isAuthorized(req) {
   return req.headers["x-admin-key"] === ADMIN_KEY;
 }
 
-function sanitizeLang(raw) {
+function normalizeLang(raw) {
   const key = String(raw || "").trim().toLowerCase();
   if (LANGUAGES[key]) return key;
-  return "en";
+  if (!key) return DEFAULT_LANG;
+  return null;
 }
 
 function normalizeWord(raw) {
   return String(raw || "").trim().toUpperCase();
 }
 
-function assertWord(word) {
+function getMinLengthForLang(lang) {
+  return LANGUAGE_MIN_LENGTHS[lang] || MIN_LEN;
+}
+
+function assertWord(word, minLength = MIN_LEN) {
   if (!/^[A-Z]+$/.test(word)) {
     throw new Error("Word must use only letters A-Z.");
   }
-  if (word.length < MIN_LEN || word.length > MAX_LEN) {
-    throw new Error(`Word length must be ${MIN_LEN}-${MAX_LEN} letters.`);
+  if (word.length < minLength || word.length > MAX_LEN) {
+    throw new Error(`Word length must be ${minLength}-${MAX_LEN} letters.`);
   }
 }
 
@@ -95,7 +138,7 @@ function decodeWord(code) {
   return output;
 }
 
-function loadDictionary(file) {
+function loadDictionary(file, minLength) {
   const fullPath = path.join(DICT_PATH, file);
   if (!fs.existsSync(fullPath)) {
     return null;
@@ -105,12 +148,13 @@ function loadDictionary(file) {
   const lines = raw.split(/\r?\n/);
   const byLength = new Map();
   const listByLength = new Map();
+  let totalCount = 0;
 
   for (const line of lines) {
     const word = line.trim().toUpperCase();
     if (!word) continue;
     if (!/^[A-Z]+$/.test(word)) continue;
-    if (word.length < MIN_LEN || word.length > MAX_LEN) continue;
+    if (word.length < minLength || word.length > MAX_LEN) continue;
 
     let set = byLength.get(word.length);
     if (!set) {
@@ -119,6 +163,7 @@ function loadDictionary(file) {
     }
     if (set.has(word)) continue;
     set.add(word);
+    totalCount += 1;
 
     let list = listByLength.get(word.length);
     if (!list) {
@@ -128,24 +173,59 @@ function loadDictionary(file) {
     list.push(word);
   }
 
+  if (totalCount === 0) {
+    return null;
+  }
+
   return {
     byLength,
-    listByLength
+    listByLength,
+    totalCount,
+    minLength
   };
 }
 
 const dictionaries = {};
+const availableLanguages = new Map();
 for (const [key, info] of Object.entries(LANGUAGES)) {
   if (!info.file) {
     dictionaries[key] = null;
+    availableLanguages.set(key, {
+      id: key,
+      label: info.label,
+      minLength: getMinLengthForLang(key),
+      hasDictionary: false
+    });
     continue;
   }
-  dictionaries[key] = loadDictionary(info.file);
+  const minLength = getMinLengthForLang(key);
+  const dict = loadDictionary(info.file, minLength);
+  dictionaries[key] = dict;
+  if (dict) {
+    availableLanguages.set(key, {
+      id: key,
+      label: info.label,
+      minLength,
+      hasDictionary: true
+    });
+  }
 }
 
 function getDictionary(lang) {
   if (lang === "none") return null;
   return dictionaries[lang] || null;
+}
+
+function isLanguageAvailable(lang) {
+  return availableLanguages.has(lang);
+}
+
+function resolveLang(raw) {
+  const normalized = normalizeLang(raw);
+  if (!normalized) return null;
+  if (isLanguageAvailable(normalized)) return normalized;
+  if (normalized === DEFAULT_LANG && isLanguageAvailable("none")) return "none";
+  return null;
 }
 
 function dictionaryHasWord(dict, word) {
@@ -193,16 +273,17 @@ function evaluateGuess(guess, answer) {
 app.use(express.json());
 app.use(express.static(PUBLIC_PATH));
 
+ensureWordData();
+
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
 app.get("/api/meta", (req, res) => {
-  const languages = Object.entries(LANGUAGES).map(([id, info]) => ({
-    id,
-    label: info.label,
-    hasDictionary: Boolean(getDictionary(id))
-  }));
+  const languages = Array.from(availableLanguages.values());
+  const defaultLang = isLanguageAvailable(DEFAULT_LANG)
+    ? DEFAULT_LANG
+    : languages[0]?.id || "none";
 
   res.json({
     minLength: MIN_LEN,
@@ -210,16 +291,20 @@ app.get("/api/meta", (req, res) => {
     minGuesses: MIN_GUESSES,
     maxGuesses: MAX_GUESSES,
     defaultGuesses: DEFAULT_GUESSES,
-    languages
+    languages,
+    defaultLang
   });
 });
 
 app.post("/api/encode", (req, res) => {
   const word = normalizeWord(req.body.word);
-  const lang = sanitizeLang(req.body.lang);
+  const lang = resolveLang(req.body.lang);
+  if (!lang) {
+    return res.status(400).json({ error: "Unknown language." });
+  }
 
   try {
-    assertWord(word);
+    assertWord(word, getMinLengthForLang(lang));
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -238,11 +323,17 @@ app.post("/api/encode", (req, res) => {
 });
 
 app.post("/api/random", (req, res) => {
-  const lang = sanitizeLang(req.body.lang);
+  const lang = resolveLang(req.body.lang);
+  if (!lang) {
+    return res.status(400).json({ error: "Unknown language." });
+  }
   const length = Number(req.body.length);
+  const minLength = getMinLengthForLang(lang);
 
-  if (!Number.isInteger(length) || length < MIN_LEN || length > MAX_LEN) {
-    return res.status(400).json({ error: `Length must be ${MIN_LEN}-${MAX_LEN}.` });
+  if (!Number.isInteger(length) || length < minLength || length > MAX_LEN) {
+    return res
+      .status(400)
+      .json({ error: `Length must be ${minLength}-${MAX_LEN}.` });
   }
 
   const dict = getDictionary(lang);
@@ -265,8 +356,12 @@ app.post("/api/random", (req, res) => {
 
 app.post("/api/puzzle", (req, res) => {
   const code = normalizeWord(req.body.code);
-  const lang = sanitizeLang(req.body.lang);
+  const lang = resolveLang(req.body.lang);
+  if (!lang) {
+    return res.status(400).json({ error: "Unknown language." });
+  }
   let guesses = DEFAULT_GUESSES;
+  const minLength = getMinLengthForLang(lang);
 
   if (req.body.guesses !== undefined) {
     const parsed = Number(req.body.guesses);
@@ -279,6 +374,9 @@ app.post("/api/puzzle", (req, res) => {
   if (!/^[A-Z]+$/.test(code)) {
     return res.status(400).json({ error: "Invalid word code." });
   }
+  if (code.length < minLength || code.length > MAX_LEN) {
+    return res.status(400).json({ error: "Invalid word code length." });
+  }
 
   res.json({
     length: code.length,
@@ -290,7 +388,10 @@ app.post("/api/puzzle", (req, res) => {
 
 app.post("/api/guess", (req, res) => {
   const code = normalizeWord(req.body.code);
-  const lang = sanitizeLang(req.body.lang);
+  const lang = resolveLang(req.body.lang);
+  if (!lang) {
+    return res.status(400).json({ error: "Unknown language." });
+  }
   const reveal = Boolean(req.body.reveal);
 
   if (!/^[A-Z]+$/.test(code)) {
@@ -325,22 +426,25 @@ app.post("/api/guess", (req, res) => {
 
 app.get("/api/word", (req, res) => {
   if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "unauthorized" });
+    return res.status(401).json({ error: "Admin key required." });
   }
-  res.json(readWordData());
+  res.json(readWordData() || buildDefaultWordData());
 });
 
 app.post("/api/word", (req, res) => {
   if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "unauthorized" });
+    return res.status(401).json({ error: "Admin key required." });
   }
 
   const word = normalizeWord(req.body.word);
   const date = req.body.date ? String(req.body.date) : null;
-  const lang = sanitizeLang(req.body.lang);
+  const lang = resolveLang(req.body.lang);
+  if (!lang) {
+    return res.status(400).json({ error: "Unknown language." });
+  }
 
   try {
-    assertWord(word);
+    assertWord(word, getMinLengthForLang(lang));
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
@@ -358,18 +462,60 @@ app.post("/api/word", (req, res) => {
 
 app.get("/daily", (req, res) => {
   const data = readWordData();
-  const word = normalizeWord(data.word);
-  if (!word) {
-    return res.redirect("/");
+  if (!data || !data.word) {
+    return res.status(404).send(renderDailyMissing("No daily puzzle yet."));
   }
+
+  const word = normalizeWord(data.word);
+  if (!word || !/^[A-Z]+$/.test(word)) {
+    return res.status(404).send(renderDailyMissing("No daily puzzle yet."));
+  }
+
+  if (data.date) {
+    const today = getLocalDateString(new Date());
+    if (data.date !== today) {
+      return res
+        .status(404)
+        .send(renderDailyMissing("Today's puzzle isn't set yet."));
+    }
+  }
+
   const code = encodeWord(word).toLowerCase();
-  const lang = sanitizeLang(data.lang);
+  const lang = resolveLang(data.lang) || DEFAULT_LANG;
   let target = `/?word=${code}`;
   if (lang !== "en") {
     target += `&lang=${lang}`;
   }
   res.redirect(target);
 });
+
+function getLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function renderDailyMissing(message) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Daily Word</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel">
+        <h2>Daily Word</h2>
+        <p class="note">${message}</p>
+        <a class="admin-link" href="/">Make a new puzzle</a>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
 
 if (require.main === module) {
   app.listen(PORT, HOST, () => {

@@ -15,3 +15,13 @@ Validate data on boot and recover safely.
 - Server starts even if data/word.json is invalid.
 - Defaults are restored when corruption is detected.
 - Invalid data cases are covered by tests.
+
+## Implementation Notes
+- Added schema validation and startup recovery in `server.js` (`ensureWordData`).
+- Invalid or unreadable `data/word.json` is reset to defaults (empty word).
+
+## Tests
+- Added recovery test in `tests/server.test.js`.
+
+## Status
+- Done (2026-02-08)

@@ -25,7 +25,9 @@
 ## QA
 - [ ] Unit tests pass (`npm test`).
 - [ ] UI tests pass (`npm run test:ui`).
+- [ ] Axe a11y checks pass (`npm run test:ui`).
 - [ ] Manual mobile checks on iOS/Android.
+- [ ] Playwright mobile viewport checks pass.
 - [ ] Daily word date boundary tested (local midnight).
 
 ## Deployment
