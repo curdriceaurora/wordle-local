@@ -2,6 +2,10 @@ node_modules
 test-results
 npm-debug.log
 .DS_Store
+._*
+Icon
+Icon?
+*.DS_Store
 .env
 .env.*
 .git
