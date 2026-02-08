@@ -210,6 +210,6 @@
 ---
 
 ## 12. Related Docs
-- Milestones: `/Users/rahul/Projects/Noventa/wordle-local/MILESTONES.md`
-- Risks: `/Users/rahul/Projects/Noventa/wordle-local/RISKS.md`
-- Launch checklist: `/Users/rahul/Projects/Noventa/wordle-local/LAUNCH_CHECKLIST.md`
+- Milestones: `MILESTONES.md`
+- Risks: `RISKS.md`
+- Launch checklist: `LAUNCH_CHECKLIST.md`
