@@ -31,6 +31,15 @@ There is no admin UI. Use the API endpoints below.
 ### Admin Key
 If `ADMIN_KEY` is set, include the header `x-admin-key: <value>` on admin requests.
 Unauthorized requests return `401`.
+When running the public Docker image (NODE_ENV=production), admin endpoints require `ADMIN_KEY` by default.
+
+## Security Notes (Public Images)
+- **Admin key required** in production. Set `ADMIN_KEY` and keep it private.
+- **Rate limiting** is enabled by default. Optional overrides:
+  - `RATE_LIMIT_MAX` (default 300 requests / 15 min)
+  - `RATE_LIMIT_WINDOW_MS` (default 900000)
+- If behind a reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP.
+- Container runs as a non-root user and includes a `/api/health` healthcheck.
 
 ## Languages & Dictionaries
 - Supported: `en`, `es`, `fr`, `de`, and `none` (no dictionary).

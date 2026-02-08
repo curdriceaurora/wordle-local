@@ -5,16 +5,62 @@ const request = require("supertest");
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
 const ORIGINAL_WORD_DATA = fs.readFileSync(DATA_PATH, "utf8");
+const ORIGINAL_ENV = { ...process.env };
 
-function loadApp(adminKey = "") {
+function resetEnv() {
+  Object.keys(process.env).forEach((key) => {
+    if (!(key in ORIGINAL_ENV)) {
+      delete process.env[key];
+    }
+  });
+  Object.entries(ORIGINAL_ENV).forEach(([key, value]) => {
+    process.env[key] = value;
+  });
+}
+
+function loadApp(options = {}) {
+  const opts =
+    typeof options === "string"
+      ? { adminKey: options }
+      : {
+          adminKey: options.adminKey || "",
+          nodeEnv: options.nodeEnv,
+          requireAdminKey: options.requireAdminKey,
+          trustProxy: options.trustProxy,
+          rateLimitMax: options.rateLimitMax,
+          rateLimitWindowMs: options.rateLimitWindowMs
+        };
+
   jest.resetModules();
-  if (adminKey) {
-    process.env.ADMIN_KEY = adminKey;
+  resetEnv();
+
+  if (opts.adminKey) {
+    process.env.ADMIN_KEY = opts.adminKey;
   } else {
     delete process.env.ADMIN_KEY;
   }
+  if (opts.nodeEnv) {
+    process.env.NODE_ENV = opts.nodeEnv;
+  }
+  if (opts.requireAdminKey !== undefined) {
+    process.env.REQUIRE_ADMIN_KEY = opts.requireAdminKey ? "true" : "false";
+  }
+  if (opts.trustProxy !== undefined) {
+    process.env.TRUST_PROXY = opts.trustProxy ? "true" : "false";
+  }
+  if (opts.rateLimitMax !== undefined) {
+    process.env.RATE_LIMIT_MAX = String(opts.rateLimitMax);
+  }
+  if (opts.rateLimitWindowMs !== undefined) {
+    process.env.RATE_LIMIT_WINDOW_MS = String(opts.rateLimitWindowMs);
+  }
+
   return require("../server");
 }
+
+afterEach(() => {
+  resetEnv();
+});
 
 function writeWordData(data) {
   fs.writeFileSync(DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
@@ -59,6 +105,21 @@ describe("Wordle API", () => {
     const response = await request(app).get("/api/health");
     expect(response.status).toBe(200);
     expect(response.body.ok).toBe(true);
+  });
+
+  test("rate limiting blocks excessive requests", async () => {
+    const app = loadApp({ rateLimitMax: 2, rateLimitWindowMs: 60 * 1000 });
+    const first = await request(app).get("/api/health");
+    const second = await request(app).get("/api/health");
+    const third = await request(app).get("/api/health");
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+  });
+
+  test("trust proxy can be enabled", async () => {
+    const app = loadApp({ trustProxy: true });
+    expect(app.get("trust proxy")).toBe(1);
   });
 
   test("rejects invalid word", async () => {
@@ -312,6 +373,12 @@ describe("Admin auth", () => {
     const response = await request(app).get("/api/word");
     expect(response.status).toBe(401);
     expect(response.body.error).toMatch(/Admin key/i);
+  });
+
+  test("requires admin key in production when missing", async () => {
+    const app = loadApp({ nodeEnv: "production" });
+    const response = await request(app).get("/api/word");
+    expect(response.status).toBe(401);
   });
 
   test("allows admin update without key when not configured", async () => {

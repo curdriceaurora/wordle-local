@@ -1,11 +1,18 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+const NODE_ENV = process.env.NODE_ENV || "development";
+const REQUIRE_ADMIN_KEY = process.env.REQUIRE_ADMIN_KEY === "true" || NODE_ENV === "production";
+const TRUST_PROXY = process.env.TRUST_PROXY === "true";
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
 const PUBLIC_PATH = path.join(__dirname, "public");
@@ -88,7 +95,7 @@ function ensureWordData() {
 }
 
 function isAuthorized(req) {
-  if (!ADMIN_KEY) return true;
+  if (!ADMIN_KEY) return !REQUIRE_ADMIN_KEY;
   return req.headers["x-admin-key"] === ADMIN_KEY;
 }
 
@@ -270,6 +277,24 @@ function evaluateGuess(guess, answer) {
   return result;
 }
 
+app.disable("x-powered-by");
+if (TRUST_PROXY) {
+  app.set("trust proxy", 1);
+}
+app.use(
+  helmet({
+    contentSecurityPolicy: false
+  })
+);
+app.use(
+  rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Try again later." }
+  })
+);
 app.use(express.json());
 app.use(express.static(PUBLIC_PATH));
 
@@ -520,8 +545,11 @@ function renderDailyMissing(message) {
 if (require.main === module) {
   app.listen(PORT, HOST, () => {
     console.log(`Wordle local server running at http://localhost:${PORT}`);
-    if (!ADMIN_KEY) {
+    if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {
       console.log("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
+    }
+    if (!ADMIN_KEY && REQUIRE_ADMIN_KEY) {
+      console.warn("ADMIN_KEY is required for admin endpoints in production.");
     }
   });
 }
