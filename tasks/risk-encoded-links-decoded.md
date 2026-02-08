@@ -14,5 +14,18 @@ Make the limitation explicit in user-facing documentation and in-app copy so use
 - Documentation explicitly states that encoded links can be decoded and should not be treated as secure.
 - The share UI includes a brief disclaimer or help text.
 
-## Dependencies
-- Decide the canonical user-facing doc location (README or in-app help).
+## Decisions
+- Primary disclosure is in-product, next to the share link, to keep context.
+- Provide an “About share links” modal with a clear non-security statement.
+- Keep wording aligned with PRD: encoding is for convenience, not secrecy.
+
+## PRD References
+- Shareable links are Vigenère-encoded and not secret (PRD 3.2, 7).
+
+## Implementation Notes
+- UI note and modal added near share link in `public/index.html`.
+- Modal styling added in `public/styles.css`.
+- Modal open/close behavior wired in `public/app.js`.
+
+## Status
+- Done (2026-02-08)
