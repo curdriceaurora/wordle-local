@@ -2,7 +2,7 @@
   "name": "wordle-local",
   "version": "1.0.0",
   "description": "Local Wordle with admin-set word of the day",
-  "license": "MIT",
+  "license": "CC0-1.0",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

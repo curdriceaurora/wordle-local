@@ -53,7 +53,7 @@ When running the public Docker image (NODE_ENV=production), admin endpoints requ
 - If no daily word is set (or the date doesn’t match today), a friendly error page is shown.
 
 ## License
-MIT. See `LICENSE`.
+CC0-1.0 public domain dedication. No attribution required. See `LICENSE`.
 
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.

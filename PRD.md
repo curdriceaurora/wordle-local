@@ -213,7 +213,7 @@
 ---
 
 ## 12. Open Source Readiness
-- MIT license with clear copyright holder.
+- CC0-1.0 public domain dedication (no attribution required).
 - Code of Conduct and Contributing guidelines.
 - Security policy for reporting vulnerabilities.
 - Trademark disclaimer clarifying no affiliation with Wordle’s trademark holder.
