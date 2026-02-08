@@ -34,6 +34,8 @@ test("strict mode enforces revealed hints", async ({ page }) => {
   await page.keyboard.press("Enter");
   await page.keyboard.type("APPLE");
   await page.keyboard.press("Enter");
+  await page.keyboard.type("CIDER");
+  await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Strict mode");
 });
 

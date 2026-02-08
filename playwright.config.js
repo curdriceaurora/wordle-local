@@ -8,6 +8,11 @@ module.exports = defineConfig({
     baseURL: "http://localhost:3000",
     headless: true
   },
+  projects: [
+    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "firefox", use: { browserName: "firefox" } },
+    { name: "webkit", use: { browserName: "webkit" } }
+  ],
   webServer: {
     command: "node server.js",
     port: 3000,
