@@ -32,9 +32,12 @@ test("strict mode enforces revealed hints", async ({ page }) => {
   await page.check("#strictToggle");
   await page.keyboard.type("JELLO");
   await page.keyboard.press("Enter");
+  await expect(
+    page.locator(
+      "#board .row:nth-child(1) .tile.absent, #board .row:nth-child(1) .tile.present, #board .row:nth-child(1) .tile.correct"
+    )
+  ).toHaveCount(5);
   await page.keyboard.type("APPLE");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("CIDER");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Strict mode");
 });

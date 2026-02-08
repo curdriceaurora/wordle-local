@@ -185,7 +185,10 @@
 
 ## 7. Security & Privacy
 - No tracking, analytics, or login.
-- Admin protected by optional `ADMIN_KEY` header.
+- Admin protected by `ADMIN_KEY` header.
+- In production (`NODE_ENV=production`), admin endpoints require `ADMIN_KEY` by default.
+- Rate limiting enabled to reduce abuse (configurable via `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS`).
+- Security headers added via Helmet.
 - Shareable links encode the word but do not conceal it from those who know the cipher; intended for light‑weight sharing, not secrecy.
 
 ## 8. Testing Requirements
