@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wordle Admin</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Admin</h1>
+        <p>Set the daily word (shared via /daily).</p>
+      </div>
+      <div class="top-actions">
+        <a class="admin-link" href="/">Create</a>
+        <a class="admin-link" href="/daily">Play daily</a>
+      </div>
+    </header>
+
+    <main class="admin">
+      <form id="adminForm" class="admin-form">
+        <label>
+          Word of the day
+          <input id="wordInput" name="word" placeholder="CRANE" required />
+        </label>
+        <label>
+          Language
+          <select id="langInput" name="lang"></select>
+        </label>
+        <label>
+          Date (optional)
+          <input id="dateInput" name="date" type="date" />
+        </label>
+        <label>
+          Admin key (optional)
+          <input id="keyInput" name="key" type="password" placeholder="If ADMIN_KEY is set" />
+        </label>
+        <button type="submit">Save word</button>
+        <div id="adminStatus" class="message"></div>
+      </form>
+
+      <section class="admin-current">
+        <h2>Current word</h2>
+        <div id="currentWord" class="current-word">Loading…</div>
+      </section>
+    </main>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>

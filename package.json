@@ -1,0 +1,21 @@
+{
+  "name": "wordle-local",
+  "version": "1.0.0",
+  "description": "Local Wordle with admin-set word of the day",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest",
+    "test:ui": "playwright test",
+    "test:all": "npm test && npm run test:ui"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
+  }
+}

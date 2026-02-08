@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MyWordle Local</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="topbar">
+      <div>
+        <h1>MyWordle Local</h1>
+        <p id="subtitle">Create and share custom Wordle links.</p>
+      </div>
+      <div class="top-actions">
+        <a class="admin-link" href="/">Create</a>
+        <a class="admin-link" href="/daily">Daily Word</a>
+        <a class="admin-link" href="/admin.html">Admin</a>
+      </div>
+      <div class="settings">
+        <label class="toggle">
+          <input id="contrastToggle" type="checkbox" />
+          <span>High contrast</span>
+        </label>
+        <label class="toggle">
+          <input id="strictToggle" type="checkbox" />
+          <span>Strict mode</span>
+        </label>
+      </div>
+    </header>
+
+    <main id="main" class="layout">
+      <section id="createPanel" class="panel">
+        <h2>Create a puzzle</h2>
+        <form id="createForm" class="create-form">
+          <label>
+            Language
+            <select id="langSelect"></select>
+          </label>
+          <label>
+            Word
+            <input id="wordInput" name="word" placeholder="Type a word" autocomplete="off" />
+            <span class="hint">A-Z only · 3-12 letters</span>
+          </label>
+          <div class="form-row">
+            <label>
+              Length
+              <input id="lengthInput" name="length" type="number" min="3" max="12" value="5" />
+            </label>
+            <label>
+              Guesses
+              <input id="guessInput" name="guesses" type="number" min="4" max="10" value="6" />
+            </label>
+            <button type="button" id="randomBtn" class="ghost">Random word</button>
+          </div>
+          <button type="submit">Start puzzle</button>
+          <div id="createStatus" class="message" role="status" aria-live="polite"></div>
+          <p class="note">No login, no tracking. Use “No dictionary” for fully custom words.</p>
+        </form>
+      </section>
+
+      <section id="playPanel" class="panel hidden">
+        <div class="play-head">
+          <div>
+            <h2>Play</h2>
+            <p id="playMeta">Loading puzzle…</p>
+          </div>
+          <a class="admin-link" href="/">Create yours</a>
+        </div>
+        <div id="board" class="board" aria-label="Wordle board"></div>
+        <div id="message" class="message" role="status" aria-live="polite"></div>
+        <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
+        <div id="keyboard" class="keyboard" aria-label="Keyboard"></div>
+        <div class="share">
+          <label>
+            Share link
+            <input id="shareLink" readonly placeholder="Share link appears here" aria-label="Share link" />
+          </label>
+          <button type="button" id="shareCopyBtn" class="ghost">Copy link</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Custom Wordle · Local hosting</span>
+      <span id="updated">Ready</span>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

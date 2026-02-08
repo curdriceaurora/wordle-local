@@ -1,0 +1,44 @@
+const { test, expect } = require("@playwright/test");
+
+test("create page generates encoded link", async ({ page }) => {
+  await page.goto("/");
+  await page.selectOption("#langSelect", "none");
+  await page.fill("#wordInput", "JACKS");
+  await page.fill("#guessInput", "4");
+  await page.click("form#createForm button[type=submit]");
+  await expect(page.locator("#shareLink")).toHaveValue(/word=fotnd/i);
+  await expect(page.locator("#shareLink")).toHaveValue(/g=4/);
+  await expect(page.locator("#playMeta")).toContainText("4 tries");
+});
+
+test("random word generates link", async ({ page }) => {
+  await page.goto("/");
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#lengthInput", "5");
+  await page.click("#randomBtn");
+  await expect(page.locator("#shareLink")).not.toHaveValue("");
+});
+
+test("play puzzle from encoded link", async ({ page }) => {
+  await page.goto("/?word=fotnd&lang=none");
+  await page.waitForSelector("#board");
+  await page.keyboard.type("JACKS");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Solved in 1/6");
+});
+
+test("strict mode enforces revealed hints", async ({ page }) => {
+  await page.goto("/?word=fotnd&lang=none");
+  await page.check("#strictToggle");
+  await page.keyboard.type("JELLO");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("APPLE");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Strict mode");
+});
+
+test("high contrast toggle updates theme", async ({ page }) => {
+  await page.goto("/");
+  await page.check("#contrastToggle");
+  await expect(page.locator("body")).toHaveClass(/high-contrast/);
+});
