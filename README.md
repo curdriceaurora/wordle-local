@@ -61,5 +61,8 @@ This project is provided “as is”, without warranty of any kind. Use at your 
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 
+## Support
+This project does not provide support or SLAs. See `SUPPORT.md`.
+
 ## Trademark
 Wordle is a trademark of The New York Times Company. This project is not affiliated with or endorsed by The New York Times.

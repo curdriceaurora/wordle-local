@@ -219,6 +219,7 @@
 - Trademark disclaimer clarifying no affiliation with Wordle’s trademark holder.
 - Dictionary source attribution and licensing notes.
 - Disclaimer covering no warranty and no liability.
+- Support policy stating no SLA or guaranteed responses.
 
 ---
 
