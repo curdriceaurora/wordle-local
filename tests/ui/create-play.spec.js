@@ -42,3 +42,22 @@ test("high contrast toggle updates theme", async ({ page }) => {
   await page.check("#contrastToggle");
   await expect(page.locator("body")).toHaveClass(/high-contrast/);
 });
+
+test("share link info modal opens and closes", async ({ page }) => {
+  await page.goto("/");
+  await page.selectOption("#langSelect", "none");
+  await page.fill("#wordInput", "JACKS");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  const modal = page.locator("#shareModal");
+
+  await expect(modal).toHaveAttribute("aria-hidden", "true");
+  await page.click("#shareInfoBtn");
+  await expect(modal).toHaveClass(/is-open/);
+  await expect(modal).toHaveAttribute("aria-hidden", "false");
+  await expect(page.locator("#shareModalDesc")).toContainText("not secure");
+
+  await page.keyboard.press("Escape");
+  await expect(modal).not.toHaveClass(/is-open/);
+  await expect(modal).toHaveAttribute("aria-hidden", "true");
+});
