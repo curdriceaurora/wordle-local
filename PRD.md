@@ -88,8 +88,8 @@
 
 ### 3.7 Admin
 - Admin endpoints allow setting daily word, language, date.
-- Optional `ADMIN_KEY` protects admin endpoints.
-- No admin UI is exposed.
+- Admin is API-only (no admin UI assets are shipped).
+- `ADMIN_KEY` protects admin endpoints.
 
 **Acceptance criteria:**
 - Unauthorized updates are rejected when `ADMIN_KEY` is set.
