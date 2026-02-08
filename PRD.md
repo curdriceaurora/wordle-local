@@ -221,6 +221,7 @@
 - Dictionary source attribution and licensing notes.
 - Disclaimer covering no warranty and no liability.
 - Support policy stating no SLA or guaranteed responses.
+- Third-party notices documenting any non-CC0 assets.
 
 ---
 
