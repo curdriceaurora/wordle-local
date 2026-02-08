@@ -9,6 +9,7 @@ npm-debug.log
 README.md
 *.md
 tests
+tasks
 coverage
 .nyc_output
 playwright-report
