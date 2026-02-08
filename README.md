@@ -55,6 +55,9 @@ When running the public Docker image (NODE_ENV=production), admin endpoints requ
 ## License
 CC0-1.0 public domain dedication. No attribution required. See `LICENSE`.
 
+## Disclaimer
+This project is provided “as is”, without warranty of any kind. Use at your own risk. No guarantees of support, availability, or fitness for any purpose. See `DISCLAIMER.md`.
+
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 
