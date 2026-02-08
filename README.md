@@ -11,6 +11,11 @@ npm start
 
 App runs on `http://localhost:3000` by default.
 
+## Tests
+- `npm test` for API tests.
+- `npm run test:ui` for UI tests across Chromium, Firefox, and WebKit.
+- `npm run test:ui:fast` for a quick Chromium-only run.
+
 ## Create & Share
 - Create a puzzle on the Create screen.
 - Share links are encoded for convenience, not security. Don’t use them for secrets.

@@ -8,6 +8,7 @@
     "start": "node server.js",
     "test": "jest",
     "test:ui": "playwright test",
+    "test:ui:fast": "PLAYWRIGHT_BROWSERS=chromium playwright test",
     "test:all": "npm test && npm run test:ui"
   },
   "dependencies": {
