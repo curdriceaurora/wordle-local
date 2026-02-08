@@ -14,6 +14,10 @@ const shareLinkInput = document.getElementById("shareLink");
 const shareCopyBtn = document.getElementById("shareCopyBtn");
 const contrastToggle = document.getElementById("contrastToggle");
 const strictToggle = document.getElementById("strictToggle");
+const shareInfoBtn = document.getElementById("shareInfoBtn");
+const shareModal = document.getElementById("shareModal");
+const shareModalClose = document.getElementById("shareModalClose");
+const shareModalBackdrop = shareModal ? shareModal.querySelector("[data-modal-close]") : null;
 
 const boardEl = document.getElementById("board");
 const keyboardEl = document.getElementById("keyboard");
@@ -41,6 +45,30 @@ let minCounts = {};
 let minGuesses = 4;
 let maxGuessesAllowed = 10;
 let defaultGuesses = 6;
+let lastFocusedElement = null;
+
+function isShareModalOpen() {
+  return Boolean(shareModal && shareModal.classList.contains("is-open"));
+}
+
+function openShareModal() {
+  if (!shareModal) return;
+  lastFocusedElement = document.activeElement;
+  shareModal.classList.add("is-open");
+  shareModal.setAttribute("aria-hidden", "false");
+  if (shareModalClose) {
+    shareModalClose.focus();
+  }
+}
+
+function closeShareModal() {
+  if (!shareModal) return;
+  shareModal.classList.remove("is-open");
+  shareModal.setAttribute("aria-hidden", "true");
+  if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
+    lastFocusedElement.focus();
+  }
+}
 
 function setCreateStatus(text) {
   createStatus.textContent = text;
@@ -340,6 +368,12 @@ function handleKey(rawKey) {
 }
 
 function handlePhysicalKey(event) {
+  if (isShareModalOpen()) {
+    if (event.key === "Escape") {
+      closeShareModal();
+    }
+    return;
+  }
   if (event.key === "Enter") {
     handleKey("ENTER");
   } else if (event.key === "Backspace") {
@@ -551,6 +585,31 @@ shareCopyBtn.addEventListener("click", async () => {
     shareLinkInput.select();
     document.execCommand("copy");
     setMessage("Share link copied.");
+  }
+});
+
+if (shareInfoBtn) {
+  shareInfoBtn.addEventListener("click", () => {
+    openShareModal();
+  });
+}
+
+if (shareModalClose) {
+  shareModalClose.addEventListener("click", () => {
+    closeShareModal();
+  });
+}
+
+if (shareModalBackdrop) {
+  shareModalBackdrop.addEventListener("click", () => {
+    closeShareModal();
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (isShareModalOpen()) {
+    closeShareModal();
   }
 });
 

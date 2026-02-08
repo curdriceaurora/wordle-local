@@ -57,6 +57,7 @@
           <button type="submit">Start puzzle</button>
           <div id="createStatus" class="message" role="status" aria-live="polite"></div>
           <p class="note">No login, no tracking. Use “No dictionary” for fully custom words.</p>
+          <p class="note">Share links are encoded for convenience, not security.</p>
         </form>
       </section>
 
@@ -77,7 +78,11 @@
             Share link
             <input id="shareLink" readonly placeholder="Share link appears here" aria-label="Share link" />
           </label>
-          <button type="button" id="shareCopyBtn" class="ghost">Copy link</button>
+          <div class="share-actions">
+            <button type="button" id="shareCopyBtn" class="ghost">Copy link</button>
+            <button type="button" id="shareInfoBtn" class="link-button">About share links</button>
+          </div>
+          <p class="note">Encoded links can be decoded. Don’t use them for secrets.</p>
         </div>
       </section>
     </main>
@@ -86,6 +91,28 @@
       <span>Custom Wordle · Local hosting</span>
       <span id="updated">Ready</span>
     </footer>
+
+    <div
+      id="shareModal"
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-hidden="true"
+      aria-labelledby="shareModalTitle"
+      aria-describedby="shareModalDesc"
+    >
+      <div class="modal-backdrop" data-modal-close="true"></div>
+      <div class="modal-card" role="document">
+        <div class="modal-head">
+          <h2 id="shareModalTitle">About share links</h2>
+          <button type="button" id="shareModalClose" class="ghost">Close</button>
+        </div>
+        <p id="shareModalDesc">
+          Share links are encoded to make them easy to pass around. They are not secure and can be
+          decoded by anyone. Don’t use them for secrets.
+        </p>
+      </div>
+    </div>
 
     <script src="/app.js"></script>
   </body>
