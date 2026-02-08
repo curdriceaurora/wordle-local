@@ -97,6 +97,7 @@
 - Languages: English (local dictionary) or “No dictionary”.
 - If dictionary selected, guesses are validated against it.
 - Languages with missing dictionary files are omitted from language options.
+- English dictionary is sourced from wordlist-en_US-2020.12.07 (derived from SCOWL) with attribution in `data/dictionaries/wordlist-en_US-2020.12.07-README.txt`.
 
 **Acceptance criteria:**
 - “Not in word list” displayed for invalid guesses when dictionary is active.

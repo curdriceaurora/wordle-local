@@ -47,6 +47,7 @@ When running the public Docker image (NODE_ENV=production), admin endpoints requ
 - Minimum word length is 3.
 - Dictionaries only accept A–Z (no accents).
 - If a dictionary file is missing or empty, that language is not shown in the UI.
+- English word list source: wordlist-en_US-2020.12.07 (derived from SCOWL). See `data/dictionaries/wordlist-en_US-2020.12.07-README.txt` for license and credits.
 
 ## Daily Link
 - Visit `/daily` to play the configured daily word.

@@ -20,11 +20,13 @@ Ensure the English word list has clear licensing/attribution or replace it with 
 - Non-English dictionaries removed; English-only support.
 
 ## Implementation Notes
+- Switched to wordlist-en_US-2020.12.07 (Hunspell dictionary derived from SCOWL).
+- License/credits captured in `data/dictionaries/wordlist-en_US-2020.12.07-README.txt`.
 - Dictionary counts documented in `data/dictionaries/README.md`.
 - Dictionaries are normalized to A–Z only by the loader.
 
 ## Open Items
-- Source attribution for the English list is not yet documented.
+- None.
 
 ## Status
-- In progress (2026-02-08)
+- Done (2026-02-08)
