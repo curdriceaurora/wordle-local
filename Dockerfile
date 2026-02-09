@@ -17,7 +17,7 @@ ENV HOST=0.0.0.0
 ENV PORT=3000
 
 WORKDIR app
-RUN chown -R node:node app
+RUN mkdir -p app && chown -R node:node app
 
 USER node
 
