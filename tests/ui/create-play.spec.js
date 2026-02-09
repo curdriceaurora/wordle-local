@@ -1,7 +1,8 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./fixtures");
+const gotoOptions = { waitUntil: "domcontentloaded" };
 
 test("create page generates encoded link", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "JACKS");
   await page.fill("#guessInput", "4");
@@ -12,7 +13,7 @@ test("create page generates encoded link", async ({ page }) => {
 });
 
 test("random word generates link", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/", gotoOptions);
   await page.selectOption("#langSelect", "en");
   await page.fill("#lengthInput", "5");
   await page.click("#randomBtn");
@@ -20,7 +21,7 @@ test("random word generates link", async ({ page }) => {
 });
 
 test("play puzzle from encoded link", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none");
+  await page.goto("/?word=fotnd&lang=none", gotoOptions);
   await page.waitForSelector("#board");
   await page.keyboard.type("JACKS");
   await page.keyboard.press("Enter");
@@ -28,7 +29,7 @@ test("play puzzle from encoded link", async ({ page }) => {
 });
 
 test("strict mode enforces revealed hints", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none");
+  await page.goto("/?word=fotnd&lang=none", gotoOptions);
   await page.check("#strictToggle");
   await page.keyboard.type("JELLO");
   await page.keyboard.press("Enter");
@@ -43,7 +44,7 @@ test("strict mode enforces revealed hints", async ({ page }) => {
 });
 
 test("strict mode requires repeated letters when revealed", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/", gotoOptions);
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "LEVEL");
   await page.click("form#createForm button[type=submit]");
@@ -57,35 +58,41 @@ test("strict mode requires repeated letters when revealed", async ({ page }) => 
 });
 
 test("high contrast toggle updates theme", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/", gotoOptions);
   await page.check("#contrastToggle");
   await expect(page.locator("body")).toHaveClass(/high-contrast/);
 });
 
 test("language selection updates minimum length", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/", gotoOptions);
   await page.selectOption("#langSelect", "en");
   await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
   await expect(page.locator(".hint")).toContainText("3-12");
 });
 
-test("share link info modal opens and closes", async ({ page }) => {
-  await page.goto("/");
+test("share link info modal opens and closes", async ({ page, browserName }) => {
+  await page.goto("/", gotoOptions);
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "JACKS");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
   const modal = page.locator("#shareModal");
+  const infoButton = page.locator("#shareInfoBtn");
+  const closeButton = page.locator("#shareModalClose");
 
   await expect(modal).toHaveAttribute("aria-hidden", "true");
-  await page.click("#shareInfoBtn");
+  await infoButton.click();
   await expect(modal).toHaveClass(/is-open/);
   await expect(modal).toHaveAttribute("aria-hidden", "false");
   await expect(page.locator("#shareModalDesc")).toContainText("not secure");
+  await expect(closeButton).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(modal).not.toHaveClass(/is-open/);
   await expect(modal).toHaveAttribute("aria-hidden", "true");
+  if (browserName !== "webkit") {
+    await expect(infoButton).toBeFocused();
+  }
 });
 
 test("invalid share link shows interstitial and redirects", async ({ page }) => {
@@ -94,9 +101,16 @@ test("invalid share link shows interstitial and redirects", async ({ page }) => 
     window.setInterval = (fn, delay, ...args) => originalSetInterval(fn, 100, ...args);
   });
 
-  await page.goto("/?word=!!!");
+  await page.goto("/?word=!!!", gotoOptions);
   await expect(page.locator("#errorPanel")).toBeVisible();
   await expect(page.locator("#errorMessage")).toContainText("That link doesn't work");
   await expect(page.locator("#errorCountdown")).toContainText("Going back in");
   await page.waitForURL("/", { timeout: 2000 });
+});
+
+test("share link copy shows confirmation", async ({ page }) => {
+  await page.goto("/?word=fotnd&lang=none", gotoOptions);
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.click("#shareCopyBtn");
+  await expect(page.locator("#message")).toContainText("Share link copied.");
 });
