@@ -1,6 +1,6 @@
 FROM node:20-alpine AS build
 
-WORKDIR app
+WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -16,15 +16,15 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-WORKDIR app
-RUN chown -R node:node .
+WORKDIR /app
+RUN chown -R node:node /app
 
 USER node
 
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY --chown=node:node --from=build app/public/dist ./public/dist
+COPY --chown=node:node --from=build /app/public/dist ./public/dist
 COPY --chown=node:node data ./data
 COPY --chown=node:node server.js ./server.js
 COPY --chown=node:node LICENSE ./LICENSE
