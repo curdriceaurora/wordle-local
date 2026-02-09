@@ -12,6 +12,9 @@ Icon?
 .gitignore
 README.md
 *.md
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!data/dictionaries/README.md
 tests
 tasks
 coverage

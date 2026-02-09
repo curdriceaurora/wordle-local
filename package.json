@@ -1,7 +1,7 @@
 {
-  "name": "wordle-local",
+  "name": "local-hosted-wordle",
   "version": "1.0.0",
-  "description": "Local Wordle with admin-set word of the day",
+  "description": "Local-hosted Wordle with admin-set word of the day",
   "license": "CC0-1.0",
   "main": "server.js",
   "type": "commonjs",
