@@ -5,6 +5,12 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      ADMIN_KEY: ${ADMIN_KEY:-}
+      REQUIRE_ADMIN_KEY: ${REQUIRE_ADMIN_KEY:-true}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

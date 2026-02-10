@@ -11,7 +11,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const REQUIRE_ADMIN_KEY = process.env.REQUIRE_ADMIN_KEY === "true" || NODE_ENV === "production";
-const TRUST_PROXY = process.env.TRUST_PROXY === "true";
+const TRUST_PROXY = process.env.TRUST_PROXY
+  ? process.env.TRUST_PROXY === "true"
+  : NODE_ENV === "production";
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
 

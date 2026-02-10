@@ -43,7 +43,7 @@ When running the public Docker image (NODE_ENV=production), admin endpoints requ
 - **Rate limiting** is enabled by default. Optional overrides:
   - `RATE_LIMIT_MAX` (default 300 requests / 15 min)
   - `RATE_LIMIT_WINDOW_MS` (default 900000)
-- If behind a reverse proxy, set `TRUST_PROXY=true` so rate limiting uses the real client IP.
+- `TRUST_PROXY` defaults to `true` in production so rate limiting uses the real client IP when behind a proxy/Tailscale. Set it to `false` if you are not behind a trusted proxy.
 - Container runs as a non-root user and includes a `/api/health` healthcheck.
 
 ## Languages & Dictionaries
