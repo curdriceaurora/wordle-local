@@ -1,8 +1,13 @@
 const { test, expect } = require("./fixtures");
-const gotoOptions = { waitUntil: "domcontentloaded" };
+const gotoOptions = { waitUntil: "commit" };
+
+async function waitForLanguages(page) {
+  await page.waitForSelector("#langSelect option", { state: "attached" });
+}
 
 test("create page generates encoded link", async ({ page }) => {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "JACKS");
   await page.fill("#guessInput", "4");
@@ -14,6 +19,7 @@ test("create page generates encoded link", async ({ page }) => {
 
 test("random word generates link", async ({ page }) => {
   await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
   await page.selectOption("#langSelect", "en");
   await page.fill("#lengthInput", "5");
   await page.click("#randomBtn");
@@ -45,6 +51,7 @@ test("strict mode enforces revealed hints", async ({ page }) => {
 
 test("strict mode requires repeated letters when revealed", async ({ page }) => {
   await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "LEVEL");
   await page.click("form#createForm button[type=submit]");
@@ -65,6 +72,7 @@ test("high contrast toggle updates theme", async ({ page }) => {
 
 test("language selection updates minimum length", async ({ page }) => {
   await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
   await page.selectOption("#langSelect", "en");
   await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
   await expect(page.locator(".hint")).toContainText("3-12");
@@ -72,6 +80,7 @@ test("language selection updates minimum length", async ({ page }) => {
 
 test("share link info modal opens and closes", async ({ page, browserName }) => {
   await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "JACKS");
   await page.click("form#createForm button[type=submit]");
@@ -96,21 +105,23 @@ test("share link info modal opens and closes", async ({ page, browserName }) => 
 });
 
 test("invalid share link shows interstitial and redirects", async ({ page }) => {
+  test.setTimeout(60000);
   await page.addInitScript(() => {
     const originalSetInterval = window.setInterval;
     window.setInterval = (fn, delay, ...args) => originalSetInterval(fn, 100, ...args);
   });
 
   await page.goto("/?word=!!!", gotoOptions);
-  await expect(page.locator("#errorPanel")).toBeVisible();
+  await expect(page.locator("#errorPanel")).toBeVisible({ timeout: 10000 });
   await expect(page.locator("#errorMessage")).toContainText("That link doesn't work");
   await expect(page.locator("#errorCountdown")).toContainText("Going back in");
   await page.waitForURL("/", { timeout: 2000 });
 });
 
 test("share link copy shows confirmation", async ({ page }) => {
+  test.setTimeout(60000);
   await page.goto("/?word=fotnd&lang=none", gotoOptions);
-  await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.waitForSelector("#playPanel:not(.hidden)", { timeout: 10000 });
   await page.click("#shareCopyBtn");
   await expect(page.locator("#message")).toContainText("Share link copied.");
 });

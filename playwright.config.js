@@ -16,6 +16,7 @@ module.exports = defineConfig({
   testDir: "./tests/ui",
   timeout: 30000,
   retries: 0,
+  workers: process.env.CI ? 1 : 2,
   use: {
     baseURL: "http://localhost:3000",
     headless: true
@@ -25,8 +26,8 @@ module.exports = defineConfig({
     use: { browserName }
   })),
   webServer: {
-    command: "node server.js",
+    command: "RATE_LIMIT_MAX=10000 RATE_LIMIT_WINDOW_MS=60000 node server.js",
     port: 3000,
-    reuseExistingServer: !process.env.CI
+    reuseExistingServer: false
   }
 });
