@@ -6,7 +6,7 @@
   --muted: #94a3b8;
   --accent: #38bdf8;
   --tile-border: #334155;
-  --absent: #1f2937;
+  --absent: #4b5563;
   --present: #f59e0b;
   --correct: #22c55e;
 }
@@ -288,6 +288,7 @@ button:disabled {
 .tile.absent {
   background: var(--absent);
   border-color: transparent;
+  color: #f8fafc;
 }
 
 .tile.present {
@@ -298,32 +299,6 @@ button:disabled {
 .tile.correct {
   background: var(--correct);
   border-color: transparent;
-}
-
-.tile.absent::after,
-.tile.present::after,
-.tile.correct::after {
-  position: absolute;
-  bottom: 0.15rem;
-  right: 0.25rem;
-  font-size: 0.6rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.tile.absent::after {
-  content: "A";
-  color: #f8fafc;
-}
-
-.tile.present::after {
-  content: "P";
-  color: #0f172a;
-}
-
-.tile.correct::after {
-  content: "C";
-  color: #0f172a;
 }
 
 body.high-contrast .tile.correct,
@@ -386,6 +361,8 @@ body.high-contrast .tile.absent {
 
 .key.absent {
   background: var(--absent);
+  color: #f8fafc;
+  box-shadow: inset 0 0 0 1px rgba(248, 250, 252, 0.18);
 }
 
 .key.present {
@@ -394,32 +371,6 @@ body.high-contrast .tile.absent {
 
 .key.correct {
   background: var(--correct);
-}
-
-.key.absent::after,
-.key.present::after,
-.key.correct::after {
-  position: absolute;
-  top: 0.15rem;
-  right: 0.25rem;
-  font-size: 0.55rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.key.absent::after {
-  content: "A";
-  color: #f8fafc;
-}
-
-.key.present::after {
-  content: "P";
-  color: #0f172a;
-}
-
-.key.correct::after {
-  content: "C";
-  color: #0f172a;
 }
 
 .share {
