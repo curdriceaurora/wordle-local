@@ -22,6 +22,7 @@ const PUBLIC_ROOT = path.join(__dirname, "public");
 const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
 const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
 const DICT_PATH = path.join(__dirname, "data", "dictionaries");
+const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -188,6 +189,37 @@ function loadDictionary(file, minLength) {
   };
 }
 
+function loadWordDefinitions(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return new Map();
+  }
+
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const source = parsed && typeof parsed === "object" && parsed.definitions
+      ? parsed.definitions
+      : parsed;
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      console.warn("Definition file is invalid. Continuing without answer meanings.");
+      return new Map();
+    }
+
+    const map = new Map();
+    for (const [word, definition] of Object.entries(source)) {
+      const normalizedWord = normalizeWord(word);
+      if (!/^[A-Z]+$/.test(normalizedWord)) continue;
+      const normalizedDefinition = String(definition || "").trim().replace(/\s+/g, " ");
+      if (!normalizedDefinition) continue;
+      map.set(normalizedWord, normalizedDefinition);
+    }
+    return map;
+  } catch (err) {
+    console.warn("Failed to load local definitions. Continuing without answer meanings.");
+    return new Map();
+  }
+}
+
 const dictionaries = {};
 const availableLanguages = new Map();
 for (const [key, info] of Object.entries(LANGUAGES)) {
@@ -246,6 +278,15 @@ function dictionaryRandomWord(dict, length) {
   if (!list || list.length === 0) return null;
   const index = Math.floor(Math.random() * list.length);
   return list[index];
+}
+
+const englishDefinitions = loadWordDefinitions(EN_DEFINITIONS_PATH);
+
+function lookupAnswerMeaning(lang, word) {
+  if (lang !== "en") return null;
+  const dict = getDictionary(lang);
+  if (!dict || !dictionaryHasWord(dict, word)) return null;
+  return englishDefinitions.get(word) || null;
 }
 
 function evaluateGuess(guess, answer) {
@@ -455,11 +496,17 @@ app.post("/api/guess", (req, res) => {
   const result = evaluateGuess(guess, answer);
   const isCorrect = guess === answer;
 
+  const answerMeaning =
+    reveal && !isCorrect
+      ? lookupAnswerMeaning(lang, answer) || undefined
+      : undefined;
+
   res.json({
     ok: true,
     result,
     isCorrect,
-    answer: reveal && !isCorrect ? answer : undefined
+    answer: reveal && !isCorrect ? answer : undefined,
+    answerMeaning
   });
 });
 

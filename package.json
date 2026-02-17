@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "build": "node scripts/build-assets.js",
+    "definitions:build": "node scripts/build-en-definitions.js",
     "test": "jest",
     "test:ui": "UI_COVERAGE=1 node scripts/ui-coverage-clean.js && UI_COVERAGE=1 playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
     "test:ui:fast": "UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium node scripts/ui-coverage-clean.js && UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
@@ -28,6 +29,7 @@
     "istanbul-reports": "^3.1.7",
     "jest": "^29.7.0",
     "supertest": "^6.3.4",
-    "v8-to-istanbul": "^9.2.0"
+    "v8-to-istanbul": "^9.2.0",
+    "wordnet-db": "^3.1.14"
   }
 }

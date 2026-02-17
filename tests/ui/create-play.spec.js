@@ -34,6 +34,29 @@ test("play puzzle from encoded link", async ({ page }) => {
   await expect(page.locator("#message")).toContainText("Solved in 1/6");
 });
 
+test("reveals a local meaning after final failed guess", async ({ page }) => {
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+
+  const failedGuesses = ["SLATE", "CRATE", "STONE", "TRAIL", "ABATE", "ADORE"];
+  for (let i = 0; i < failedGuesses.length; i += 1) {
+    await page.keyboard.type(failedGuesses[i]);
+    await page.keyboard.press("Enter");
+    await expect(
+      page.locator(
+        `#board .row:nth-child(${i + 1}) .tile.absent, #board .row:nth-child(${i + 1}) .tile.present, #board .row:nth-child(${i + 1}) .tile.correct`
+      )
+    ).toHaveCount(5);
+  }
+
+  await expect(page.locator("#message")).toContainText("Out of tries. Word was CRANE.");
+  await expect(page.locator("#message")).toContainText("Meaning:");
+});
+
 test("strict mode enforces revealed hints", async ({ page }) => {
   await page.goto("/?word=fotnd&lang=none", gotoOptions);
   await page.check("#strictToggle");

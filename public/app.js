@@ -361,7 +361,15 @@ async function submitGuess() {
 
     if (currentRow === maxGuesses - 1) {
       locked = true;
-      setMessage(data.answer ? `Out of tries. Word was ${data.answer}.` : "Out of tries.");
+      if (data.answer) {
+        const suffix =
+          typeof data.answerMeaning === "string" && data.answerMeaning.trim()
+            ? ` Meaning: ${data.answerMeaning.trim()}`
+            : "";
+        setMessage(`Out of tries. Word was ${data.answer}.${suffix}`);
+      } else {
+        setMessage("Out of tries.");
+      }
       return;
     }
 

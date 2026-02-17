@@ -54,6 +54,7 @@
 **Acceptance criteria:**
 - Correct guess displays “Solved in X/Y”.
 - On final failure, answer is revealed.
+- If a local meaning exists for the revealed answer, it is displayed to the player.
 
 ### 3.4 Strict Mode
 - Enforces all revealed hints:
@@ -70,7 +71,7 @@
 - Increases contrast and provides extra visual indicators.
 
 **Acceptance criteria:**
-- Color palette switches and tiles/keys show A/P/C markers.
+- Color palette switches to a higher-contrast palette for board and keyboard states.
 
 ### 3.6 Daily Word
 - Admin sets a daily word and optional date.
@@ -98,6 +99,7 @@
 - If dictionary selected, guesses are validated against it.
 - Languages with missing dictionary files are omitted from language options.
 - English dictionary is sourced from wordlist-en_US-2020.12.07 (derived from SCOWL) with attribution in `data/dictionaries/wordlist-en_US-2020.12.07-README.txt`.
+- English meanings are sourced from local `en-definitions.json` generated from Princeton WordNet 3.1 data.
 
 **Acceptance criteria:**
 - “Not in word list” displayed for invalid guesses when dictionary is active.
@@ -136,6 +138,7 @@
 - Stateless gameplay: client submits guesses, server evaluates by decoding.
 - Persistent data: daily word stored in `data/word.json`.
 - Dictionaries stored in `data/dictionaries/*.txt`.
+- Local answer-meaning dictionary stored in `data/dictionaries/en-definitions.json`.
 
 ### 4.3 API Endpoints
 - `GET /api/meta`: returns length/guess bounds and language list.
@@ -173,7 +176,6 @@
 
 ## 6. Accessibility Requirements (WCAG 2.2 AA)
 - **Text contrast** minimum 4.5:1.
-- **Non‑color indicators** (A/P/C markers on tiles/keys).
 - **Keyboard access** for all actions.
 - **Visible focus** for all interactive elements.
 - **Skip link** to main content.
@@ -189,6 +191,7 @@
 - Rate limiting enabled to reduce abuse (configurable via `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS`).
 - Security headers added via Helmet.
 - Shareable links encode the word but do not conceal it from those who know the cipher; intended for light‑weight sharing, not secrecy.
+- Word meanings are served from local static files only (no runtime third-party API calls).
 
 ## 8. Testing Requirements
 - **Unit/API tests**: encode/decode, dictionary validation, puzzle metadata, guess evaluation.
