@@ -496,10 +496,10 @@ app.post("/api/guess", (req, res) => {
   const result = evaluateGuess(guess, answer);
   const isCorrect = guess === answer;
 
-  const answerMeaning =
-    reveal && !isCorrect
-      ? lookupAnswerMeaning(lang, answer) || undefined
-      : undefined;
+  const shouldIncludeMeaning = isCorrect || (reveal && !isCorrect);
+  const answerMeaning = shouldIncludeMeaning
+    ? lookupAnswerMeaning(lang, answer) || undefined
+    : undefined;
 
   res.json({
     ok: true,

@@ -54,7 +54,7 @@
 **Acceptance criteria:**
 - Correct guess displays “Solved in X/Y”.
 - On final failure, answer is revealed.
-- If a local meaning exists for the revealed answer, it is displayed to the player.
+- If a local meaning exists for the answer, it is displayed when the game ends (solved or revealed on failure).
 
 ### 3.4 Strict Mode
 - Enforces all revealed hints:

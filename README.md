@@ -40,6 +40,7 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 ## Create & Share
 - Create a puzzle on the Create screen.
 - Share links are encoded for convenience, not security.
+- For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 
 ## Daily Word (API-only)
 There is no admin UI. Use the API endpoints below.

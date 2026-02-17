@@ -277,6 +277,37 @@ describe("Wordle API", () => {
     );
   });
 
+  test("returns local answer meaning when english puzzle is solved", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp();
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(true);
+        expect(guessResponse.body.answer).toBeUndefined();
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
+  });
+
   test("rejects invalid guesses and dictionary misses", async () => {
     const app = loadApp();
     const encodeResponse = await request(app)

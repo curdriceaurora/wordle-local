@@ -355,7 +355,11 @@ async function submitGuess() {
 
     if (data.isCorrect) {
       locked = true;
-      setMessage(`Solved in ${currentRow + 1}/${maxGuesses}!`);
+      const suffix =
+        typeof data.answerMeaning === "string" && data.answerMeaning.trim()
+          ? ` Meaning: ${data.answerMeaning.trim()}`
+          : "";
+      setMessage(`Solved in ${currentRow + 1}/${maxGuesses}!${suffix}`);
       return;
     }
 

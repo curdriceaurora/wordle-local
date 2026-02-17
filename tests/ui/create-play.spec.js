@@ -34,6 +34,19 @@ test("play puzzle from encoded link", async ({ page }) => {
   await expect(page.locator("#message")).toContainText("Solved in 1/6");
 });
 
+test("shows local meaning when english puzzle is solved", async ({ page }) => {
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.keyboard.type("CRANE");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Solved in 1/6!");
+  await expect(page.locator("#message")).toContainText("Meaning:");
+});
+
 test("reveals a local meaning after final failed guess", async ({ page }) => {
   await page.goto("/", gotoOptions);
   await waitForLanguages(page);
