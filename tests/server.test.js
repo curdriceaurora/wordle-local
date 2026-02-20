@@ -988,6 +988,30 @@ describe("Admin auth", () => {
     expect(response.status).toBe(200);
     expect(response.body.word).toBe("CRANE");
   });
+
+  test("protects /api/admin provider scaffold when key is configured", async () => {
+    const app = loadApp("secret");
+    const unauthorized = await request(app).get("/api/admin/providers");
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorized.body.error).toBe("Admin key required.");
+
+    const authorized = await request(app)
+      .get("/api/admin/providers")
+      .set("x-admin-key", "secret");
+    expect(authorized.status).toBe(501);
+    expect(authorized.body.error).toBe("Provider admin endpoints are not implemented yet.");
+  });
+
+  test("keeps /api/admin provider scaffold open only when admin key is optional", async () => {
+    const optionalAdmin = loadApp({ requireAdminKey: false });
+    const optionalResponse = await request(optionalAdmin).get("/api/admin/providers");
+    expect(optionalResponse.status).toBe(501);
+
+    const requiredAdmin = loadApp({ nodeEnv: "production" });
+    const requiredResponse = await request(requiredAdmin).get("/api/admin/providers");
+    expect(requiredResponse.status).toBe(401);
+    expect(requiredResponse.body.error).toBe("Admin key required.");
+  });
 });
 
 describe("Stats API", () => {

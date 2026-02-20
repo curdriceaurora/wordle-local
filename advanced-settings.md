@@ -7,6 +7,11 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 
 - `ADMIN_KEY` — secret key required for admin endpoints.
 - `REQUIRE_ADMIN_KEY` — set to `true` to force admin auth (default `true` in production).
+- Current admin API endpoints:
+  - `GET /api/word`
+  - `POST /api/word`
+  - `PATCH /api/admin/stats/profile/:id`
+  - `GET /api/admin/providers` (scaffold endpoint, currently returns `501`)
 
 ## Network/Proxy
 - `TRUST_PROXY` — set to `true` if running behind a reverse proxy or Tailscale (default `true` in production).
