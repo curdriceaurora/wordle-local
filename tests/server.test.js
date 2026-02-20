@@ -967,14 +967,6 @@ describe("Admin auth", () => {
 });
 
 describe("Stats API", () => {
-  function getTodayDateString() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-
   test("creates a new profile and reuses it for case-insensitive name matches", async () => {
     const tempStore = createTempStatsStore();
     try {
@@ -1003,7 +995,7 @@ describe("Stats API", () => {
       const app = loadApp({ statsStorePath: tempStore.filePath });
       const profileResponse = await request(app).post("/api/stats/profile").send({ name: "Ben" });
       const profileId = profileResponse.body.playerId;
-      const dailyKey = `${getTodayDateString()}|en|abcde`;
+      const dailyKey = "2024-01-15|en|abcde";
 
       const first = await request(app).post("/api/stats/result").send({
         profileId,
