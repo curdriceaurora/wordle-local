@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "providerId": "libreoffice-dictionaries",
+    "variant": "en-GB",
+    "repository": "https://github.com/LibreOffice/dictionaries",
+    "commit": "9c8f3c3d8f1d0f730f5f4f0e99a9dd90b3f21a11",
+    "dicPath": "en/en_GB.dic",
+    "affPath": "en/en_GB.aff"
+  },
+  "sourceFiles": {
+    "dic": {
+      "path": "en/en_GB.dic",
+      "sha256": "11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff",
+      "byteSize": 1024000
+    },
+    "aff": {
+      "path": "en/en_GB.aff",
+      "sha256": "ffeeddccbbaa0099887766554433221100ffeeddccbbaa009988776655443322",
+      "byteSize": 20480
+    }
+  },
+  "retrievedAt": "2026-02-20T00:00:00.000Z",
+  "processing": {
+    "policyVersion": "v1",
+    "guessPoolPolicy": "expanded-forms",
+    "answerPoolPolicy": "base-plus-irregular",
+    "allowCharacters": "A-Z",
+    "hunspellLibrary": "nspell@2.1.5"
+  },
+  "artifacts": {
+    "guessPoolPath": "providers/en-GB/guess-pool.txt",
+    "answerPoolPath": "providers/en-GB/answer-pool.txt",
+    "generatedAt": "2026-02-20T00:05:00.000Z"
+  },
+  "stats": {
+    "rawEntries": 64000,
+    "expandedForms": 196000,
+    "guessPoolSize": 78000,
+    "answerPoolSize": 13000,
+    "filteredAnswerCount": 400
+  }
+}
