@@ -1136,8 +1136,7 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
   }
 
   try {
-    let updatedProfile = null;
-    await leaderboardStore.mutate((draft) => {
+    const snapshot = await leaderboardStore.mutate((draft) => {
       const profile = draft.profiles.find((item) => item.id === profileId);
       if (!profile) {
         throw new StatsApiError(404, "Player profile not found.");
@@ -1151,10 +1150,13 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
       const nowIso = new Date().toISOString();
       profile.name = nextName;
       profile.updatedAt = nowIso;
-      updatedProfile = { ...profile };
     });
+    const persistedProfile = snapshot.profiles.find((item) => item.id === profileId) || null;
+    if (!persistedProfile) {
+      throw new Error("Failed to persist player profile rename.");
+    }
 
-    return res.json({ ok: true, profile: updatedProfile });
+    return res.json({ ok: true, profile: persistedProfile });
   } catch (err) {
     return statsServiceError(res, err);
   }
