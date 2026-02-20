@@ -25,6 +25,7 @@
 - [ ] Ambiguous wording removed (deterministic tie-breaks, ordering, and timestamp semantics).
 - [ ] Redundant fields have explicit consistency rules.
 - [ ] Normalization/recovery rules include invalid examples and drop behavior.
+- [ ] Retention-pruned data is not misclassified as invalid-content normalization.
 - [ ] JSON/file formatting conventions verified (including trailing newline for JSON files).
 - [ ] `docs/review-preflight.md` checklist reviewed before requesting review.
 

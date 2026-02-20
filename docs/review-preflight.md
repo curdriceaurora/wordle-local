@@ -11,6 +11,7 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 5. Redundancy checks: duplicate facts (for example, key/date pairs) have explicit consistency rules.
 6. Recovery rules: malformed or partial data behavior is explicit and testable.
 7. File conventions: JSON formatting and trailing newline conventions are preserved.
+8. Retention semantics: retention-pruned rows are tracked as pruning (`wasPruned`) and not mislabeled as invalid content.
 
 ## Review Comment Handling Standard
 1. Triage every comment as `must-fix`, `follow-up issue`, or `decline with rationale`.
