@@ -26,9 +26,13 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 20. Fixture parity for spawned pages: Playwright pages created outside shared fixtures must explicitly apply the same timeout/navigation defaults as fixture-managed pages.
 21. Endpoint docs parity: documentation and rollout guides must match exact endpoint response contracts (status code + payload shape), not shorthand text.
 22. Schema identity consistency: new JSON schema `$id` values must follow existing repository domain/namespace conventions.
+23. Import integrity fail-closed: remote provider fetch paths must require both expected checksums (no silent no-op verification path).
+24. Atomic write resilience: JSON persistence must use unique temp paths, cleanup-on-failure, and cross-platform replace semantics when destination files already exist (including Windows rename behavior).
+25. Manifest intent clarity: stage-specific manifests must avoid near-duplicate contract shapes unless fully aligned; include explicit type and unambiguous source-vs-local path fields.
+26. Error-branch test parity: every new runtime error code/path added in a PR must have direct test coverage.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
