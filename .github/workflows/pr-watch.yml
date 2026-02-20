@@ -48,11 +48,3 @@ jobs:
         run: node scripts/pr-watch-status.js
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Delayed Refresh For Pull Request Events
-        if: ${{ github.event_name == 'pull_request' }}
-        run: |
-          sleep 150
-          node scripts/pr-watch-status.js
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

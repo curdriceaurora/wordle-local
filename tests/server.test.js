@@ -1192,6 +1192,27 @@ describe("Stats API", () => {
       tempStore.cleanup();
     }
   });
+
+  test("keeps puzzle gameplay endpoints available when stats storage is unavailable", async () => {
+    const tempStore = createTempStatsStore({
+      version: 2,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      profiles: [],
+      resultsByProfile: {}
+    });
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const puzzle = await request(app).post("/api/puzzle").send({ code: "FOTND", lang: "none", guesses: 6 });
+      expect(puzzle.status).toBe(200);
+
+      const guess = await request(app).post("/api/guess").send({ code: "FOTND", guess: "JACKS", lang: "none" });
+      expect(guess.status).toBe(200);
+      expect(Array.isArray(guess.body.result)).toBe(true);
+      expect(guess.body.result).toEqual(["correct", "correct", "correct", "correct", "correct"]);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
 });
 
 describe("Daily word data recovery and daily route", () => {

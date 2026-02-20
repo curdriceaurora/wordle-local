@@ -11,6 +11,10 @@ function buildProfileName(prefix, browserName) {
   return `${prefix} ${RUN_TOKEN}${browserName.slice(0, 1).toUpperCase()}`;
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function localDateOffset(days) {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -24,10 +28,13 @@ function dailyLink(day) {
   return `/?word=${DAILY_WORD_CODE}&lang=${DAILY_LANG}&daily=1&day=${day}`;
 }
 
-async function openDaily(page, day) {
+async function openDaily(page, day, options = {}) {
+  const expectProfilePanel = options.expectProfilePanel !== false;
   await page.goto(dailyLink(day), gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)");
-  await expect(page.locator("#profilePanel")).toBeVisible();
+  if (expectProfilePanel) {
+    await expect(page.locator("#profilePanel")).toBeVisible();
+  }
 }
 
 async function createIsolatedPage(browser) {
@@ -39,9 +46,26 @@ async function createIsolatedPage(browser) {
 }
 
 async function selectProfile(page, name) {
+  const activeWrap = page.locator("#activePlayerWrap");
+  if (await activeWrap.isVisible()) {
+    await page.click("#switchPlayerBtn");
+  }
+
+  const existingChip = page.locator("#savedPlayers .player-chip", {
+    hasText: new RegExp(`^${escapeRegex(name)}(?: \\(active\\))?$`)
+  });
+  if (await existingChip.count()) {
+    await existingChip.first().click();
+    await expect(activeWrap).toContainText(name);
+    await expect(page.locator("#keyboard")).not.toHaveClass(/locked/);
+    return;
+  }
+
+  await expect(page.locator("#profileNameInput")).toBeVisible();
   await page.fill("#profileNameInput", name);
   await page.click("#profileForm button[type=submit]");
   await expect(page.locator("#activePlayerWrap")).toContainText(name);
+  await expect(page.locator("#keyboard")).not.toHaveClass(/locked/);
 }
 
 async function solveInOne(page) {
@@ -224,4 +248,23 @@ test("leaderboard range uses server-side date windows", async ({ page, browserNa
   await page.selectOption("#leaderboardRange", "overall");
   playerRow = page.locator("#leaderboardBody tr", { hasText: playerName }).first();
   await expect(playerRow.locator("td").nth(3)).toHaveText("2");
+});
+
+test("daily puzzle remains playable when stats service is unavailable", async ({ page }) => {
+  const day = localDateOffset(0);
+  await page.route("**/api/stats/**", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Stats service unavailable right now. Try again soon." })
+    });
+  });
+
+  await openDaily(page, day, { expectProfilePanel: false });
+  await expect(page.locator("#profilePanel")).toBeHidden();
+  await expect(page.locator("#leaderboardPanel")).toBeHidden();
+  await expect(page.locator("#keyboard")).not.toHaveClass(/locked/);
+  await expect(page.locator("#message")).toContainText("temporarily unavailable");
+
+  await solveInOne(page);
 });
