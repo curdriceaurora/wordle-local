@@ -48,7 +48,9 @@
 3. <compatibility concern>
 
 ## Copilot Review Loop
-- [ ] Copilot review has been triggered for the latest PR head SHA (`/copilot review` or auto-workflow).
+- [ ] Native Copilot auto-review with **Review new pushes** is enabled for this repository/PR flow.
+- [ ] Manual Copilot refresh was not used unless intentionally requesting an additional premium review.
+- [ ] PR sticky status comment (`<!-- pr-watch-status -->`) is present and reflects latest CI/review state.
 - [ ] After ~5 minutes, review threads were checked (`npm run pr:nits -- --pr <number>` or equivalent API check).
 - [ ] Every actionable nit has a resolution commit and thread reply, or an explicit decline rationale.
 

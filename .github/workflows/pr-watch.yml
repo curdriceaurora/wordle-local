@@ -1,0 +1,58 @@
+name: PR Watch Status
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+  pull_request_review_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  check_run:
+    types:
+      - completed
+  check_suite:
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  issues: read
+
+concurrency:
+  group: pr-watch-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr-watch:
+    if: ${{ github.event_name != 'issue_comment' || github.event.issue.pull_request != null }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Update PR Watch Sticky Comment
+        run: node scripts/pr-watch-status.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
