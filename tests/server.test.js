@@ -113,6 +113,19 @@ function formatUtcDate(offsetDays) {
   return date.toISOString().slice(0, 10);
 }
 
+function formatLocalDateFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatLocalDateOffset(offsetDays) {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  return formatLocalDateFromDate(date);
+}
+
 async function withTempDictionary(file, contents, fn) {
   const fullPath = path.join(DICT_PATH, file);
   const original = fs.readFileSync(fullPath, "utf8");
@@ -1048,6 +1061,135 @@ describe("Stats API", () => {
       expect(leaderboard.body.rows[0].profileId).toBe(profileId);
       expect(leaderboard.body.rows[0].wins).toBe(1);
       expect(leaderboard.body.rows[0].played).toBe(1);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("computes leaderboard windows and streak from server-local dates", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const profileResponse = await request(app).post("/api/stats/profile").send({ name: "Casey" });
+      const profileId = profileResponse.body.playerId;
+
+      const today = formatLocalDateOffset(0);
+      const yesterday = formatLocalDateOffset(-1);
+      const twoDaysAgo = formatLocalDateOffset(-2);
+      const oldDay = formatLocalDateOffset(-40);
+
+      const entries = [
+        { date: today, key: `${today}|none|aaaaa`, won: true, attempts: 3 },
+        { date: yesterday, key: `${yesterday}|none|bbbbb`, won: true, attempts: 2 },
+        { date: twoDaysAgo, key: `${twoDaysAgo}|none|ccccc`, won: false, attempts: null },
+        { date: oldDay, key: `${oldDay}|none|ddddd`, won: true, attempts: 1 }
+      ];
+
+      for (const entry of entries) {
+        const response = await request(app).post("/api/stats/result").send({
+          profileId,
+          dailyKey: entry.key,
+          won: entry.won,
+          attempts: entry.attempts,
+          maxGuesses: 6
+        });
+        expect(response.status).toBe(200);
+      }
+
+      const currentMonthKey = today.slice(0, 7);
+      const expectedMonthlyPlayed = entries.filter((entry) => entry.date.slice(0, 7) === currentMonthKey).length;
+      const expectedMonthlyWins = entries.filter(
+        (entry) => entry.date.slice(0, 7) === currentMonthKey && entry.won
+      ).length;
+
+      const profileSummary = await request(app).get(`/api/stats/profile/${profileId}`);
+      expect(profileSummary.status).toBe(200);
+      expect(profileSummary.body.summary.overall.played).toBe(4);
+      expect(profileSummary.body.summary.overall.wins).toBe(3);
+      expect(profileSummary.body.summary.overall.bestAttempts).toBe(1);
+      expect(profileSummary.body.summary.weekly.played).toBe(3);
+      expect(profileSummary.body.summary.weekly.wins).toBe(2);
+      expect(profileSummary.body.summary.weekly.bestAttempts).toBe(2);
+      expect(profileSummary.body.summary.monthly.played).toBe(expectedMonthlyPlayed);
+      expect(profileSummary.body.summary.monthly.wins).toBe(expectedMonthlyWins);
+      expect(profileSummary.body.summary.streak).toBe(2);
+
+      const weekly = await request(app).get("/api/stats/leaderboard?range=weekly");
+      expect(weekly.status).toBe(200);
+      expect(weekly.body.rows).toHaveLength(1);
+      expect(weekly.body.rows[0].played).toBe(3);
+      expect(weekly.body.rows[0].wins).toBe(2);
+      expect(weekly.body.rows[0].streak).toBe(2);
+
+      const monthly = await request(app).get("/api/stats/leaderboard?range=monthly");
+      expect(monthly.status).toBe(200);
+      expect(monthly.body.rows).toHaveLength(1);
+      expect(monthly.body.rows[0].played).toBe(expectedMonthlyPlayed);
+      expect(monthly.body.rows[0].wins).toBe(expectedMonthlyWins);
+
+      const overall = await request(app).get("/api/stats/leaderboard?range=overall");
+      expect(overall.status).toBe(200);
+      expect(overall.body.rows).toHaveLength(1);
+      expect(overall.body.rows[0].played).toBe(4);
+      expect(overall.body.rows[0].wins).toBe(3);
+      expect(overall.body.rows[0].bestAttempts).toBe(1);
+      expect(overall.body.rows[0].streak).toBe(2);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("sorts leaderboard rows with deterministic tie-breakers", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const today = formatLocalDateOffset(0);
+      const oneDayAgo = formatLocalDateOffset(-1);
+      const twoDaysAgo = formatLocalDateOffset(-2);
+      const threeDaysAgo = formatLocalDateOffset(-3);
+
+      async function createPlayer(name) {
+        const response = await request(app).post("/api/stats/profile").send({ name });
+        return response.body.playerId;
+      }
+
+      async function submit(profileId, date, code, won, attempts) {
+        const response = await request(app).post("/api/stats/result").send({
+          profileId,
+          dailyKey: `${date}|none|${code}`,
+          won,
+          attempts,
+          maxGuesses: 6
+        });
+        expect(response.status).toBe(200);
+      }
+
+      const playerAva = await createPlayer("Ava");
+      const playerBen = await createPlayer("Ben");
+      const playerCara = await createPlayer("Cara");
+      const playerZoe = await createPlayer("Zoe");
+
+      await submit(playerAva, today, "av001", true, 2);
+      await submit(playerAva, oneDayAgo, "av002", true, 3);
+      await submit(playerAva, twoDaysAgo, "av003", true, 4);
+
+      await submit(playerBen, today, "be001", true, 3);
+      await submit(playerBen, oneDayAgo, "be002", true, 4);
+      await submit(playerBen, twoDaysAgo, "be003", true, 5);
+
+      await submit(playerCara, today, "ca001", true, 1);
+      await submit(playerCara, oneDayAgo, "ca002", true, 2);
+      await submit(playerCara, twoDaysAgo, "ca003", true, 3);
+      await submit(playerCara, threeDaysAgo, "ca004", false, null);
+
+      await submit(playerZoe, today, "zo001", true, 1);
+      await submit(playerZoe, oneDayAgo, "zo002", true, 2);
+
+      const leaderboard = await request(app).get("/api/stats/leaderboard?range=overall");
+      expect(leaderboard.status).toBe(200);
+      expect(leaderboard.body.rows).toHaveLength(4);
+      expect(leaderboard.body.rows.map((row) => row.name)).toEqual(["Ava", "Ben", "Cara", "Zoe"]);
+      expect(leaderboard.body.rows.map((row) => row.rank)).toEqual([1, 2, 3, 4]);
     } finally {
       tempStore.cleanup();
     }
