@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
 const { execFileSync } = require("node:child_process");
+const {
+  buildReviewThreads,
+  listActionableThreads
+} = require("./lib/pr-review-utils");
 
 function readFlag(name) {
   const direct = process.argv.find((arg) => arg.startsWith(`--${name}=`));
@@ -30,11 +34,6 @@ function usageAndExit() {
   process.exit(1);
 }
 
-function formatLine(comment) {
-  const body = String(comment.body || "").replace(/\s+/g, " ").trim();
-  return body.length > 160 ? `${body.slice(0, 157)}...` : body;
-}
-
 const prRaw = readFlag("pr");
 if (!prRaw || !/^\d+$/.test(prRaw)) {
   usageAndExit();
@@ -50,44 +49,8 @@ const comments = ghJson([
   "--paginate"
 ]);
 
-const threads = new Map();
-
-comments.forEach((comment) => {
-  if (comment.in_reply_to_id) {
-    const root = threads.get(comment.in_reply_to_id);
-    if (root) {
-      root.replies.push(comment);
-    }
-    return;
-  }
-  threads.set(comment.id, { root: comment, replies: [] });
-});
-
-const actionable = [];
-threads.forEach(({ root, replies }) => {
-  const threadComments = [root, ...replies].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
-  const latest = threadComments[threadComments.length - 1];
-  const isBot = String(root.user?.login || "").includes("[bot]");
-  const needsReply = latest.user?.login !== me;
-  if (needsReply) {
-    actionable.push({
-      id: root.id,
-      author: root.user?.login || "unknown",
-      path: root.path || "(general)",
-      line: root.original_line || root.line || "-",
-      isBot,
-      url: root.html_url,
-      summary: formatLine(root)
-    });
-  }
-});
-
-actionable.sort((a, b) => {
-  if (a.isBot !== b.isBot) return a.isBot ? -1 : 1;
-  return a.path.localeCompare(b.path);
-});
+const threads = buildReviewThreads(comments);
+const actionable = listActionableThreads(threads, me);
 
 console.log(`PR #${prNumber} nit report for ${repo}`);
 console.log(`Open threads requiring repo-owner response: ${actionable.length}`);
