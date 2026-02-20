@@ -30,6 +30,14 @@ async function openDaily(page, day) {
   await expect(page.locator("#profilePanel")).toBeVisible();
 }
 
+async function createIsolatedPage(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultNavigationTimeout(60000);
+  page.setDefaultTimeout(60000);
+  return { context, page };
+}
+
 async function selectProfile(page, name) {
   await page.fill("#profileNameInput", name);
   await page.click("#profileForm button[type=submit]");
@@ -86,11 +94,11 @@ test("concurrent clients persist results for different profiles", async ({ page,
 
   await openDaily(page, day);
 
-  const contextA = await browser.newContext();
-  const contextB = await browser.newContext();
+  const isolatedA = await createIsolatedPage(browser);
+  const isolatedB = await createIsolatedPage(browser);
   try {
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
+    const pageA = isolatedA.page;
+    const pageB = isolatedB.page;
 
     await Promise.all([openDaily(pageA, day), openDaily(pageB, day)]);
     await Promise.all([selectProfile(pageA, playerA), selectProfile(pageB, playerB)]);
@@ -108,8 +116,8 @@ test("concurrent clients persist results for different profiles", async ({ page,
     await expect(page.locator("#statPlayed")).toHaveText("1");
     await expect(page.locator("#statBest")).toHaveText("2");
   } finally {
-    await contextA.close();
-    await contextB.close();
+    await isolatedA.context.close();
+    await isolatedB.context.close();
   }
 });
 
@@ -120,11 +128,11 @@ test("concurrent clients submitting same profile preserve best-attempt outcome",
   await openDaily(page, day);
   await selectProfile(page, sharedPlayer);
 
-  const contextA = await browser.newContext();
-  const contextB = await browser.newContext();
+  const isolatedA = await createIsolatedPage(browser);
+  const isolatedB = await createIsolatedPage(browser);
   try {
-    const pageA = await contextA.newPage();
-    const pageB = await contextB.newPage();
+    const pageA = isolatedA.page;
+    const pageB = isolatedB.page;
 
     await Promise.all([openDaily(pageA, day), openDaily(pageB, day)]);
     await Promise.all([selectProfile(pageA, sharedPlayer), selectProfile(pageB, sharedPlayer)]);
@@ -140,8 +148,8 @@ test("concurrent clients submitting same profile preserve best-attempt outcome",
     await expect(playerRow.locator("td").nth(2)).toHaveText("1");
     await expect(playerRow.locator("td").nth(3)).toHaveText("1");
   } finally {
-    await contextA.close();
-    await contextB.close();
+    await isolatedA.context.close();
+    await isolatedB.context.close();
   }
 });
 
@@ -155,9 +163,9 @@ test("server-backed daily stats persist across browser contexts", async ({ page,
   await expect(page.locator("#statPlayed")).toHaveText("1");
   await expect(page.locator("#statBest")).toHaveText("1");
 
-  const context2 = await browser.newContext();
+  const isolated = await createIsolatedPage(browser);
   try {
-    const page2 = await context2.newPage();
+    const page2 = isolated.page;
     await openDaily(page2, day);
     await expect(page2.locator("#leaderboardBody")).toContainText(playerName);
     await selectProfile(page2, playerName);
@@ -165,7 +173,7 @@ test("server-backed daily stats persist across browser contexts", async ({ page,
     await expect(page2.locator("#statWinRate")).toHaveText("100%");
     await expect(page2.locator("#statBest")).toHaveText("1");
   } finally {
-    await context2.close();
+    await isolated.context.close();
   }
 });
 
@@ -179,9 +187,9 @@ test("server replay policy keeps best attempts for repeated same-day submissions
   await expect(page.locator("#statPlayed")).toHaveText("1");
   await expect(page.locator("#statBest")).toHaveText("2");
 
-  const context2 = await browser.newContext();
+  const isolated = await createIsolatedPage(browser);
   try {
-    const page2 = await context2.newPage();
+    const page2 = isolated.page;
     await openDaily(page2, day);
     await selectProfile(page2, playerName);
     await solveInOne(page2);
@@ -189,7 +197,7 @@ test("server replay policy keeps best attempts for repeated same-day submissions
     await expect(page2.locator("#statBest")).toHaveText("1");
     await expect(page2.locator("#leaderboardBody")).toContainText(playerName);
   } finally {
-    await context2.close();
+    await isolated.context.close();
   }
 });
 

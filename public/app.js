@@ -334,20 +334,37 @@ async function refreshLeaderboard(range) {
 
 async function refreshStatsPanels(options = {}) {
   const activeProfileId = String(options.activeProfileId || profileState.activeProfileId || "").trim();
-  try {
-    if (activeProfileId) {
+  let profileError = "";
+  let leaderboardError = "";
+
+  if (activeProfileId) {
+    try {
       await refreshProfileSummary(activeProfileId);
+    } catch (err) {
+      profileError = err?.message || STATS_REQUEST_ERROR;
     }
+  }
+
+  try {
     await refreshLeaderboard(options.range);
-    setProfileStatus("");
   } catch (err) {
-    setProfileStatus(err?.message || STATS_REQUEST_ERROR);
+    leaderboardError = err?.message || STATS_REQUEST_ERROR;
     leaderboardState.loading = false;
     leaderboardState.rows = [];
     leaderboardState.description = describeRange(
       options.range || leaderboardState.range || LEADERBOARD_RANGE.weekly
     );
   }
+
+  if (profileError && leaderboardError) {
+    setProfileStatus(`${profileError} ${leaderboardError}`);
+    return;
+  }
+  if (profileError || leaderboardError) {
+    setProfileStatus(profileError || leaderboardError);
+    return;
+  }
+  setProfileStatus("");
 }
 
 async function selectActiveProfile(profileId) {
@@ -396,6 +413,7 @@ function renderLeaderboard() {
   }
 
   leaderboardPanelEl.classList.remove("hidden");
+  leaderboardRangeEl.disabled = profileState.loading || leaderboardState.loading;
   const range = leaderboardRangeEl.value || leaderboardState.range || LEADERBOARD_RANGE.weekly;
   leaderboardMetaEl.textContent = leaderboardState.loading
     ? "Loading leaderboard..."
@@ -1156,7 +1174,17 @@ if (switchPlayerBtnEl) {
 if (leaderboardRangeEl) {
   leaderboardRangeEl.addEventListener("change", async () => {
     if (!dailyMode) return;
-    await refreshStatsPanels({ range: leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly });
+    try {
+      await refreshLeaderboard(leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly);
+      setProfileStatus("");
+    } catch (err) {
+      setProfileStatus(err?.message || STATS_REQUEST_ERROR);
+      leaderboardState.loading = false;
+      leaderboardState.rows = [];
+      leaderboardState.description = describeRange(
+        leaderboardRangeEl.value || leaderboardState.range || LEADERBOARD_RANGE.weekly
+      );
+    }
     renderDailyPlayerPanels();
   });
 }
