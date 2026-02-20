@@ -28,6 +28,13 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 2. Reply with commit hash + validation command when code/docs changed.
 3. Do not leave unresolved threads when merging.
 
+## Copilot Review Loop
+1. Every PR open/synchronize event auto-triggers Copilot review via `/.github/workflows/copilot-review.yml`.
+2. Wait ~5 minutes after each push before triage to allow Copilot comments to land.
+3. Run `npm run pr:nits -- --pr <number>` to get a deterministic thread list that still needs owner response.
+4. For each nit: fix, validate (`npm run check` minimum), reply with commit hash, then re-trigger if needed.
+5. Merge target is `0` unresolved actionable nits.
+
 ## Local Gate Requirement
 Run `npm run check` before requesting review. ESLint + Ajv schema checks are required and must pass locally.
 

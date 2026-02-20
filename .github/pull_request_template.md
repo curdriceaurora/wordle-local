@@ -46,5 +46,10 @@
 2. <policy/edge-case>
 3. <compatibility concern>
 
+## Copilot Review Loop
+- [ ] Copilot review has been triggered for the latest PR head SHA (`/copilot review` or auto-workflow).
+- [ ] After ~5 minutes, review threads were checked (`npm run pr:nits -- --pr <number>` or equivalent API check).
+- [ ] Every actionable nit has a resolution commit and thread reply, or an explicit decline rationale.
+
 ## Post-Merge Learning Update (Required)
 - [ ] After merge, update `docs/review-preflight.md` -> **Merged PR Learnings Log** with any review nits and the preventive rule added.
