@@ -81,6 +81,14 @@ let profileState = {
 };
 
 const PROFILE_STORAGE_KEY = "lhw_profiles_v1";
+const MAX_PROFILES = 20;
+const MAX_DAILY_RESULTS_PER_PROFILE = 400;
+let leaderboardDataVersion = 0;
+let leaderboardCache = {
+  version: -1,
+  range: "",
+  rows: []
+};
 
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
@@ -162,6 +170,23 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
+function getStoredItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (err) {
+    return null;
+  }
+}
+
+function setStoredItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 function toLocalDateString(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -210,18 +235,15 @@ function loadProfileState() {
   const empty = {
     profiles: [],
     activeProfileId: null,
-    stats: {}
+    stats: {},
+    wasPruned: false
   };
-  let raw = null;
-  try {
-    raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-  } catch (err) {
-    return empty;
-  }
+  let wasPruned = false;
+  const raw = getStoredItem(PROFILE_STORAGE_KEY);
   if (!raw) return empty;
   const parsed = safeJsonParse(raw, null);
   if (!parsed || typeof parsed !== "object") return empty;
-  const profiles = Array.isArray(parsed.profiles)
+  let profiles = Array.isArray(parsed.profiles)
     ? parsed.profiles
       .map((profile) => {
         const id = String(profile?.id || "").trim();
@@ -232,24 +254,124 @@ function loadProfileState() {
       })
       .filter(Boolean)
     : [];
-  const stats = parsed.stats && typeof parsed.stats === "object" ? parsed.stats : {};
+  if (profiles.length > MAX_PROFILES) {
+    profiles = profiles
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(-MAX_PROFILES);
+    wasPruned = true;
+  }
+
+  const rawStats = parsed.stats && typeof parsed.stats === "object" ? parsed.stats : {};
+  const stats = {};
+  const knownProfileIds = new Set(profiles.map((profile) => profile.id));
+  for (const profile of profiles) {
+    const rawDaily = rawStats?.[profile.id]?.dailyResults;
+    if (!rawDaily || typeof rawDaily !== "object") continue;
+    const normalizedDaily = {};
+    for (const [puzzleKey, entry] of Object.entries(rawDaily)) {
+      const date = String(entry?.date || "");
+      if (!parseDateString(date)) {
+        wasPruned = true;
+        continue;
+      }
+      const attempts = Number(entry?.attempts);
+      const maxGuesses = Number(entry?.maxGuesses);
+      normalizedDaily[String(puzzleKey)] = {
+        date,
+        won: Boolean(entry?.won),
+        attempts: Number.isFinite(attempts) && attempts > 0 ? attempts : null,
+        maxGuesses: Number.isFinite(maxGuesses) && maxGuesses > 0 ? maxGuesses : null,
+        updatedAt: String(entry?.updatedAt || "") || new Date().toISOString()
+      };
+    }
+    if (trimDailyResults(normalizedDaily)) {
+      wasPruned = true;
+    }
+    if (Object.keys(normalizedDaily).length) {
+      stats[profile.id] = { dailyResults: normalizedDaily };
+    }
+  }
+  if (Object.keys(rawStats).some((profileId) => !knownProfileIds.has(profileId))) {
+    wasPruned = true;
+  }
+
   const activeProfileId = profiles.some((profile) => profile.id === parsed.activeProfileId)
     ? parsed.activeProfileId
     : null;
+  if (parsed.activeProfileId && !activeProfileId) {
+    wasPruned = true;
+  }
 
   return {
     profiles,
     activeProfileId,
-    stats
+    stats,
+    wasPruned
   };
 }
 
-function saveProfileState() {
-  try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileState));
-  } catch (err) {
-    // Ignore storage failures so gameplay still works.
+function saveProfileState(options = {}) {
+  if (options.bumpLeaderboardVersion) {
+    leaderboardDataVersion += 1;
+    leaderboardCache = {
+      version: -1,
+      range: "",
+      rows: []
+    };
   }
+  setStoredItem(PROFILE_STORAGE_KEY, JSON.stringify(profileState));
+}
+
+function trimDailyResults(dailyResults) {
+  const entries = Object.entries(dailyResults);
+  if (entries.length <= MAX_DAILY_RESULTS_PER_PROFILE) {
+    return false;
+  }
+  entries.sort((a, b) => {
+    const aDate = String(a[1]?.date || "");
+    const bDate = String(b[1]?.date || "");
+    if (aDate !== bDate) return aDate.localeCompare(bDate);
+    const aUpdatedAt = String(a[1]?.updatedAt || "");
+    const bUpdatedAt = String(b[1]?.updatedAt || "");
+    return aUpdatedAt.localeCompare(bUpdatedAt);
+  });
+
+  const pruneCount = entries.length - MAX_DAILY_RESULTS_PER_PROFILE;
+  for (let i = 0; i < pruneCount; i += 1) {
+    delete dailyResults[entries[i][0]];
+  }
+  return true;
+}
+
+function enforceProfileLimits() {
+  let changed = false;
+  if (profileState.profiles.length > MAX_PROFILES) {
+    const sortedProfiles = profileState.profiles
+      .slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const keptProfiles = sortedProfiles.slice(-MAX_PROFILES);
+    const keptIds = new Set(keptProfiles.map((profile) => profile.id));
+    profileState.profiles = keptProfiles;
+    if (profileState.activeProfileId && !keptIds.has(profileState.activeProfileId)) {
+      profileState.activeProfileId = null;
+    }
+    Object.keys(profileState.stats).forEach((profileId) => {
+      if (!keptIds.has(profileId)) {
+        delete profileState.stats[profileId];
+      }
+    });
+    changed = true;
+  }
+
+  for (const profile of profileState.profiles) {
+    const dailyResults = ensureProfileBucket(profile.id);
+    if (trimDailyResults(dailyResults)) {
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function normalizeProfileName(rawName) {
@@ -409,27 +531,35 @@ function renderLeaderboard() {
   const range = leaderboardRangeEl.value || "weekly";
   leaderboardMetaEl.textContent = describeRange(range);
 
-  const rows = profileState.profiles
-    .map((profile) => {
-      const allEntries = listProfileEntries(profile.id);
-      const filtered = allEntries.filter((entry) => isEntryInRange(entry, range));
-      const summary = summarizeEntries(filtered);
-      return {
-        profile,
-        ...summary,
-        streak: computeCurrentStreak(allEntries)
-      };
-    })
-    .filter((row) => row.played > 0)
-    .sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      if (b.winRate !== a.winRate) return b.winRate - a.winRate;
-      if (b.played !== a.played) return b.played - a.played;
-      if ((a.bestAttempts || 99) !== (b.bestAttempts || 99)) {
-        return (a.bestAttempts || 99) - (b.bestAttempts || 99);
-      }
-      return a.profile.name.localeCompare(b.profile.name);
-    });
+  let rows = leaderboardCache.rows;
+  if (leaderboardCache.version !== leaderboardDataVersion || leaderboardCache.range !== range) {
+    rows = profileState.profiles
+      .map((profile) => {
+        const allEntries = listProfileEntries(profile.id);
+        const filtered = allEntries.filter((entry) => isEntryInRange(entry, range));
+        const summary = summarizeEntries(filtered);
+        return {
+          profile,
+          ...summary,
+          streak: computeCurrentStreak(allEntries)
+        };
+      })
+      .filter((row) => row.played > 0)
+      .sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+        if (b.played !== a.played) return b.played - a.played;
+        if ((a.bestAttempts || 99) !== (b.bestAttempts || 99)) {
+          return (a.bestAttempts || 99) - (b.bestAttempts || 99);
+        }
+        return a.profile.name.localeCompare(b.profile.name);
+      });
+    leaderboardCache = {
+      version: leaderboardDataVersion,
+      range,
+      rows
+    };
+  }
 
   leaderboardBodyEl.innerHTML = "";
   if (!rows.length) {
@@ -536,7 +666,10 @@ function upsertDailyResult(won, attempts, guessLimit) {
     bucket[dailyPuzzleKey] = next;
   }
 
-  saveProfileState();
+  if (trimDailyResults(bucket)) {
+    // Keep localStorage bounded for long-running family usage.
+  }
+  saveProfileState({ bumpLeaderboardVersion: true });
   renderDailyPlayerPanels();
 }
 
@@ -566,6 +699,7 @@ function createOrSelectProfile(rawName) {
   profileState.profiles.push(profile);
   profileState.activeProfileId = profile.id;
   ensureProfileBucket(profile.id);
+  enforceProfileLimits();
   saveProfileState();
   return { ok: true, profile, reused: false };
 }
@@ -1222,12 +1356,12 @@ langSelect.addEventListener("change", () => {
 contrastToggle.addEventListener("change", () => {
   const enabled = contrastToggle.checked;
   applyHighContrast(enabled);
-  localStorage.setItem("highContrast", String(enabled));
+  setStoredItem("highContrast", String(enabled));
 });
 
 strictToggle.addEventListener("change", () => {
   strictMode = strictToggle.checked;
-  localStorage.setItem("strictMode", String(strictMode));
+  setStoredItem("strictMode", String(strictMode));
   updatePlayMeta();
   if (strictMode) {
     setMessage("Strict mode enabled.");
@@ -1236,10 +1370,18 @@ strictToggle.addEventListener("change", () => {
 
 async function init() {
   await loadMeta();
-  profileState = loadProfileState();
+  const loadedProfileState = loadProfileState();
+  profileState = {
+    profiles: loadedProfileState.profiles || [],
+    activeProfileId: loadedProfileState.activeProfileId || null,
+    stats: loadedProfileState.stats || {}
+  };
+  if (enforceProfileLimits() || loadedProfileState.wasPruned) {
+    saveProfileState({ bumpLeaderboardVersion: true });
+  }
 
-  const storedContrast = localStorage.getItem("highContrast") === "true";
-  const storedStrict = localStorage.getItem("strictMode") === "true";
+  const storedContrast = getStoredItem("highContrast") === "true";
+  const storedStrict = getStoredItem("strictMode") === "true";
   contrastToggle.checked = storedContrast;
   strictToggle.checked = storedStrict;
   strictMode = storedStrict;
