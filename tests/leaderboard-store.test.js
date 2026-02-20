@@ -151,6 +151,78 @@ describe("leaderboard-store", () => {
     expect(snapshot.resultsByProfile.p1).toBeUndefined();
   });
 
+  test("prunes excess results per profile using date and updatedAt", async () => {
+    const filePath = tempFilePath();
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(99),
+      profiles: [
+        {
+          id: "p1",
+          name: "PlayerOne",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1)
+        }
+      ],
+      resultsByProfile: {
+        p1: {
+          "2026-02-01|en|first": {
+            date: "2026-02-01",
+            won: true,
+            attempts: 2,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(1)
+          },
+          "2026-02-01|en|second": {
+            date: "2026-02-01",
+            won: true,
+            attempts: 3,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(2)
+          },
+          "2026-02-02|en|third": {
+            date: "2026-02-02",
+            won: false,
+            attempts: null,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(3)
+          },
+          "2026-02-03|en|fourth": {
+            date: "2026-02-03",
+            won: true,
+            attempts: 1,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(4)
+          }
+        }
+      }
+    };
+
+    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+
+    const store = new LeaderboardStore({
+      filePath,
+      maxProfiles: 10,
+      maxResultsPerProfile: 3,
+      logger: { warn: jest.fn() }
+    });
+
+    const snapshot = await store.getSnapshot();
+    const profileResults = snapshot.resultsByProfile.p1;
+    const resultKeys = Object.keys(profileResults).sort();
+
+    expect(snapshot.profiles.map((profile) => profile.id)).toEqual(["p1"]);
+    expect(resultKeys).toHaveLength(3);
+    expect(resultKeys).not.toContain("2026-02-01|en|first");
+    expect(resultKeys).toContain("2026-02-01|en|second");
+    expect(resultKeys).toContain("2026-02-02|en|third");
+    expect(resultKeys).toContain("2026-02-03|en|fourth");
+  });
+
   test("serializes concurrent mutations without losing updates", async () => {
     const filePath = tempFilePath();
     const store = new LeaderboardStore({ filePath, logger: { warn: jest.fn() } });
@@ -258,5 +330,59 @@ describe("leaderboard-store", () => {
     expect(normalized.wasPruned).toBe(true);
     expect(normalized.state.profiles.map((profile) => profile.id)).toEqual(["p2", "p3"]);
     expect(normalized.state.resultsByProfile.p1).toBeUndefined();
+  });
+
+  test("normalize helper rejects non-ISO timestamps, whitespace-normalized profiles, and coerced numbers", () => {
+    const payload = {
+      version: 1,
+      updatedAt: "2/20/2026",
+      profiles: [
+        {
+          id: " ava ",
+          name: "Ava ",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1)
+        }
+      ],
+      resultsByProfile: {
+        ava: {
+          "2026-02-20|en|abcde": {
+            date: "2026-02-20",
+            won: true,
+            attempts: 3,
+            maxGuesses: "6",
+            submissionCount: "1",
+            updatedAt: isoAt(2)
+          }
+        }
+      }
+    };
+
+    const normalized = normalizeLeaderboardState(payload);
+    expect(normalized.hadInvalidContent).toBe(true);
+    expect(normalized.state.updatedAt).toBe(new Date(0).toISOString());
+    expect(normalized.state.profiles).toEqual([]);
+    expect(normalized.state.resultsByProfile).toEqual({});
+  });
+
+  test("invalid retention options fall back to defaults", () => {
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(10),
+      profiles: Array.from({ length: 21 }, (_, idx) => ({
+        id: `p${idx + 1}`,
+        name: `Player${String.fromCharCode(65 + (idx % 26))}`,
+        createdAt: isoAt(idx + 1),
+        updatedAt: isoAt(idx + 1)
+      })),
+      resultsByProfile: {}
+    };
+
+    const normalized = normalizeLeaderboardState(payload, {
+      maxProfiles: 0,
+      maxResultsPerProfile: 0
+    });
+    expect(normalized.state.profiles).toHaveLength(20);
+    expect(normalized.wasPruned).toBe(true);
   });
 });
