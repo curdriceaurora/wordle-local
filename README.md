@@ -85,7 +85,7 @@ There is no admin UI. Use the API endpoints below.
 
 ## Security Notes
 - Rate limiting is enabled by default.
-- `TRUST_PROXY=true` is recommended behind proxies or Tailscale.
+- `TRUST_PROXY=true` is recommended behind proxies or Tailscale (`TRUST_PROXY_HOPS` defaults to `1`).
 - Container runs as a non-root user and includes `/api/health`.
 
 ## Troubleshooting

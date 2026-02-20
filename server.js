@@ -17,6 +17,7 @@ const REQUIRE_ADMIN_KEY = process.env.REQUIRE_ADMIN_KEY === "true" || NODE_ENV =
 const TRUST_PROXY = process.env.TRUST_PROXY
   ? process.env.TRUST_PROXY === "true"
   : NODE_ENV === "production";
+const TRUST_PROXY_HOPS = parsePositiveInteger(process.env.TRUST_PROXY_HOPS, 1);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
 const PERF_LOGGING = process.env.PERF_LOGGING === "true";
@@ -909,7 +910,7 @@ function statsServiceError(res, err) {
 
 app.disable("x-powered-by");
 if (TRUST_PROXY) {
-  app.set("trust proxy", 1);
+  app.set("trust proxy", TRUST_PROXY_HOPS);
 }
 app.use(
   helmet({
@@ -1412,6 +1413,11 @@ function startServer(listener = app.listen.bind(app)) {
     }
     if (!ADMIN_KEY && REQUIRE_ADMIN_KEY) {
       console.warn("ADMIN_KEY is required for admin endpoints in production.");
+    }
+    if (!TRUST_PROXY && NODE_ENV === "production") {
+      console.warn(
+        "TRUST_PROXY is disabled. If deployed behind a reverse proxy, load balancer, or Tailscale, set TRUST_PROXY=true (and configure TRUST_PROXY_HOPS as needed)."
+      );
     }
   });
 }
