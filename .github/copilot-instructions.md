@@ -10,7 +10,7 @@ This is a local, privacy-first Wordle clone designed to run anywhere. The philos
 - **Frontend**: Vanilla HTML, CSS, and JavaScript.
   - **No Frameworks**: Do not use React, Vue, Angular, or Tailwind. Keep the stack dependency-free unless absolutely necessary.
   - **No Build Pipelines**: Currently relies on static serving of `public/` assets, though there is some `esbuild` usage in the scripts structure. Prefer native vanilla syntax.
-  - **State**: Client-side state (profiles, leaderboards, saved games) is stored entirely in browser `localStorage`.
+  - **State**: Gameplay UI state is client-side, but daily profiles/leaderboards are server-backed (`data/leaderboard.json` via `/api/stats/*`).
 - **Testing**:
   - **Unit/Backend**: Jest.
   - **End-to-End (E2E)**: Playwright (with `@axe-core/playwright` for accessibility testing).
