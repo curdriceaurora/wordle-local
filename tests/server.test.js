@@ -6,6 +6,10 @@ const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
+const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(
+  EN_DEFINITIONS_INDEX_DIR,
+  "manifest.json"
+);
 const ORIGINAL_WORD_DATA = fs.readFileSync(DATA_PATH, "utf8");
 const ORIGINAL_ENV = { ...process.env };
 
@@ -187,6 +191,19 @@ async function withTempDefinitionIndex(definitions, fn) {
       fs.rmSync(backupPath, { recursive: true, force: true });
     }
   }
+}
+
+async function withTempDefinitionIndexManifest(definitions, mutateManifest, fn) {
+  return withTempDefinitionIndex(definitions, async () => {
+    const manifest = JSON.parse(fs.readFileSync(EN_DEFINITIONS_INDEX_MANIFEST_PATH, "utf8"));
+    mutateManifest(manifest);
+    fs.writeFileSync(
+      EN_DEFINITIONS_INDEX_MANIFEST_PATH,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      "utf8"
+    );
+    return fn();
+  });
 }
 
 describe("Wordle API", () => {
@@ -479,6 +496,126 @@ describe("Wordle API", () => {
           expect(guessResponse.body.isCorrect).toBe(true);
           expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
         });
+      }
+    );
+  });
+
+  test("falls back to lazy map loading when indexed shard metadata is null", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        await withTempDefinitionIndexManifest(
+          {
+            CRANE: "a large long-necked wading bird"
+          },
+          (manifest) => {
+            manifest.shards.C = null;
+          },
+          async () => {
+            const app = loadApp({ definitionsMode: "indexed" });
+            const encodeResponse = await request(app)
+              .post("/api/encode")
+              .send({ word: "CRANE", lang: "en" });
+
+            const code = encodeResponse.body.code;
+            const guessResponse = await request(app)
+              .post("/api/guess")
+              .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+            expect(guessResponse.status).toBe(200);
+            expect(guessResponse.body.isCorrect).toBe(true);
+            expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+          }
+        );
+      }
+    );
+  });
+
+  test("falls back to lazy map loading when indexed shard file metadata is invalid", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        await withTempDefinitionIndexManifest(
+          {
+            CRANE: "a large long-necked wading bird"
+          },
+          (manifest) => {
+            manifest.shards.C = { file: "" };
+          },
+          async () => {
+            const app = loadApp({ definitionsMode: "indexed" });
+            const encodeResponse = await request(app)
+              .post("/api/encode")
+              .send({ word: "CRANE", lang: "en" });
+
+            const code = encodeResponse.body.code;
+            const guessResponse = await request(app)
+              .post("/api/guess")
+              .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+            expect(guessResponse.status).toBe(200);
+            expect(guessResponse.body.isCorrect).toBe(true);
+            expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+          }
+        );
+      }
+    );
+  });
+
+  test("falls back to lazy map loading when indexed shard metadata is missing", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        await withTempDefinitionIndexManifest(
+          {
+            CRANE: "a large long-necked wading bird"
+          },
+          (manifest) => {
+            delete manifest.shards.C;
+          },
+          async () => {
+            const app = loadApp({ definitionsMode: "indexed" });
+            const encodeResponse = await request(app)
+              .post("/api/encode")
+              .send({ word: "CRANE", lang: "en" });
+
+            const code = encodeResponse.body.code;
+            const guessResponse = await request(app)
+              .post("/api/guess")
+              .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+            expect(guessResponse.status).toBe(200);
+            expect(guessResponse.body.isCorrect).toBe(true);
+            expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+          }
+        );
       }
     );
   });

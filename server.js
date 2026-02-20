@@ -429,14 +429,17 @@ function loadDefinitionShard(shardId) {
   if (!manifest || !manifest.shards) {
     return INDEX_LOOKUP_UNAVAILABLE;
   }
-  if (typeof manifest.shards[shardId] !== "object") {
-    return null;
-  }
-
-  const fileName = manifest.shards[shardId].file;
-  if (!fileName) {
+  const shardEntry = manifest.shards[shardId];
+  if (
+    !shardEntry ||
+    typeof shardEntry !== "object" ||
+    Array.isArray(shardEntry) ||
+    typeof shardEntry.file !== "string" ||
+    shardEntry.file.length === 0
+  ) {
     return INDEX_LOOKUP_UNAVAILABLE;
   }
+  const fileName = shardEntry.file;
   const shardPath = path.join(EN_DEFINITIONS_INDEX_DIR, fileName);
   if (!fs.existsSync(shardPath)) {
     return INDEX_LOOKUP_UNAVAILABLE;
@@ -464,9 +467,6 @@ function lookupDefinitionByIndexedShard(word) {
   const shard = loadDefinitionShard(shardId);
   if (shard === INDEX_LOOKUP_UNAVAILABLE) {
     return INDEX_LOOKUP_UNAVAILABLE;
-  }
-  if (!shard) {
-    return null;
   }
   return shard.get(word) || null;
 }
