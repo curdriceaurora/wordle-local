@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://local-hosted-wordle/schemas/provider-import-manifest.schema.json",
+  "$id": "https://local-hosted-wordle.dev/schemas/provider-import-manifest.schema.json",
   "title": "LibreOffice Provider Import Manifest",
   "description": "Persisted provenance and processing metadata for an imported LibreOffice English variant.",
   "type": "object",
