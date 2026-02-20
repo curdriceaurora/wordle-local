@@ -80,12 +80,10 @@ let keyboardKeyEls = new Map();
 let profileState = {
   profiles: [],
   activeProfileId: null,
-  stats: {}
+  summaries: Object.create(null),
+  loading: false
 };
 
-const PROFILE_STORAGE_KEY = "lhw_profiles_v1";
-const MAX_PROFILES = 20;
-const MAX_DAILY_RESULTS_PER_PROFILE = 400;
 const KEYBOARD_LAYOUT = Object.freeze([
   Object.freeze(["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]),
   Object.freeze(["A", "S", "D", "F", "G", "H", "J", "K", "L"]),
@@ -97,17 +95,13 @@ const LEADERBOARD_RANGE = Object.freeze({
   monthly: "monthly",
   overall: "overall"
 });
-let leaderboardDataVersion = 0;
-let leaderboardCache = {
-  version: -1,
-  range: "",
+const STATS_REQUEST_ERROR = "Stats unavailable right now. Try again soon.";
+let leaderboardState = {
+  range: LEADERBOARD_RANGE.weekly,
+  description: "",
+  rows: [],
   dayKey: "",
-  rows: []
-};
-let profilePerformanceCache = {
-  version: -1,
-  dayKey: "",
-  byProfile: new Map()
+  loading: false
 };
 
 function isShareModalOpen() {
@@ -194,14 +188,6 @@ function showErrorPanel(message) {
   }, 1000);
 }
 
-function safeJsonParse(raw, fallback) {
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    return fallback;
-  }
-}
-
 function getStoredItem(key) {
   try {
     return localStorage.getItem(key);
@@ -243,177 +229,17 @@ function parseDateString(value) {
   return date;
 }
 
-function dateToUtcStamp(dateString) {
-  const date = parseDateString(dateString);
-  if (!date) return null;
-  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function diffDays(laterDate, earlierDate) {
-  const laterStamp = dateToUtcStamp(laterDate);
-  const earlierStamp = dateToUtcStamp(earlierDate);
-  if (laterStamp === null || earlierStamp === null) return null;
-  return Math.floor((laterStamp - earlierStamp) / (24 * 60 * 60 * 1000));
-}
-
-function shiftDate(dateString, deltaDays) {
-  const date = parseDateString(dateString);
-  if (!date) return null;
-  date.setDate(date.getDate() + deltaDays);
-  return toLocalDateString(date);
-}
-
-function loadProfileState() {
-  const empty = {
-    profiles: [],
-    activeProfileId: null,
-    stats: {},
-    wasPruned: false
-  };
-  let wasPruned = false;
-  const raw = getStoredItem(PROFILE_STORAGE_KEY);
-  if (!raw) return empty;
-  const parsed = safeJsonParse(raw, null);
-  if (!parsed || typeof parsed !== "object") return empty;
-  let profiles = Array.isArray(parsed.profiles)
-    ? parsed.profiles
-      .map((profile) => {
-        const id = String(profile?.id || "").trim();
-        const name = normalizeProfileName(profile?.name);
-        const createdAt = String(profile?.createdAt || "").trim() || new Date().toISOString();
-        if (!id || !name) return null;
-        return { id, name, createdAt };
-      })
-      .filter(Boolean)
-    : [];
-  if (profiles.length > MAX_PROFILES) {
-    profiles = profiles
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .slice(-MAX_PROFILES);
-    wasPruned = true;
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok) {
+    return payload;
   }
-
-  const rawStats = parsed.stats && typeof parsed.stats === "object" ? parsed.stats : {};
-  const stats = {};
-  const knownProfileIds = new Set(profiles.map((profile) => profile.id));
-  for (const profile of profiles) {
-    const rawDaily = rawStats?.[profile.id]?.dailyResults;
-    if (!rawDaily || typeof rawDaily !== "object") continue;
-    const normalizedDaily = {};
-    for (const [puzzleKey, entry] of Object.entries(rawDaily)) {
-      const date = String(entry?.date || "");
-      if (!parseDateString(date)) {
-        wasPruned = true;
-        continue;
-      }
-      const attempts = Number(entry?.attempts);
-      const maxGuesses = Number(entry?.maxGuesses);
-      normalizedDaily[String(puzzleKey)] = {
-        date,
-        won: Boolean(entry?.won),
-        attempts: Number.isFinite(attempts) && attempts > 0 ? attempts : null,
-        maxGuesses: Number.isFinite(maxGuesses) && maxGuesses > 0 ? maxGuesses : null,
-        updatedAt: String(entry?.updatedAt || "") || new Date().toISOString()
-      };
-    }
-    if (trimDailyResults(normalizedDaily)) {
-      wasPruned = true;
-    }
-    if (Object.keys(normalizedDaily).length) {
-      stats[profile.id] = { dailyResults: normalizedDaily };
-    }
-  }
-  if (Object.keys(rawStats).some((profileId) => !knownProfileIds.has(profileId))) {
-    wasPruned = true;
-  }
-
-  const activeProfileId = profiles.some((profile) => profile.id === parsed.activeProfileId)
-    ? parsed.activeProfileId
-    : null;
-  if (parsed.activeProfileId && !activeProfileId) {
-    wasPruned = true;
-  }
-
-  return {
-    profiles,
-    activeProfileId,
-    stats,
-    wasPruned
-  };
-}
-
-function resetLeaderboardCaches() {
-  leaderboardCache = {
-    version: -1,
-    range: "",
-    dayKey: "",
-    rows: []
-  };
-  profilePerformanceCache = {
-    version: -1,
-    dayKey: "",
-    byProfile: new Map()
-  };
-}
-
-function saveProfileState(options = {}) {
-  if (options.bumpLeaderboardVersion) {
-    leaderboardDataVersion += 1;
-    resetLeaderboardCaches();
-  }
-  setStoredItem(PROFILE_STORAGE_KEY, JSON.stringify(profileState));
-}
-
-function trimDailyResults(dailyResults) {
-  const entries = Object.entries(dailyResults);
-  if (entries.length <= MAX_DAILY_RESULTS_PER_PROFILE) {
-    return false;
-  }
-  entries.sort((a, b) => {
-    const aDate = String(a[1]?.date || "");
-    const bDate = String(b[1]?.date || "");
-    if (aDate !== bDate) return aDate.localeCompare(bDate);
-    const aUpdatedAt = String(a[1]?.updatedAt || "");
-    const bUpdatedAt = String(b[1]?.updatedAt || "");
-    return aUpdatedAt.localeCompare(bUpdatedAt);
-  });
-
-  const pruneCount = entries.length - MAX_DAILY_RESULTS_PER_PROFILE;
-  for (let i = 0; i < pruneCount; i += 1) {
-    delete dailyResults[entries[i][0]];
-  }
-  return true;
-}
-
-function enforceProfileLimits() {
-  let changed = false;
-  if (profileState.profiles.length > MAX_PROFILES) {
-    const sortedProfiles = profileState.profiles
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    const keptProfiles = sortedProfiles.slice(-MAX_PROFILES);
-    const keptIds = new Set(keptProfiles.map((profile) => profile.id));
-    profileState.profiles = keptProfiles;
-    if (profileState.activeProfileId && !keptIds.has(profileState.activeProfileId)) {
-      profileState.activeProfileId = null;
-    }
-    Object.keys(profileState.stats).forEach((profileId) => {
-      if (!keptIds.has(profileId)) {
-        delete profileState.stats[profileId];
-      }
-    });
-    changed = true;
-  }
-
-  for (const profile of profileState.profiles) {
-    const dailyResults = ensureProfileBucket(profile.id);
-    if (trimDailyResults(dailyResults)) {
-      changed = true;
-    }
-  }
-
-  return changed;
+  const err = new Error(
+    typeof payload?.error === "string" && payload.error.trim() ? payload.error : STATS_REQUEST_ERROR
+  );
+  err.status = response.status;
+  throw err;
 }
 
 function normalizeProfileName(rawName) {
@@ -424,160 +250,44 @@ function normalizeProfileName(rawName) {
   return cleaned;
 }
 
-function profileIdForName(name) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24) || "player";
-  let nextId = base;
-  let i = 2;
-  while (profileState.profiles.some((profile) => profile.id === nextId)) {
-    nextId = `${base}-${i}`;
-    i += 1;
-  }
-  return nextId;
-}
-
 function getActiveProfile() {
   if (!profileState.activeProfileId) return null;
   return profileState.profiles.find((profile) => profile.id === profileState.activeProfileId) || null;
 }
 
-function ensureProfileBucket(profileId) {
-  if (!profileState.stats[profileId] || typeof profileState.stats[profileId] !== "object") {
-    profileState.stats[profileId] = {};
-  }
-  if (
-    !profileState.stats[profileId].dailyResults ||
-    typeof profileState.stats[profileId].dailyResults !== "object"
-  ) {
-    profileState.stats[profileId].dailyResults = {};
-  }
-  return profileState.stats[profileId].dailyResults;
-}
-
-function createSummaryAccumulator() {
+function createEmptySummaryBucket() {
   return {
-    played: 0,
-    wins: 0,
-    bestAttempts: Number.POSITIVE_INFINITY
+    streak: 0,
+    overall: { played: 0, wins: 0, winRate: 0, bestAttempts: null },
+    weekly: { played: 0, wins: 0, winRate: 0, bestAttempts: null },
+    monthly: { played: 0, wins: 0, winRate: 0, bestAttempts: null },
+    totalSubmissions: 0
   };
 }
 
-function addSummaryEntry(accumulator, won, attempts) {
-  accumulator.played += 1;
-  if (won) {
-    accumulator.wins += 1;
-    if (Number.isFinite(attempts) && attempts > 0) {
-      accumulator.bestAttempts = Math.min(accumulator.bestAttempts, attempts);
-    }
-  }
+function getProfileSummary(profileId) {
+  const summary = profileState.summaries[profileId];
+  return summary && typeof summary === "object" ? summary : createEmptySummaryBucket();
 }
 
-function finalizeSummaryAccumulator(accumulator) {
-  const winRate = accumulator.played
-    ? Math.round((accumulator.wins / accumulator.played) * 100)
-    : 0;
-  return {
-    played: accumulator.played,
-    wins: accumulator.wins,
-    winRate,
-    bestAttempts: Number.isFinite(accumulator.bestAttempts)
-      ? accumulator.bestAttempts
-      : null
+function upsertKnownProfile(profile) {
+  const id = String(profile?.id || "").trim();
+  const name = normalizeProfileName(profile?.name);
+  if (!id || !name) return null;
+
+  const existing = profileState.profiles.find((item) => item.id === id);
+  if (existing) {
+    existing.name = name;
+    return existing;
+  }
+
+  const normalized = {
+    id,
+    name,
+    createdAt: String(profile?.createdAt || "").trim() || new Date().toISOString()
   };
-}
-
-function computeCurrentStreakFromMap(winsByDate, latestDate, today) {
-  if (!latestDate || !winsByDate.get(latestDate)) {
-    return 0;
-  }
-  const gap = diffDays(today, latestDate);
-  if (gap === null || gap > 1) {
-    return 0;
-  }
-  let streak = 1;
-  let cursor = latestDate;
-  while (true) {
-    const previous = shiftDate(cursor, -1);
-    if (!previous || !winsByDate.get(previous)) {
-      break;
-    }
-    streak += 1;
-    cursor = previous;
-  }
-  return streak;
-}
-
-function buildProfilePerformance(profileId, today) {
-  const dailyResults = ensureProfileBucket(profileId);
-  const winsByDate = new Map();
-  const overall = createSummaryAccumulator();
-  const weekly = createSummaryAccumulator();
-  const monthly = createSummaryAccumulator();
-  const monthKey = today.slice(0, 7);
-  let latestDate = "";
-
-  Object.values(dailyResults).forEach((entry) => {
-    const date = String(entry?.date || "");
-    if (!parseDateString(date)) {
-      return;
-    }
-    if (!latestDate || date > latestDate) {
-      latestDate = date;
-    }
-    const won = Boolean(entry?.won);
-    const attempts = Number(entry?.attempts);
-    winsByDate.set(date, Boolean(winsByDate.get(date)) || won);
-    addSummaryEntry(overall, won, attempts);
-
-    const age = diffDays(today, date);
-    if (age !== null && age >= 0 && age <= 6) {
-      addSummaryEntry(weekly, won, attempts);
-    }
-    if (date.slice(0, 7) === monthKey) {
-      addSummaryEntry(monthly, won, attempts);
-    }
-  });
-
-  return {
-    overall: finalizeSummaryAccumulator(overall),
-    weekly: finalizeSummaryAccumulator(weekly),
-    monthly: finalizeSummaryAccumulator(monthly),
-    streak: computeCurrentStreakFromMap(winsByDate, latestDate, today)
-  };
-}
-
-function getProfilePerformance(profileId) {
-  const today = toLocalDateString(new Date());
-  if (
-    profilePerformanceCache.version !== leaderboardDataVersion ||
-    profilePerformanceCache.dayKey !== today
-  ) {
-    profilePerformanceCache = {
-      version: leaderboardDataVersion,
-      dayKey: today,
-      byProfile: new Map()
-    };
-  }
-  if (!profilePerformanceCache.byProfile.has(profileId)) {
-    profilePerformanceCache.byProfile.set(
-      profileId,
-      buildProfilePerformance(profileId, today)
-    );
-  }
-  return profilePerformanceCache.byProfile.get(profileId);
-}
-
-function getSummaryForRange(performance, range) {
-  if (range === LEADERBOARD_RANGE.weekly) {
-    return performance.weekly;
-  }
-  if (range === LEADERBOARD_RANGE.monthly) {
-    return performance.monthly;
-  }
-  return performance.overall;
+  profileState.profiles.push(normalized);
+  return normalized;
 }
 
 function describeRange(range) {
@@ -588,6 +298,67 @@ function describeRange(range) {
     return "Current calendar month";
   }
   return "All recorded daily games";
+}
+
+async function refreshProfileSummary(profileId) {
+  if (!profileId) return;
+  const payload = await requestJson(`/api/stats/profile/${encodeURIComponent(profileId)}`);
+  if (payload?.profile) {
+    upsertKnownProfile(payload.profile);
+  }
+  profileState.summaries[profileId] =
+    payload?.summary && typeof payload.summary === "object"
+      ? payload.summary
+      : createEmptySummaryBucket();
+}
+
+async function refreshLeaderboard(range) {
+  const selectedRange =
+    range || (leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly);
+  leaderboardState.loading = true;
+  renderLeaderboard();
+
+  const payload = await requestJson(`/api/stats/leaderboard?range=${encodeURIComponent(selectedRange)}`);
+  leaderboardState = {
+    range: payload?.range || selectedRange,
+    description: payload?.description || describeRange(selectedRange),
+    rows: Array.isArray(payload?.rows) ? payload.rows : [],
+    dayKey: String(payload?.dayKey || ""),
+    loading: false
+  };
+
+  leaderboardState.rows.forEach((row) => {
+    upsertKnownProfile({ id: row?.profileId, name: row?.name });
+  });
+}
+
+async function refreshStatsPanels(options = {}) {
+  const activeProfileId = String(options.activeProfileId || profileState.activeProfileId || "").trim();
+  try {
+    if (activeProfileId) {
+      await refreshProfileSummary(activeProfileId);
+    }
+    await refreshLeaderboard(options.range);
+    setProfileStatus("");
+  } catch (err) {
+    setProfileStatus(err?.message || STATS_REQUEST_ERROR);
+    leaderboardState.loading = false;
+    leaderboardState.rows = [];
+    leaderboardState.description = describeRange(
+      options.range || leaderboardState.range || LEADERBOARD_RANGE.weekly
+    );
+  }
+}
+
+async function selectActiveProfile(profileId) {
+  const id = String(profileId || "").trim();
+  if (!id) return;
+  profileState.activeProfileId = id;
+  profileState.loading = true;
+  renderDailyPlayerPanels();
+  await refreshStatsPanels({ activeProfileId: id });
+  profileState.loading = false;
+  renderDailyPlayerPanels();
 }
 
 function renderSavedPlayers() {
@@ -602,13 +373,11 @@ function renderSavedPlayers() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "player-chip";
+    button.disabled = profileState.loading;
     const isActive = profile.id === profileState.activeProfileId;
     button.textContent = isActive ? `${profile.name} (active)` : profile.name;
     button.addEventListener("click", () => {
-      profileState.activeProfileId = profile.id;
-      saveProfileState();
-      renderDailyPlayerPanels();
-      setProfileStatus("");
+      selectActiveProfile(profile.id);
     });
     savedPlayersEl.appendChild(button);
   });
@@ -627,44 +396,12 @@ function renderLeaderboard() {
   }
 
   leaderboardPanelEl.classList.remove("hidden");
-  const range = leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly;
-  leaderboardMetaEl.textContent = describeRange(range);
+  const range = leaderboardRangeEl.value || leaderboardState.range || LEADERBOARD_RANGE.weekly;
+  leaderboardMetaEl.textContent = leaderboardState.loading
+    ? "Loading leaderboard..."
+    : leaderboardState.description || describeRange(range);
   const renderTimer = startPerfMeasure("ui.render.leaderboard");
-  const today = toLocalDateString(new Date());
-
-  let rows = leaderboardCache.rows;
-  if (
-    leaderboardCache.version !== leaderboardDataVersion ||
-    leaderboardCache.range !== range ||
-    leaderboardCache.dayKey !== today
-  ) {
-    rows = profileState.profiles
-      .map((profile) => {
-        const performance = getProfilePerformance(profile.id);
-        const summary = getSummaryForRange(performance, range);
-        return {
-          profile,
-          ...summary,
-          streak: performance.streak
-        };
-      })
-      .filter((row) => row.played > 0)
-      .sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
-        if (b.played !== a.played) return b.played - a.played;
-        if ((a.bestAttempts || 99) !== (b.bestAttempts || 99)) {
-          return (a.bestAttempts || 99) - (b.bestAttempts || 99);
-        }
-        return a.profile.name.localeCompare(b.profile.name);
-      });
-    leaderboardCache = {
-      version: leaderboardDataVersion,
-      range,
-      dayKey: today,
-      rows
-    };
-  }
+  const rows = Array.isArray(leaderboardState.rows) ? leaderboardState.rows : [];
 
   leaderboardBodyEl.innerHTML = "";
   if (!rows.length) {
@@ -680,13 +417,13 @@ function renderLeaderboard() {
     const tr = document.createElement("tr");
     const safeBest = row.bestAttempts ? String(row.bestAttempts) : "-";
     const values = [
-      String(index + 1),
-      row.profile.name,
-      String(row.wins),
-      String(row.played),
-      `${row.winRate}%`,
+      String(row.rank || index + 1),
+      String(row.name || "-"),
+      String(row.wins || 0),
+      String(row.played || 0),
+      `${Number.isFinite(row.winRate) ? row.winRate : 0}%`,
       safeBest,
-      String(row.streak)
+      String(row.streak || 0)
     ];
     values.forEach((value) => {
       const cell = document.createElement("td");
@@ -707,12 +444,12 @@ function renderActivePlayerStats() {
     return;
   }
 
-  const performance = getProfilePerformance(activeProfile.id);
-  const summary = performance.overall;
+  const profileSummary = getProfileSummary(activeProfile.id);
+  const summary = profileSummary.overall || createEmptySummaryBucket().overall;
   playerStatsEl.classList.remove("hidden");
-  statPlayedEl.textContent = String(summary.played);
-  statWinRateEl.textContent = `${summary.winRate}%`;
-  statStreakEl.textContent = String(performance.streak);
+  statPlayedEl.textContent = String(summary.played || 0);
+  statWinRateEl.textContent = `${summary.winRate || 0}%`;
+  statStreakEl.textContent = String(profileSummary.streak || 0);
   statBestEl.textContent = summary.bestAttempts ? String(summary.bestAttempts) : "-";
 }
 
@@ -731,7 +468,15 @@ function renderDailyPlayerPanels() {
   profileFormEl.classList.toggle("hidden", hasActive);
   activePlayerWrapEl.classList.toggle("hidden", !hasActive);
   switchPlayerBtnEl.classList.toggle("hidden", !hasActive);
-  keyboardEl.classList.toggle("locked", !hasActive);
+  switchPlayerBtnEl.disabled = profileState.loading;
+  if (profileNameInputEl) {
+    profileNameInputEl.disabled = profileState.loading;
+  }
+  const submitButton = profileFormEl.querySelector("button[type=submit]");
+  if (submitButton) {
+    submitButton.disabled = profileState.loading;
+  }
+  keyboardEl.classList.toggle("locked", !hasActive || profileState.loading);
 
   if (hasActive) {
     activePlayerNameEl.textContent = activeProfile.name;
@@ -744,45 +489,39 @@ function renderDailyPlayerPanels() {
   renderLeaderboard();
 }
 
-function upsertDailyResult(won, attempts, guessLimit) {
+async function upsertDailyResult(won, attempts, guessLimit) {
   if (!dailyMode || !dailyPuzzleKey) return;
   const activeProfile = getActiveProfile();
   if (!activeProfile) return;
 
-  const bucket = ensureProfileBucket(activeProfile.id);
-  const existing = bucket[dailyPuzzleKey];
-  const normalizedAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : null;
-  const next = {
-    date: dailyDate,
-    won: Boolean(won),
-    attempts: normalizedAttempts,
-    maxGuesses: Number.isInteger(guessLimit) ? guessLimit : maxGuesses,
-    updatedAt: new Date().toISOString()
-  };
-
-  if (!existing) {
-    bucket[dailyPuzzleKey] = next;
-  } else if (existing.won && !next.won) {
-    // Keep an existing win if the same daily puzzle is replayed and lost later.
-    bucket[dailyPuzzleKey] = existing;
-  } else if (existing.won && next.won) {
-    const best = Math.min(existing.attempts || Number.POSITIVE_INFINITY, next.attempts || Number.POSITIVE_INFINITY);
-    bucket[dailyPuzzleKey] = {
-      ...existing,
-      attempts: Number.isFinite(best) ? best : existing.attempts
-    };
-  } else {
-    bucket[dailyPuzzleKey] = next;
-  }
-
-  if (trimDailyResults(bucket)) {
-    // Keep localStorage bounded for long-running family usage.
-  }
-  saveProfileState({ bumpLeaderboardVersion: true });
+  profileState.loading = true;
   renderDailyPlayerPanels();
+
+  try {
+    const payload = await requestJson("/api/stats/result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profileId: activeProfile.id,
+        dailyKey: dailyPuzzleKey,
+        won: Boolean(won),
+        attempts: won ? attempts : null,
+        maxGuesses: Number.isInteger(guessLimit) ? guessLimit : maxGuesses
+      })
+    });
+    if (payload?.retained === false) {
+      setProfileStatus("Result saved, but older history may have been pruned.");
+    }
+    await refreshStatsPanels({ activeProfileId: activeProfile.id });
+  } catch (err) {
+    setProfileStatus(err?.message || STATS_REQUEST_ERROR);
+  } finally {
+    profileState.loading = false;
+    renderDailyPlayerPanels();
+  }
 }
 
-function createOrSelectProfile(rawName) {
+async function createOrSelectProfile(rawName) {
   const normalizedName = normalizeProfileName(rawName);
   if (!normalizedName) {
     return {
@@ -791,26 +530,34 @@ function createOrSelectProfile(rawName) {
     };
   }
 
-  const existing = profileState.profiles.find(
-    (profile) => profile.name.toLowerCase() === normalizedName.toLowerCase()
-  );
-  if (existing) {
-    profileState.activeProfileId = existing.id;
-    saveProfileState();
-    return { ok: true, profile: existing, reused: true };
-  }
+  profileState.loading = true;
+  renderDailyPlayerPanels();
 
-  const profile = {
-    id: profileIdForName(normalizedName),
-    name: normalizedName,
-    createdAt: new Date().toISOString()
-  };
-  profileState.profiles.push(profile);
-  profileState.activeProfileId = profile.id;
-  ensureProfileBucket(profile.id);
-  enforceProfileLimits();
-  saveProfileState({ bumpLeaderboardVersion: true });
-  return { ok: true, profile, reused: false };
+  try {
+    const payload = await requestJson("/api/stats/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: normalizedName })
+    });
+    const profile = upsertKnownProfile(payload?.profile);
+    const activeId = String(payload?.playerId || profile?.id || "").trim();
+    if (!profile || !activeId) {
+      return { ok: false, error: STATS_REQUEST_ERROR };
+    }
+
+    profileState.activeProfileId = activeId;
+    await refreshStatsPanels({ activeProfileId: activeId });
+    return {
+      ok: true,
+      profile: getActiveProfile() || profile,
+      reused: Boolean(payload?.reused)
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || STATS_REQUEST_ERROR };
+  } finally {
+    profileState.loading = false;
+    renderDailyPlayerPanels();
+  }
 }
 
 function buildBoard() {
@@ -1047,7 +794,7 @@ async function submitGuess() {
 
     if (data.isCorrect) {
       locked = true;
-      upsertDailyResult(true, currentRow + 1, maxGuesses);
+      await upsertDailyResult(true, currentRow + 1, maxGuesses);
       const suffix =
         typeof data.answerMeaning === "string" && data.answerMeaning.trim()
           ? ` Meaning: ${data.answerMeaning.trim()}`
@@ -1058,7 +805,7 @@ async function submitGuess() {
 
     if (currentRow === maxGuesses - 1) {
       locked = true;
-      upsertDailyResult(false, maxGuesses, maxGuesses);
+      await upsertDailyResult(false, maxGuesses, maxGuesses);
       if (data.answer) {
         const suffix =
           typeof data.answerMeaning === "string" && data.answerMeaning.trim()
@@ -1083,7 +830,7 @@ async function submitGuess() {
 }
 
 function handleKey(rawKey) {
-  if (locked || busy) return;
+  if (locked || busy || profileState.loading) return;
   if (dailyMode && !getActiveProfile()) {
     setMessage("Pick a player name to start this daily game.");
     return;
@@ -1319,6 +1066,12 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   baseMeta = `${dailyPrefix}Language: ${data.label} · Length: ${cols} · ${maxGuesses} tries`;
   updatePlayMeta();
   renderDailyPlayerPanels();
+  if (dailyMode) {
+    await refreshStatsPanels({
+      range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly
+    });
+    renderDailyPlayerPanels();
+  }
   updatedEl.textContent = "Game ready";
   updateShareLink(
     buildShareLink(code, puzzleLang, maxGuesses, {
@@ -1377,9 +1130,9 @@ createForm.addEventListener("submit", async (event) => {
 randomBtn.addEventListener("click", handleRandom);
 
 if (profileFormEl) {
-  profileFormEl.addEventListener("submit", (event) => {
+  profileFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = createOrSelectProfile(profileNameInputEl ? profileNameInputEl.value : "");
+    const result = await createOrSelectProfile(profileNameInputEl ? profileNameInputEl.value : "");
     if (!result.ok) {
       setProfileStatus(result.error);
       return;
@@ -1395,15 +1148,16 @@ if (profileFormEl) {
 if (switchPlayerBtnEl) {
   switchPlayerBtnEl.addEventListener("click", () => {
     profileState.activeProfileId = null;
-    saveProfileState();
     setProfileStatus("Choose an existing player or enter a new name.");
     renderDailyPlayerPanels();
   });
 }
 
 if (leaderboardRangeEl) {
-  leaderboardRangeEl.addEventListener("change", () => {
-    renderLeaderboard();
+  leaderboardRangeEl.addEventListener("change", async () => {
+    if (!dailyMode) return;
+    await refreshStatsPanels({ range: leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly });
+    renderDailyPlayerPanels();
   });
 }
 
@@ -1488,15 +1242,19 @@ strictToggle.addEventListener("change", () => {
 
 async function init() {
   await loadMeta();
-  const loadedProfileState = loadProfileState();
   profileState = {
-    profiles: loadedProfileState.profiles || [],
-    activeProfileId: loadedProfileState.activeProfileId || null,
-    stats: loadedProfileState.stats || {}
-  };
-  if (enforceProfileLimits() || loadedProfileState.wasPruned) {
-    saveProfileState({ bumpLeaderboardVersion: true });
+    profiles: [],
+    activeProfileId: null,
+    summaries: Object.create(null),
+    loading: false
   }
+  leaderboardState = {
+    range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly,
+    description: "",
+    rows: [],
+    dayKey: "",
+    loading: false
+  };
 
   const storedContrast = getStoredItem("highContrast") === "true";
   const storedStrict = getStoredItem("strictMode") === "true";
