@@ -26,6 +26,8 @@
 - [ ] Redundant fields have explicit consistency rules.
 - [ ] Normalization/recovery rules include invalid examples and drop behavior.
 - [ ] Retention-pruned data is not misclassified as invalid-content normalization.
+- [ ] Unsupported persisted schema versions are rejected (fail-closed) instead of silently normalized.
+- [ ] Extra/unknown object properties trigger canonicalization so persisted JSON honors schema `additionalProperties` rules.
 - [ ] JSON/file formatting conventions verified (including trailing newline for JSON files).
 - [ ] `docs/review-preflight.md` checklist reviewed before requesting review.
 
