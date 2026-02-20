@@ -54,19 +54,25 @@ Why this exists:
 - Max retained profiles: `20`.
 - Ordered by `createdAt` ascending for deterministic pruning behavior.
 - Fields:
-  - `id`: server-generated stable identifier.
+  - `id`: server-generated opaque stable identifier.
+    - Must be unique within this file.
+    - Must remain stable for the profile lifetime.
+    - Generation algorithm is implementation-defined.
+    - Example values (such as `"ava"`) are illustrative only.
   - `name`: normalized display name (`A-Za-z`, spaces, apostrophes, hyphens; max 24 chars).
   - `createdAt`, `updatedAt`: ISO-8601 timestamps.
 
 ### `resultsByProfile`
 - Map keyed by `profile.id`.
 - Each profile map keyed by `dailyKey` format: `YYYY-MM-DD|<lang>|<code>`.
+- `dailyKey` format is contract-mandatory and must be enforced in server normalization logic.
+- The JSON schema uses `additionalProperties` for daily result maps and therefore does not fully enforce `dailyKey` format by itself.
 - Max retained daily entries per profile: `400`.
 
 ### Result Entry
-- `date`: `YYYY-MM-DD` in server-local calendar.
+- `date`: `YYYY-MM-DD` in server-local calendar; must match the `YYYY-MM-DD` prefix in its `dailyKey`.
 - `won`: boolean.
-- `attempts`: positive integer when solved; nullable when unsolved.
+- `attempts`: positive integer when `won=true`; must be `null` when `won=false`.
 - `maxGuesses`: positive integer guess limit used when result was submitted.
 - `submissionCount`: positive integer; increments every submission for same `dailyKey`.
 - `updatedAt`: ISO-8601 timestamp.
@@ -77,7 +83,8 @@ For multiple submissions on the same `dailyKey` by same profile:
 2. Keep exactly one canonical scored entry.
 3. Prefer `won=true` over `won=false`.
 4. If both are wins, keep the lower `attempts`.
-5. Preserve the latest `updatedAt`.
+5. If submissions are equivalent under rules 3-4 (for example both losses), keep the existing canonical scored entry.
+6. Always set canonical `updatedAt` to the latest accepted submission timestamp.
 
 Why this policy:
 - Keeps leaderboard scoring fair and stable.
@@ -88,13 +95,17 @@ On load:
 1. If file missing, initialize empty valid structure.
 2. If file is malformed, reset to empty valid structure and log warning.
 3. Drop profile rows with invalid IDs or invalid names.
+   - Invalid ID examples: missing, non-string, empty string.
+   - Invalid name examples: missing, non-string, exceeds 24 characters, or uses disallowed characters.
 4. Drop results with invalid dates or invalid numeric fields.
+   - Invalid date examples: missing, not `YYYY-MM-DD`, not a real calendar date.
+   - Invalid numeric examples: missing required integers, non-integer values, or values `<= 0` where positive integers are required.
 5. Remove `resultsByProfile` keys that do not exist in `profiles`.
 6. Enforce retention limits after normalization.
 
 ## Retention/Pruning
 ### Profiles
-- If profiles exceed `20`, retain newest `20` by `createdAt` and remove pruned profile result maps.
+- If profiles exceed `20`, retain the `20` profiles with the most recent `createdAt` timestamps (keep the last `20` when sorted by `createdAt` ascending) and remove pruned profile result maps.
 
 ### Daily Results
 - If a profile has more than `400` result entries:
