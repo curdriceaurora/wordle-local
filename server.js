@@ -584,25 +584,28 @@ function lookupAnswerMeaning(lang, word) {
 
 function evaluateGuess(guess, answer) {
   const len = answer.length;
-  const result = Array(len).fill("absent");
-  const answerChars = answer.split("");
-  const used = Array(len).fill(false);
+  const result = new Array(len);
+  const remaining = new Uint8Array(26);
 
   for (let i = 0; i < len; i += 1) {
-    if (guess[i] === answerChars[i]) {
+    const guessCode = guess.charCodeAt(i) - 65;
+    const answerCode = answer.charCodeAt(i) - 65;
+    if (guessCode === answerCode) {
       result[i] = "correct";
-      used[i] = true;
+      continue;
     }
+    result[i] = "absent";
+    remaining[answerCode] += 1;
   }
 
   for (let i = 0; i < len; i += 1) {
-    if (result[i] === "correct") continue;
-    for (let j = 0; j < len; j += 1) {
-      if (!used[j] && guess[i] === answerChars[j]) {
-        result[i] = "present";
-        used[j] = true;
-        break;
-      }
+    if (result[i] === "correct") {
+      continue;
+    }
+    const guessCode = guess.charCodeAt(i) - 65;
+    if (remaining[guessCode] > 0) {
+      result[i] = "present";
+      remaining[guessCode] -= 1;
     }
   }
 

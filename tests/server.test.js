@@ -336,6 +336,69 @@ describe("Wordle API", () => {
     ]);
   });
 
+  test("handles duplicate letters when guess repeats more than answer", async () => {
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "APPLE", lang: "none" });
+
+    const code = encodeResponse.body.code;
+    const guessResponse = await request(app)
+      .post("/api/guess")
+      .send({ code, guess: "PUPPY", lang: "none" });
+
+    expect(guessResponse.status).toBe(200);
+    expect(guessResponse.body.result).toEqual([
+      "present",
+      "absent",
+      "correct",
+      "absent",
+      "absent"
+    ]);
+  });
+
+  test("handles duplicate letters when answer repeats more than guess", async () => {
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "BEEFY", lang: "none" });
+
+    const code = encodeResponse.body.code;
+    const guessResponse = await request(app)
+      .post("/api/guess")
+      .send({ code, guess: "ELATE", lang: "none" });
+
+    expect(guessResponse.status).toBe(200);
+    expect(guessResponse.body.result).toEqual([
+      "present",
+      "absent",
+      "absent",
+      "absent",
+      "present"
+    ]);
+  });
+
+  test("handles mixed duplicate outcomes with correct and present statuses", async () => {
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "LEVEL", lang: "none" });
+
+    const code = encodeResponse.body.code;
+    const guessResponse = await request(app)
+      .post("/api/guess")
+      .send({ code, guess: "LEECH", lang: "none" });
+
+    expect(guessResponse.status).toBe(200);
+    expect(guessResponse.body.result).toEqual([
+      "correct",
+      "correct",
+      "present",
+      "absent",
+      "absent"
+    ]);
+  });
+
   test("returns answer when reveal is true and guess is incorrect", async () => {
     const app = loadApp();
     const encodeResponse = await request(app)
