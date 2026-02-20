@@ -34,6 +34,7 @@ function loadApp(options = {}) {
           nodeEnv: options.nodeEnv,
           requireAdminKey: options.requireAdminKey,
           trustProxy: options.trustProxy,
+          trustProxyHops: options.trustProxyHops,
           rateLimitMax: options.rateLimitMax,
           rateLimitWindowMs: options.rateLimitWindowMs,
           lowMemoryDefinitions: options.lowMemoryDefinitions,
@@ -58,6 +59,11 @@ function loadApp(options = {}) {
   }
   if (opts.trustProxy !== undefined) {
     process.env.TRUST_PROXY = opts.trustProxy ? "true" : "false";
+  }
+  if (opts.trustProxyHops !== undefined) {
+    process.env.TRUST_PROXY_HOPS = String(opts.trustProxyHops);
+  } else {
+    delete process.env.TRUST_PROXY_HOPS;
   }
   if (opts.rateLimitMax !== undefined) {
     process.env.RATE_LIMIT_MAX = String(opts.rateLimitMax);
@@ -280,6 +286,11 @@ describe("Wordle API", () => {
   test("trust proxy can be enabled", async () => {
     const app = loadApp({ trustProxy: true });
     expect(app.get("trust proxy")).toBe(1);
+  });
+
+  test("trust proxy hop count can be configured", async () => {
+    const app = loadApp({ trustProxy: true, trustProxyHops: 2 });
+    expect(app.get("trust proxy")).toBe(2);
   });
 
   test("rejects invalid word", async () => {
@@ -1465,6 +1476,26 @@ describe("Server startup", () => {
     expect(listener).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       "ADMIN_KEY is required for admin endpoints in production."
+    );
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  test("warns when trust proxy is disabled in production", () => {
+    const app = loadApp({ nodeEnv: "production", adminKey: "secret", trustProxy: false });
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const listener = jest.fn((port, host, cb) => {
+      cb();
+      return { close: jest.fn() };
+    });
+
+    app.startServer(listener);
+
+    expect(listener).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "TRUST_PROXY is disabled. If deployed behind a reverse proxy, load balancer, or Tailscale, set TRUST_PROXY=true (and configure TRUST_PROXY_HOPS as needed)."
     );
 
     logSpy.mockRestore();

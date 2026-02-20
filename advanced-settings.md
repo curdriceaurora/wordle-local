@@ -10,6 +10,7 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 
 ## Network/Proxy
 - `TRUST_PROXY` — set to `true` if running behind a reverse proxy or Tailscale (default `true` in production).
+- `TRUST_PROXY_HOPS` — number of trusted proxy hops when `TRUST_PROXY=true` (default `1`).
 
 ## Rate Limiting
 - `RATE_LIMIT_MAX` — default 300 requests per 15 minutes.

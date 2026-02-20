@@ -7,6 +7,7 @@ services:
       - .env
     environment:
       TRUST_PROXY: ${TRUST_PROXY:-true}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
       ADMIN_KEY: ${ADMIN_KEY:-}
