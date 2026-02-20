@@ -1,5 +1,6 @@
 const express = require("express");
 const fs = require("fs");
+const fsp = fs.promises;
 const path = require("path");
 const compression = require("compression");
 const helmet = require("helmet");
@@ -16,6 +17,8 @@ const TRUST_PROXY = process.env.TRUST_PROXY
   : NODE_ENV === "production";
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
+const LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
+const DEFINITION_CACHE_SIZE = Number(process.env.DEFINITION_CACHE_SIZE) || 512;
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
 const PUBLIC_ROOT = path.join(__dirname, "public");
@@ -35,6 +38,8 @@ const LANGUAGES = {
   en: { label: "English", file: "en.txt" },
   none: { label: "No dictionary", file: null }
 };
+let wordDataCache = null;
+const definitionCache = new Map();
 
 function buildDefaultWordData() {
   return {
@@ -82,11 +87,32 @@ function saveWordData(data) {
   fs.writeFileSync(DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
+async function saveWordDataAtomic(data) {
+  const payload = `${JSON.stringify(data, null, 2)}\n`;
+  const tempPath = `${DATA_PATH}.tmp`;
+  await fsp.writeFile(tempPath, payload, "utf8");
+  try {
+    await fsp.rename(tempPath, DATA_PATH);
+  } catch (err) {
+    if (err && (err.code === "EEXIST" || err.code === "EPERM")) {
+      await fsp.rm(DATA_PATH, { force: true });
+      await fsp.rename(tempPath, DATA_PATH);
+      return;
+    }
+    await fsp.rm(tempPath, { force: true });
+    throw err;
+  }
+}
+
 function ensureWordData() {
   const data = readWordData();
-  if (data) return data;
+  if (data) {
+    wordDataCache = data;
+    return data;
+  }
   const fallback = buildDefaultWordData();
   saveWordData(fallback);
+  wordDataCache = fallback;
   console.warn("Daily word data was invalid and has been reset.");
   return fallback;
 }
@@ -280,12 +306,57 @@ function dictionaryRandomWord(dict, length) {
   return list[index];
 }
 
-const englishDefinitions = loadWordDefinitions(EN_DEFINITIONS_PATH);
+const englishDefinitions = LOW_MEMORY_DEFINITIONS
+  ? null
+  : loadWordDefinitions(EN_DEFINITIONS_PATH);
+
+function cacheDefinition(word, value) {
+  if (definitionCache.has(word)) {
+    definitionCache.delete(word);
+  }
+  definitionCache.set(word, value);
+  if (definitionCache.size > DEFINITION_CACHE_SIZE) {
+    const oldest = definitionCache.keys().next().value;
+    if (oldest) {
+      definitionCache.delete(oldest);
+    }
+  }
+}
+
+function lookupDefinitionFromFile(word) {
+  if (definitionCache.has(word)) {
+    return definitionCache.get(word);
+  }
+  if (!fs.existsSync(EN_DEFINITIONS_PATH)) {
+    cacheDefinition(word, null);
+    return null;
+  }
+  let value = null;
+  try {
+    const raw = fs.readFileSync(EN_DEFINITIONS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    const source = parsed && typeof parsed === "object" && parsed.definitions
+      ? parsed.definitions
+      : parsed;
+    const candidate = source && typeof source[word] === "string"
+      ? source[word]
+      : "";
+    const normalized = candidate.trim().replace(/\s+/g, " ");
+    value = normalized || null;
+  } catch (err) {
+    value = null;
+  }
+  cacheDefinition(word, value);
+  return value;
+}
 
 function lookupAnswerMeaning(lang, word) {
   if (lang !== "en") return null;
   const dict = getDictionary(lang);
   if (!dict || !dictionaryHasWord(dict, word)) return null;
+  if (LOW_MEMORY_DEFINITIONS) {
+    return lookupDefinitionFromFile(word);
+  }
   return englishDefinitions.get(word) || null;
 }
 
@@ -514,10 +585,10 @@ app.get("/api/word", (req, res) => {
   if (!isAuthorized(req)) {
     return res.status(401).json({ error: "Admin key required." });
   }
-  res.json(readWordData() || buildDefaultWordData());
+  res.json(wordDataCache || buildDefaultWordData());
 });
 
-app.post("/api/word", (req, res) => {
+app.post("/api/word", async (req, res) => {
   if (!isAuthorized(req)) {
     return res.status(401).json({ error: "Admin key required." });
   }
@@ -542,12 +613,18 @@ app.post("/api/word", (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  saveWordData(data);
+  try {
+    await saveWordDataAtomic(data);
+  } catch (err) {
+    console.error("Failed to persist daily word data.", err);
+    return res.status(500).json({ error: "Could not save daily word right now." });
+  }
+  wordDataCache = data;
   res.json({ ok: true, data });
 });
 
 app.get("/daily", (req, res) => {
-  const data = readWordData();
+  const data = wordDataCache;
   if (!data || !data.word) {
     return res.status(404).send(renderDailyMissing("No daily puzzle yet."));
   }

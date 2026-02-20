@@ -68,6 +68,9 @@ There is no admin UI. Use the API endpoints below.
 ## Family Profiles & Leaderboards
 - Daily mode prompts for a player name (no password; honor system for families).
 - Profiles and stats are stored only in browser localStorage on that device.
+- Local retention limits are applied for performance:
+  - up to 20 profiles
+  - up to 400 daily results per profile
 - Leaderboards support three views:
   - Weekly: last 7 days including today.
   - Monthly: current calendar month.

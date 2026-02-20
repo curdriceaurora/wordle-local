@@ -29,7 +29,8 @@ function loadApp(options = {}) {
           requireAdminKey: options.requireAdminKey,
           trustProxy: options.trustProxy,
           rateLimitMax: options.rateLimitMax,
-          rateLimitWindowMs: options.rateLimitWindowMs
+          rateLimitWindowMs: options.rateLimitWindowMs,
+          lowMemoryDefinitions: options.lowMemoryDefinitions
         };
 
   jest.resetModules();
@@ -54,6 +55,9 @@ function loadApp(options = {}) {
   }
   if (opts.rateLimitWindowMs !== undefined) {
     process.env.RATE_LIMIT_WINDOW_MS = String(opts.rateLimitWindowMs);
+  }
+  if (opts.lowMemoryDefinitions !== undefined) {
+    process.env.LOW_MEMORY_DEFINITIONS = opts.lowMemoryDefinitions ? "true" : "false";
   }
 
   return require("../server");
@@ -303,6 +307,36 @@ describe("Wordle API", () => {
         expect(guessResponse.status).toBe(200);
         expect(guessResponse.body.isCorrect).toBe(true);
         expect(guessResponse.body.answer).toBeUndefined();
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
+  });
+
+  test("returns local answer meaning in low-memory definitions mode", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp({ lowMemoryDefinitions: true });
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(true);
         expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
       }
     );
