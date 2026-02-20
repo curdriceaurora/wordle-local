@@ -69,8 +69,8 @@ There is no admin UI. Use the API endpoints below.
 
 ## Family Profiles & Leaderboards
 - Daily mode prompts for a player name (no password; honor system for families).
-- Profiles and stats are stored only in browser localStorage on that device.
-- Local retention limits are applied for performance:
+- Profiles and leaderboard stats are stored on the server in `data/leaderboard.json` and shared across devices on the same host.
+- Server retention limits are applied for performance:
   - up to 20 profiles
   - up to 400 daily results per profile
 - Leaderboards support three views:
@@ -78,7 +78,10 @@ There is no admin UI. Use the API endpoints below.
   - Monthly: current calendar month.
   - Overall: all recorded daily games.
 - Streaks are tracked per profile based on consecutive winning daily entries.
-- Pitfall: clearing browser storage resets profile history and leaderboards.
+- No local import from historical browser `localStorage` stats is performed.
+- Pitfall: clearing browser storage no longer deletes server stats, but it can clear local UI state such as the active profile selection on that device.
+- Rollout and cutover notes: `docs/server-leaderboard-rollout.md`
+- Data contract details: `docs/leaderboard-data-contract.md`
 
 ## Security Notes
 - Rate limiting is enabled by default.
@@ -94,10 +97,8 @@ There is no admin UI. Use the API endpoints below.
 We are evaluating exploratory tracks that are intentionally outside the current core scope:
 - Admin Platform expansion (Admin UI, dictionary lifecycle management, and selected runtime settings controls): https://github.com/curdriceaurora/wordle-local/issues/6
 - LibreOffice English variant sourcing (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via Admin import flows, with Hunspell-based guess handling and curated answer policy: https://github.com/curdriceaurora/wordle-local/issues/17
-- Server-backed leaderboard/profile persistence for multi-device family usage: https://github.com/curdriceaurora/wordle-local/issues/29
 
 This second track is planned after foundational Admin Platform work in #6.
-The server-backed leaderboard track is high-priority product direction, but remains roadmap-scoped until implementation lands.
 
 Whether it ships next will depend on adoption signals and community feedback.
 Current priority remains a stable, simple local-hosted gameplay experience.
@@ -108,6 +109,7 @@ Third-party assets (notably the English dictionary) are licensed separately. See
 
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+Release maintainers should also use `docs/release-checklist.md`.
 
 ## Disclaimer
 This project is provided “as is”, without warranty of any kind. See `DISCLAIMER.md`.
