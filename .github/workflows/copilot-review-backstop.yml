@@ -87,7 +87,9 @@ jobs:
             });
             const hasMarker = comments.some(
               (comment) =>
-                comment?.user?.login === "github-actions[bot]" &&
+                ["github-actions", "github-actions[bot]"].includes(
+                  String(comment?.user?.login || "")
+                ) &&
                 typeof comment?.body === "string" &&
                 comment.body.includes(marker)
             );
