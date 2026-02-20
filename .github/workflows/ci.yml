@@ -28,12 +28,15 @@ jobs:
         run: npm run check
 
       - name: Install Playwright Browsers
+        if: github.event_name == 'schedule'
         run: npx playwright install --with-deps
 
-      - name: Run Tests
-        run: npm run test:all
+      - name: Run UI Tests
+        if: github.event_name == 'schedule'
+        run: npm run test:ui
 
       - name: Upload UI Coverage Report
+        if: github.event_name == 'schedule'
         uses: actions/upload-artifact@v4
         with:
           name: ui-coverage

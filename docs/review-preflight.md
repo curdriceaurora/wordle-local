@@ -15,15 +15,26 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 9. Schema compatibility: unsupported persisted schema versions fail closed (no best-effort normalization/persist).
 10. Canonical shape enforcement: entries with unknown properties are treated as normalization-required so persisted JSON remains schema-compliant.
 11. Key safety: dynamic object keys are validated against prototype-pollution sentinels (for example `__proto__`, `constructor`, `prototype`) and/or stored in null-prototype maps.
+12. Dynamic key write pattern: never write user-influenced keys via `obj[key] = value` on plain objects in request paths; use `Map` (then serialize) or strict allowlist + null-prototype container.
+13. Post-normalization response source: for mutating store APIs, build response payloads from the normalized snapshot returned by the store mutation, not from draft/captured objects inside the mutator callback.
+14. Deterministic time in tests: avoid real clock dependency in tests (fixed dates or mocked timers), especially for daily/leaderboard date logic.
+15. Proxy-aware rate limiting: when rate limiting depends on client IP and app may sit behind a proxy/VPN/load balancer, ensure `TRUST_PROXY` behavior is explicitly set and documented for deployment defaults (compose + docs).
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
 1. Triage every comment as `must-fix`, `follow-up issue`, or `decline with rationale`.
 2. Reply with commit hash + validation command when code/docs changed.
 3. Do not leave unresolved threads when merging.
+
+## Copilot Review Loop
+1. Every PR open/synchronize event auto-triggers Copilot review via `/.github/workflows/copilot-review.yml`.
+2. Wait ~5 minutes after each push before triage to allow Copilot comments to land.
+3. Run `npm run pr:nits -- --pr <number>` to get a deterministic thread list that still needs owner response.
+4. For each nit: fix, validate (`npm run check` minimum), reply with commit hash, then re-trigger if needed.
+5. Merge target is `0` unresolved actionable nits.
 
 ## Local Gate Requirement
 Run `npm run check` before requesting review. ESLint + Ajv schema checks are required and must pass locally.
