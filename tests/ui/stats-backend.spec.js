@@ -18,10 +18,27 @@ function escapeRegex(value) {
 function localDateOffset(days) {
   const date = new Date();
   date.setDate(date.getDate() + days);
+  return localDateFromDate(date);
+}
+
+function localDateFromDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function localDateOutsideCurrentMonthAndWeek() {
+  const today = new Date();
+  const currentMonth = today.getMonth();
+  for (let days = 8; days <= 120; days += 1) {
+    const candidate = new Date(today);
+    candidate.setDate(candidate.getDate() - days);
+    if (candidate.getMonth() !== currentMonth) {
+      return localDateFromDate(candidate);
+    }
+  }
+  return localDateOffset(-40);
 }
 
 function dailyLink(day) {
@@ -227,7 +244,7 @@ test("server replay policy keeps best attempts for repeated same-day submissions
 
 test("leaderboard range uses server-side date windows", async ({ page, browserName }) => {
   const playerName = buildProfileName("Cora", browserName);
-  const oldDay = localDateOffset(-20);
+  const oldDay = localDateOutsideCurrentMonthAndWeek();
   const recentDay = localDateOffset(0);
 
   await openDaily(page, oldDay);
@@ -243,6 +260,10 @@ test("leaderboard range uses server-side date windows", async ({ page, browserNa
 
   await page.selectOption("#leaderboardRange", "weekly");
   let playerRow = page.locator("#leaderboardBody tr", { hasText: playerName }).first();
+  await expect(playerRow.locator("td").nth(3)).toHaveText("1");
+
+  await page.selectOption("#leaderboardRange", "monthly");
+  playerRow = page.locator("#leaderboardBody tr", { hasText: playerName }).first();
   await expect(playerRow.locator("td").nth(3)).toHaveText("1");
 
   await page.selectOption("#leaderboardRange", "overall");
