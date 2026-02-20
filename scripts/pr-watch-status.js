@@ -79,9 +79,15 @@ async function resolvePullRequestNumber(owner, repo, eventName, payload) {
   if (payload?.check_suite?.pull_requests?.length) {
     return Number(payload.check_suite.pull_requests[0].number);
   }
+  if (payload?.workflow_run?.pull_requests?.length) {
+    return Number(payload.workflow_run.pull_requests[0].number);
+  }
 
   const headSha = String(
-    payload?.check_run?.head_sha || payload?.check_suite?.head_sha || ""
+    payload?.check_run?.head_sha ||
+      payload?.check_suite?.head_sha ||
+      payload?.workflow_run?.head_sha ||
+      ""
   ).trim();
   if (!headSha) {
     return null;

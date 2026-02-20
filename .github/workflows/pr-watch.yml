@@ -7,6 +7,8 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+      - review_requested
+      - review_request_removed
   pull_request_review:
     types:
       - submitted
@@ -26,6 +28,12 @@ on:
     types:
       - completed
   check_suite:
+    types:
+      - completed
+  workflow_run:
+    workflows:
+      - CI
+      - CodeQL
     types:
       - completed
 
