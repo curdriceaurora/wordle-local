@@ -117,6 +117,12 @@ async function fetchCheckRuns(owner, repo, headSha) {
 
 function summarizeChecks(checkRuns) {
   const checks = checkRuns
+    .filter((check) => {
+      const name = String(check?.name || "").toLowerCase();
+      // Ignore this monitor job itself to avoid permanently reporting "pending"
+      // while the sticky comment is being rendered.
+      return name !== "pr-watch";
+    })
     .map((check) => {
       const status = String(check.status || "");
       const conclusion = String(check.conclusion || "");
