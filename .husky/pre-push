@@ -1,2 +1,26 @@
 #!/usr/bin/env sh
+set -eu
+
+BASE_REF=""
+if git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" >/dev/null 2>&1; then
+  BASE_REF="$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}")"
+elif git show-ref --verify --quiet refs/remotes/origin/main; then
+  BASE_REF="origin/main"
+fi
+
+CHANGED_FILES=""
+if [ -n "$BASE_REF" ]; then
+  CHANGED_FILES="$(git diff --name-only "${BASE_REF}...HEAD")"
+elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+  CHANGED_FILES="$(git diff --name-only HEAD~1..HEAD)"
+fi
+
+if [ -n "$CHANGED_FILES" ]; then
+  NON_MD_FILES="$(printf '%s\n' "$CHANGED_FILES" | grep -Ev '^[[:space:]]*$|.*\.md$' || true)"
+  if [ -z "$NON_MD_FILES" ]; then
+    echo "pre-push: markdown-only changes detected; skipping npm run check."
+    exit 0
+  fi
+fi
+
 npm run check
