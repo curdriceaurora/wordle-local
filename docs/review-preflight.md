@@ -25,9 +25,10 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 19. Loading-state lockout: disable all controls that can trigger concurrent state mutations while request-path loading flags are true.
 20. Fixture parity for spawned pages: Playwright pages created outside shared fixtures must explicitly apply the same timeout/navigation defaults as fixture-managed pages.
 21. Endpoint docs parity: documentation and rollout guides must match exact endpoint response contracts (status code + payload shape), not shorthand text.
+22. Schema identity consistency: new JSON schema `$id` values must follow existing repository domain/namespace conventions.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

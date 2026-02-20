@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/provider-import-manifest.schema.json",
+  "title": "LibreOffice Provider Import Manifest",
+  "description": "Persisted provenance and processing metadata for an imported LibreOffice English variant.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "provider",
+    "sourceFiles",
+    "retrievedAt",
+    "processing",
+    "artifacts",
+    "stats"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "provider": {
+      "$ref": "#/$defs/providerDescriptor"
+    },
+    "sourceFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dic",
+        "aff"
+      ],
+      "properties": {
+        "dic": {
+          "$ref": "#/$defs/sourceFileRecord"
+        },
+        "aff": {
+          "$ref": "#/$defs/sourceFileRecord"
+        }
+      }
+    },
+    "retrievedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "processing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyVersion",
+        "guessPoolPolicy",
+        "answerPoolPolicy",
+        "allowCharacters",
+        "hunspellLibrary"
+      ],
+      "properties": {
+        "policyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "guessPoolPolicy": {
+          "type": "string",
+          "enum": [
+            "expanded-forms"
+          ]
+        },
+        "answerPoolPolicy": {
+          "type": "string",
+          "enum": [
+            "base-plus-irregular"
+          ]
+        },
+        "allowCharacters": {
+          "type": "string",
+          "const": "A-Z"
+        },
+        "hunspellLibrary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guessPoolPath",
+        "answerPoolPath",
+        "generatedAt"
+      ],
+      "properties": {
+        "guessPoolPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "answerPoolPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rawEntries",
+        "expandedForms",
+        "guessPoolSize",
+        "answerPoolSize",
+        "filteredAnswerCount"
+      ],
+      "properties": {
+        "rawEntries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expandedForms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "guessPoolSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "answerPoolSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filteredAnswerCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "variant": {
+      "type": "string",
+      "enum": [
+        "en-GB",
+        "en-US",
+        "en-CA",
+        "en-AU",
+        "en-ZA"
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+    },
+    "providerDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerId",
+        "variant",
+        "repository",
+        "commit",
+        "dicPath",
+        "affPath"
+      ],
+      "properties": {
+        "providerId": {
+          "type": "string",
+          "const": "libreoffice-dictionaries"
+        },
+        "variant": {
+          "$ref": "#/$defs/variant"
+        },
+        "repository": {
+          "type": "string",
+          "const": "https://github.com/LibreOffice/dictionaries"
+        },
+        "commit": {
+          "$ref": "#/$defs/commitSha"
+        },
+        "dicPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "affPath": {
+          "$ref": "#/$defs/relativePath"
+        }
+      }
+    },
+    "sourceFileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "byteSize"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

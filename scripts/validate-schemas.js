@@ -9,6 +9,18 @@ const addFormats = require("ajv-formats");
 const projectRoot = path.resolve(__dirname, "..");
 const leaderboardSchemaPath = path.join(projectRoot, "data", "leaderboard.schema.json");
 const leaderboardDataPath = path.join(projectRoot, "data", "leaderboard.json");
+const providerManifestSchemaPath = path.join(
+  projectRoot,
+  "data",
+  "providers",
+  "provider-import-manifest.schema.json"
+);
+const providerManifestExamplePath = path.join(
+  projectRoot,
+  "data",
+  "providers",
+  "provider-import-manifest.example.json"
+);
 
 function readJson(filePath, kind) {
   let raw;
@@ -46,24 +58,41 @@ function runSchemaChecks() {
   });
   addFormats(ajv);
 
-  const schema = readJson(leaderboardSchemaPath, "schema");
-  let validate;
-  try {
-    validate = ajv.compile(schema);
-  } catch (err) {
-    throw new Error(`[schema:check] Failed to compile leaderboard schema: ${err.message}`);
-  }
+  const checks = [
+    {
+      schemaPath: leaderboardSchemaPath,
+      dataPath: leaderboardDataPath,
+      schemaLabel: "leaderboard schema"
+    },
+    {
+      schemaPath: providerManifestSchemaPath,
+      dataPath: providerManifestExamplePath,
+      schemaLabel: "provider import manifest schema"
+    }
+  ];
 
-  const data = readJson(leaderboardDataPath, "data");
-  const valid = validate(data);
-  if (!valid) {
-    const details = formatValidationErrors(validate.errors);
-    throw new Error(`[schema:check] leaderboard.json failed validation:\n${details}`);
-  }
+  checks.forEach(({ schemaPath, dataPath, schemaLabel }) => {
+    const schema = readJson(schemaPath, "schema");
+    let validate;
+    try {
+      validate = ajv.compile(schema);
+    } catch (err) {
+      throw new Error(`[schema:check] Failed to compile ${schemaLabel}: ${err.message}`);
+    }
 
-  console.log(
-    `[schema:check] OK: ${path.relative(projectRoot, leaderboardDataPath)} validates against ${path.relative(projectRoot, leaderboardSchemaPath)}`
-  );
+    const data = readJson(dataPath, "data");
+    const valid = validate(data);
+    if (!valid) {
+      const details = formatValidationErrors(validate.errors);
+      throw new Error(
+        `[schema:check] ${path.basename(dataPath)} failed validation against ${path.basename(schemaPath)}:\n${details}`
+      );
+    }
+
+    console.log(
+      `[schema:check] OK: ${path.relative(projectRoot, dataPath)} validates against ${path.relative(projectRoot, schemaPath)}`
+    );
+  });
 }
 
 try {

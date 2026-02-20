@@ -22,6 +22,7 @@
 ## Review-Nit Preflight (Required)
 - [ ] Docs and schema/API constraints are consistent (or explicitly documented where enforcement differs).
 - [ ] Endpoint docs use exact contracts (status code + payload shape), not shorthand wording.
+- [ ] New JSON schema `$id` values follow existing project domain/namespace conventions.
 - [ ] Conditional invariants are encoded (`if/then/else`) or explicitly delegated to implementation checks.
 - [ ] Ambiguous wording removed (deterministic tie-breaks, ordering, and timestamp semantics).
 - [ ] Redundant fields have explicit consistency rules.
