@@ -385,4 +385,93 @@ describe("leaderboard-store", () => {
     expect(normalized.state.profiles).toHaveLength(20);
     expect(normalized.wasPruned).toBe(true);
   });
+
+  test("normalization rewrites profile rows with unknown properties", async () => {
+    const filePath = tempFilePath();
+    const warn = jest.fn();
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(5),
+      profiles: [
+        {
+          id: "ava",
+          name: "Ava",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1),
+          extra: "drop-me"
+        }
+      ],
+      resultsByProfile: {}
+    };
+    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+
+    const store = new LeaderboardStore({ filePath, logger: { warn } });
+    const snapshot = await store.getSnapshot();
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+    expect(snapshot.profiles[0]).toEqual({
+      id: "ava",
+      name: "Ava",
+      createdAt: isoAt(1),
+      updatedAt: isoAt(1)
+    });
+    expect(persisted.profiles[0].extra).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test("normalization rewrites result rows with unknown properties", async () => {
+    const filePath = tempFilePath();
+    const warn = jest.fn();
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(5),
+      profiles: [
+        {
+          id: "ava",
+          name: "Ava",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1)
+        }
+      ],
+      resultsByProfile: {
+        ava: {
+          "2026-02-20|en|abcde": {
+            date: "2026-02-20",
+            won: true,
+            attempts: 3,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(2),
+            extra: "drop-me"
+          }
+        }
+      }
+    };
+    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+
+    const store = new LeaderboardStore({ filePath, logger: { warn } });
+    await store.getSnapshot();
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+    expect(persisted.resultsByProfile.ava["2026-02-20|en|abcde"].extra).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test("fails load for unsupported on-disk schema version", async () => {
+    const filePath = tempFilePath();
+    const payload = {
+      version: 2,
+      updatedAt: isoAt(5),
+      profiles: [],
+      resultsByProfile: {},
+      futureField: { keep: true }
+    };
+    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    const store = new LeaderboardStore({ filePath, logger: { warn: jest.fn() } });
+
+    await expect(store.getSnapshot()).rejects.toThrow("Unsupported leaderboard schema version: 2");
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    expect(persisted.version).toBe(2);
+    expect(persisted.futureField).toEqual({ keep: true });
+  });
 });
