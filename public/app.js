@@ -318,18 +318,23 @@ async function refreshLeaderboard(range) {
   leaderboardState.loading = true;
   renderLeaderboard();
 
-  const payload = await requestJson(`/api/stats/leaderboard?range=${encodeURIComponent(selectedRange)}`);
-  leaderboardState = {
-    range: payload?.range || selectedRange,
-    description: payload?.description || describeRange(selectedRange),
-    rows: Array.isArray(payload?.rows) ? payload.rows : [],
-    dayKey: String(payload?.dayKey || ""),
-    loading: false
-  };
+  try {
+    const payload = await requestJson(`/api/stats/leaderboard?range=${encodeURIComponent(selectedRange)}`);
+    leaderboardState = {
+      range: payload?.range || selectedRange,
+      description: payload?.description || describeRange(selectedRange),
+      rows: Array.isArray(payload?.rows) ? payload.rows : [],
+      dayKey: String(payload?.dayKey || ""),
+      loading: false
+    };
 
-  leaderboardState.rows.forEach((row) => {
-    upsertKnownProfile({ id: row?.profileId, name: row?.name });
-  });
+    leaderboardState.rows.forEach((row) => {
+      upsertKnownProfile({ id: row?.profileId, name: row?.name });
+    });
+  } finally {
+    leaderboardState.loading = false;
+    renderLeaderboard();
+  }
 }
 
 async function refreshStatsPanels(options = {}) {
