@@ -13,6 +13,9 @@ Thanks for your interest in contributing!
 - Describe the user impact and any UI changes.
 - Include screenshots or recordings for UI tweaks when helpful.
 - Call out any follow-up work or known limitations.
+- Use the repository PR template.
+- Complete the mandatory preflight in `docs/review-preflight.md` before requesting review.
+- After merge, add an entry to `docs/review-preflight.md` under **Merged PR Learnings Log** for any review nits and preventive rule updates.
 
 ## License and Rights
 By submitting a contribution, you agree to dedicate your work to the public domain under CC0‑1.0. You represent that you have the right to do so and that your contribution does not infringe on third‑party rights.
