@@ -14,6 +14,7 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 8. Retention semantics: retention-pruned rows are tracked as pruning (`wasPruned`) and not mislabeled as invalid content.
 9. Schema compatibility: unsupported persisted schema versions fail closed (no best-effort normalization/persist).
 10. Canonical shape enforcement: entries with unknown properties are treated as normalization-required so persisted JSON remains schema-compliant.
+11. Key safety: dynamic object keys are validated against prototype-pollution sentinels (for example `__proto__`, `constructor`, `prototype`) and/or stored in null-prototype maps.
 
 ## Review Comment Handling Standard
 1. Triage every comment as `must-fix`, `follow-up issue`, or `decline with rationale`.

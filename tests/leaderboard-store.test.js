@@ -419,6 +419,38 @@ describe("leaderboard-store", () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  test("normalization rejects unsafe profile IDs used as object keys", () => {
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(5),
+      profiles: [
+        {
+          id: "__proto__",
+          name: "Proto",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1)
+        }
+      ],
+      resultsByProfile: {
+        "__proto__": {
+          "2026-02-20|en|abcde": {
+            date: "2026-02-20",
+            won: true,
+            attempts: 3,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(2)
+          }
+        }
+      }
+    };
+
+    const normalized = normalizeLeaderboardState(payload);
+    expect(normalized.hadInvalidContent).toBe(true);
+    expect(normalized.state.profiles).toEqual([]);
+    expect(normalized.state.resultsByProfile).toEqual({});
+  });
+
   test("normalization rewrites result rows with unknown properties", async () => {
     const filePath = tempFilePath();
     const warn = jest.fn();
@@ -455,6 +487,37 @@ describe("leaderboard-store", () => {
 
     expect(persisted.resultsByProfile.ava["2026-02-20|en|abcde"].extra).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+  });
+
+  test("normalization uses null-prototype maps for keyed state", () => {
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(10),
+      profiles: [
+        {
+          id: "ava",
+          name: "Ava",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1)
+        }
+      ],
+      resultsByProfile: {
+        ava: {
+          "2026-02-20|en|abcde": {
+            date: "2026-02-20",
+            won: true,
+            attempts: 3,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(2)
+          }
+        }
+      }
+    };
+
+    const normalized = normalizeLeaderboardState(payload);
+    expect(Object.getPrototypeOf(normalized.state.resultsByProfile)).toBeNull();
+    expect(Object.getPrototypeOf(normalized.state.resultsByProfile.ava)).toBeNull();
   });
 
   test("fails load for unsupported on-disk schema version", async () => {
