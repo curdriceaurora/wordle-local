@@ -75,6 +75,109 @@ describe("language-registry", () => {
     expect(normalized).toBeNull();
   });
 
+  test("normalizeRegistryPayload rejects unsafe dictionary paths", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "../escape.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
+  test("normalizeRegistryPayload rejects provider languages without valid provider metadata", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "en.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        },
+        {
+          id: "en-US",
+          label: "English (US)",
+          enabled: true,
+          source: "provider",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "providers/en-US/expanded-forms.txt",
+          provider: {
+            providerId: "",
+            variant: "en-us"
+          }
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
+  test("normalizeRegistryPayload requires all baked defaults to remain present", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
   test("loadSync recovers missing registry file with baked defaults", () => {
     const dir = createTempDir();
     const filePath = path.join(dir, "languages.json");
@@ -85,6 +188,20 @@ describe("language-registry", () => {
       expect(snapshot.version).toBe(REGISTRY_SCHEMA_VERSION);
       expect(snapshot.languages.map((language) => language.id)).toEqual(["en", "none"]);
       expect(fs.existsSync(filePath)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadSync recovery creates missing parent directories", () => {
+    const dir = createTempDir();
+    const nestedPath = path.join(dir, "nested", "registry", "languages.json");
+    const store = createRegistryStore(nestedPath);
+
+    try {
+      const snapshot = store.loadSync();
+      expect(snapshot.version).toBe(REGISTRY_SCHEMA_VERSION);
+      expect(fs.existsSync(nestedPath)).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -102,6 +219,37 @@ describe("language-registry", () => {
       const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
       expect(persisted.version).toBe(REGISTRY_SCHEMA_VERSION);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("loadSync recovery handles rename-overwrite filesystem errors", () => {
+    const dir = createTempDir();
+    const filePath = path.join(dir, "languages.json");
+    fs.writeFileSync(filePath, "{ bad-json", "utf8");
+    const store = createRegistryStore(filePath);
+    const originalRenameSync = fs.renameSync;
+    let renameSpy = null;
+
+    try {
+      let shouldFailOnce = true;
+      renameSpy = jest.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+        if (shouldFailOnce && newPath === filePath) {
+          shouldFailOnce = false;
+          const err = new Error("rename blocked");
+          err.code = "EPERM";
+          throw err;
+        }
+        return originalRenameSync(oldPath, newPath);
+      });
+
+      const snapshot = store.loadSync();
+      expect(snapshot.languages.map((language) => language.id)).toEqual(["en", "none"]);
+      expect(renameSpy).toHaveBeenCalled();
+    } finally {
+      if (renameSpy) {
+        renameSpy.mockRestore();
+      }
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

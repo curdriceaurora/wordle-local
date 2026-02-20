@@ -1527,6 +1527,54 @@ describe("Language registry recovery", () => {
     expect(ids).toContain("en");
     expect(ids).toContain("none");
   });
+
+  test("accepts canonicalized BCP47 language IDs from requests", async () => {
+    writeLanguageRegistry({
+      version: 1,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "en.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        },
+        {
+          id: "en-US",
+          label: "English (US)",
+          enabled: true,
+          source: "provider",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null,
+          provider: {
+            providerId: "libreoffice-dictionaries",
+            variant: "en-US"
+          }
+        }
+      ]
+    });
+
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "CRANE", lang: "en-us" });
+
+    expect(encodeResponse.status).toBe(200);
+    expect(typeof encodeResponse.body.code).toBe("string");
+  });
 });
 
 describe("Server startup", () => {

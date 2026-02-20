@@ -77,7 +77,8 @@
             "null"
           ],
           "minLength": 1,
-          "maxLength": 255
+          "maxLength": 255,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
         },
         "provider": {
           "type": "object",

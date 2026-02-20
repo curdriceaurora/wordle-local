@@ -206,8 +206,24 @@ function ensureWordData() {
   return fallback;
 }
 
+function canonicalizeLanguageId(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (value.toLowerCase() === "none") {
+    return "none";
+  }
+  const match = /^([a-zA-Z]{2})(?:-([a-zA-Z]{2}))?$/.exec(value);
+  if (!match) {
+    return value;
+  }
+  const language = match[1].toLowerCase();
+  if (!match[2]) {
+    return language;
+  }
+  return `${language}-${match[2].toUpperCase()}`;
+}
 function normalizeLang(raw) {
-  const key = String(raw || "").trim().toLowerCase();
+  const key = canonicalizeLanguageId(raw);
   if (registeredLanguageCatalog.has(key)) return key;
   if (!key) return DEFAULT_LANG;
   return null;
