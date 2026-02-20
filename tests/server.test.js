@@ -1,4 +1,5 @@
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const request = require("supertest");
 
@@ -37,7 +38,8 @@ function loadApp(options = {}) {
           rateLimitWindowMs: options.rateLimitWindowMs,
           lowMemoryDefinitions: options.lowMemoryDefinitions,
           definitionsMode: options.definitionsMode,
-          perfLogging: options.perfLogging
+          perfLogging: options.perfLogging,
+          statsStorePath: options.statsStorePath
         };
 
   jest.resetModules();
@@ -72,6 +74,11 @@ function loadApp(options = {}) {
   if (opts.perfLogging !== undefined) {
     process.env.PERF_LOGGING = opts.perfLogging ? "true" : "false";
   }
+  if (opts.statsStorePath !== undefined) {
+    process.env.STATS_STORE_PATH = opts.statsStorePath;
+  } else {
+    delete process.env.STATS_STORE_PATH;
+  }
 
   return require("../server");
 }
@@ -82,6 +89,22 @@ afterEach(() => {
 
 function writeWordData(data) {
   fs.writeFileSync(DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function createTempStatsStore(initialState = null) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-stats-"));
+  const filePath = path.join(dir, "leaderboard.json");
+  const payload = initialState || {
+    version: 1,
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    profiles: [],
+    resultsByProfile: {}
+  };
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  return {
+    filePath,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
+  };
 }
 
 async function withTempDictionary(file, contents, fn) {
@@ -934,6 +957,183 @@ describe("Admin auth", () => {
     const response = await request(app).get("/api/word");
     expect(response.status).toBe(200);
     expect(response.body.word).toBe("CRANE");
+  });
+});
+
+describe("Stats API", () => {
+  function getTodayDateString() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  test("creates a new profile and reuses it for case-insensitive name matches", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+
+      const first = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      expect(first.status).toBe(200);
+      expect(first.body.ok).toBe(true);
+      expect(first.body.reused).toBe(false);
+      expect(typeof first.body.playerId).toBe("string");
+      expect(first.body.profile.name).toBe("Ava");
+
+      const second = await request(app).post("/api/stats/profile").send({ name: "  ava  " });
+      expect(second.status).toBe(200);
+      expect(second.body.ok).toBe(true);
+      expect(second.body.reused).toBe(true);
+      expect(second.body.playerId).toBe(first.body.playerId);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("upserts daily results and applies replay merge policy", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const profileResponse = await request(app).post("/api/stats/profile").send({ name: "Ben" });
+      const profileId = profileResponse.body.playerId;
+      const dailyKey = `${getTodayDateString()}|en|abcde`;
+
+      const first = await request(app).post("/api/stats/result").send({
+        profileId,
+        dailyKey,
+        won: false,
+        attempts: null,
+        maxGuesses: 6
+      });
+      expect(first.status).toBe(200);
+      expect(first.body.result.won).toBe(false);
+      expect(first.body.result.attempts).toBeNull();
+      expect(first.body.result.submissionCount).toBe(1);
+
+      const second = await request(app).post("/api/stats/result").send({
+        profileId,
+        dailyKey,
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+      expect(second.status).toBe(200);
+      expect(second.body.result.won).toBe(true);
+      expect(second.body.result.attempts).toBe(4);
+      expect(second.body.result.submissionCount).toBe(2);
+
+      const third = await request(app).post("/api/stats/result").send({
+        profileId,
+        dailyKey,
+        won: true,
+        attempts: 5,
+        maxGuesses: 6
+      });
+      expect(third.status).toBe(200);
+      expect(third.body.result.won).toBe(true);
+      expect(third.body.result.attempts).toBe(4);
+      expect(third.body.result.submissionCount).toBe(3);
+
+      const profileSummary = await request(app).get(`/api/stats/profile/${profileId}`);
+      expect(profileSummary.status).toBe(200);
+      expect(profileSummary.body.summary.overall.played).toBe(1);
+      expect(profileSummary.body.summary.overall.wins).toBe(1);
+      expect(profileSummary.body.summary.totalSubmissions).toBe(3);
+
+      const leaderboard = await request(app).get("/api/stats/leaderboard?range=overall");
+      expect(leaderboard.status).toBe(200);
+      expect(leaderboard.body.rows).toHaveLength(1);
+      expect(leaderboard.body.rows[0].profileId).toBe(profileId);
+      expect(leaderboard.body.rows[0].wins).toBe(1);
+      expect(leaderboard.body.rows[0].played).toBe(1);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("validates stats payloads and reports friendly errors", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+
+      const invalidRange = await request(app).get("/api/stats/leaderboard?range=alltime");
+      expect(invalidRange.status).toBe(400);
+      expect(invalidRange.body.error).toMatch(/range/i);
+
+      const invalidProfile = await request(app).post("/api/stats/profile").send({ name: "1234" });
+      expect(invalidProfile.status).toBe(400);
+      expect(invalidProfile.body.error).toMatch(/player name/i);
+
+      const invalidResult = await request(app).post("/api/stats/result").send({
+        profileId: "missing",
+        dailyKey: "bad-key",
+        won: false,
+        attempts: 2,
+        maxGuesses: 6
+      });
+      expect(invalidResult.status).toBe(400);
+      expect(invalidResult.body.error).toMatch(/dailyKey/i);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("protects admin rename endpoint and prevents duplicate names", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const first = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const second = await request(app).post("/api/stats/profile").send({ name: "Ben" });
+
+      const unauthorized = await request(app)
+        .patch(`/api/admin/stats/profile/${first.body.playerId}`)
+        .send({ name: "Avery" });
+      expect(unauthorized.status).toBe(401);
+
+      const renamed = await request(app)
+        .patch(`/api/admin/stats/profile/${first.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ name: "Avery" });
+      expect(renamed.status).toBe(200);
+      expect(renamed.body.profile.name).toBe("Avery");
+
+      const duplicate = await request(app)
+        .patch(`/api/admin/stats/profile/${first.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ name: "Ben" });
+      expect(duplicate.status).toBe(409);
+      expect(duplicate.body.error).toMatch(/already uses that name/i);
+
+      const missing = await request(app)
+        .patch("/api/admin/stats/profile/missing-id")
+        .set("x-admin-key", "secret")
+        .send({ name: "Avery" });
+      expect(missing.status).toBe(404);
+
+      const stillExists = await request(app).get(`/api/stats/profile/${second.body.playerId}`);
+      expect(stillExists.status).toBe(200);
+      expect(stillExists.body.profile.name).toBe("Ben");
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("returns 503 when stats storage is unavailable", async () => {
+    const tempStore = createTempStatsStore({
+      version: 2,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      profiles: [],
+      resultsByProfile: {}
+    });
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const response = await request(app).get("/api/stats/leaderboard");
+      expect(response.status).toBe(503);
+      expect(response.body.error).toMatch(/unavailable/i);
+    } finally {
+      tempStore.cleanup();
+    }
   });
 });
 
