@@ -17,8 +17,18 @@ const TRUST_PROXY = process.env.TRUST_PROXY
   : NODE_ENV === "production";
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
-const LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
-const DEFINITION_CACHE_SIZE = Number(process.env.DEFINITION_CACHE_SIZE) || 512;
+const PERF_LOGGING = process.env.PERF_LOGGING === "true";
+const LEGACY_LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
+const DEFINITIONS_MODE = resolveDefinitionsMode();
+const DEFINITION_CACHE_SIZE = parsePositiveInteger(process.env.DEFINITION_CACHE_SIZE, 512);
+const DEFINITION_CACHE_TTL_MS = parseNonNegativeInteger(
+  process.env.DEFINITION_CACHE_TTL_MS,
+  30 * 60 * 1000
+);
+const DEFINITION_SHARD_CACHE_SIZE = parsePositiveInteger(
+  process.env.DEFINITION_SHARD_CACHE_SIZE,
+  6
+);
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
 const PUBLIC_ROOT = path.join(__dirname, "public");
@@ -26,6 +36,8 @@ const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
 const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
 const DICT_PATH = path.join(__dirname, "data", "dictionaries");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
+const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
+const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(EN_DEFINITIONS_INDEX_DIR, "manifest.json");
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -34,12 +46,73 @@ const MAX_GUESSES = 10;
 const DEFAULT_GUESSES = 6;
 const KEY = "WORDLE";
 const DEFAULT_LANG = "en";
-const LANGUAGES = {
-  en: { label: "English", file: "en.txt" },
-  none: { label: "No dictionary", file: null }
-};
+const LANGUAGES = Object.freeze({
+  en: Object.freeze({ label: "English", file: "en.txt" }),
+  none: Object.freeze({ label: "No dictionary", file: null })
+});
 let wordDataCache = null;
 const definitionCache = new Map();
+const definitionShardCache = new Map();
+const DEFINITION_CACHE_MISS = Symbol("definition-cache-miss");
+const INDEX_LOOKUP_UNAVAILABLE = Symbol("index-lookup-unavailable");
+let fullEnglishDefinitions = null;
+let englishDefinitionIndexManifest = null;
+let hasWarnedAboutDefinitionIndex = false;
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function normalizeDefinitionsMode(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (value === "memory" || value === "lazy" || value === "indexed") {
+    return value;
+  }
+  return null;
+}
+
+function resolveDefinitionsMode() {
+  const explicitMode = normalizeDefinitionsMode(process.env.DEFINITIONS_MODE);
+  if (explicitMode) {
+    return explicitMode;
+  }
+  if (process.env.DEFINITIONS_MODE) {
+    console.warn(
+      `Unknown DEFINITIONS_MODE="${process.env.DEFINITIONS_MODE}". Falling back to "memory".`
+    );
+  }
+  if (LEGACY_LOW_MEMORY_DEFINITIONS) {
+    return "indexed";
+  }
+  return "memory";
+}
+
+function createPerfTimer(label) {
+  if (!PERF_LOGGING) return null;
+  return {
+    label,
+    start: process.hrtime.bigint()
+  };
+}
+
+function endPerfTimer(timer, details = "") {
+  if (!timer) return;
+  const elapsedMs = Number(process.hrtime.bigint() - timer.start) / 1e6;
+  const suffix = details ? ` ${details}` : "";
+  console.log(`[perf] ${timer.label} ${elapsedMs.toFixed(2)}ms${suffix}`);
+}
 
 function buildDefaultWordData() {
   return {
@@ -169,8 +242,10 @@ function decodeWord(code) {
 }
 
 function loadDictionary(file, minLength) {
+  const timer = createPerfTimer(`dictionary.load.${file}`);
   const fullPath = path.join(DICT_PATH, file);
   if (!fs.existsSync(fullPath)) {
+    endPerfTimer(timer, "missing");
     return null;
   }
 
@@ -204,15 +279,17 @@ function loadDictionary(file, minLength) {
   }
 
   if (totalCount === 0) {
+    endPerfTimer(timer, "empty");
     return null;
   }
-
-  return {
+  const dictionary = {
     byLength,
     listByLength,
     totalCount,
     minLength
   };
+  endPerfTimer(timer, `words=${totalCount}`);
+  return dictionary;
 }
 
 function loadWordDefinitions(filePath) {
@@ -246,6 +323,194 @@ function loadWordDefinitions(filePath) {
   }
 }
 
+function loadWordDefinitionsFromObject(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return null;
+  }
+  const map = new Map();
+  for (const [word, definition] of Object.entries(source)) {
+    const normalizedWord = normalizeWord(word);
+    if (!/^[A-Z]+$/.test(normalizedWord)) continue;
+    const normalizedDefinition = String(definition || "").trim().replace(/\s+/g, " ");
+    if (!normalizedDefinition) continue;
+    map.set(normalizedWord, normalizedDefinition);
+  }
+  return map;
+}
+
+function loadDefinitionIndexManifest() {
+  if (englishDefinitionIndexManifest) {
+    return englishDefinitionIndexManifest;
+  }
+  if (!fs.existsSync(EN_DEFINITIONS_INDEX_MANIFEST_PATH)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(EN_DEFINITIONS_INDEX_MANIFEST_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    const shards = parsed && typeof parsed === "object" ? parsed.shards : null;
+    if (!shards || typeof shards !== "object" || Array.isArray(shards)) {
+      return null;
+    }
+    englishDefinitionIndexManifest = {
+      generatedAt: parsed.generatedAt || "",
+      shards
+    };
+    return englishDefinitionIndexManifest;
+  } catch (err) {
+    return null;
+  }
+}
+
+function getOrLoadFullDefinitionsMap() {
+  if (fullEnglishDefinitions) {
+    return fullEnglishDefinitions;
+  }
+  const timer = createPerfTimer("definitions.load.full");
+  fullEnglishDefinitions = loadWordDefinitions(EN_DEFINITIONS_PATH);
+  endPerfTimer(timer, `entries=${fullEnglishDefinitions.size}`);
+  return fullEnglishDefinitions;
+}
+
+function cacheDefinition(word, value) {
+  const expiresAt =
+    DEFINITION_CACHE_TTL_MS > 0 ? Date.now() + DEFINITION_CACHE_TTL_MS : null;
+  if (definitionCache.has(word)) {
+    definitionCache.delete(word);
+  }
+  definitionCache.set(word, { value, expiresAt });
+  if (definitionCache.size > DEFINITION_CACHE_SIZE) {
+    const oldest = definitionCache.keys().next().value;
+    if (oldest) {
+      definitionCache.delete(oldest);
+    }
+  }
+}
+
+function readDefinitionCache(word) {
+  if (!definitionCache.has(word)) {
+    return DEFINITION_CACHE_MISS;
+  }
+  const entry = definitionCache.get(word);
+  if (!entry) {
+    return DEFINITION_CACHE_MISS;
+  }
+  if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+    definitionCache.delete(word);
+    return DEFINITION_CACHE_MISS;
+  }
+  definitionCache.delete(word);
+  definitionCache.set(word, entry);
+  return entry.value;
+}
+
+function cacheDefinitionShard(shardId, definitionsMap) {
+  if (definitionShardCache.has(shardId)) {
+    definitionShardCache.delete(shardId);
+  }
+  definitionShardCache.set(shardId, definitionsMap);
+  if (definitionShardCache.size > DEFINITION_SHARD_CACHE_SIZE) {
+    const oldest = definitionShardCache.keys().next().value;
+    if (oldest) {
+      definitionShardCache.delete(oldest);
+    }
+  }
+}
+
+function loadDefinitionShard(shardId) {
+  if (definitionShardCache.has(shardId)) {
+    const cached = definitionShardCache.get(shardId);
+    definitionShardCache.delete(shardId);
+    definitionShardCache.set(shardId, cached);
+    return cached;
+  }
+
+  const manifest = loadDefinitionIndexManifest();
+  if (!manifest || !manifest.shards) {
+    return INDEX_LOOKUP_UNAVAILABLE;
+  }
+  const shardEntry = manifest.shards[shardId];
+  if (
+    !shardEntry ||
+    typeof shardEntry !== "object" ||
+    Array.isArray(shardEntry) ||
+    typeof shardEntry.file !== "string" ||
+    shardEntry.file.length === 0
+  ) {
+    return INDEX_LOOKUP_UNAVAILABLE;
+  }
+  const fileName = shardEntry.file;
+  const shardPath = path.join(EN_DEFINITIONS_INDEX_DIR, fileName);
+  if (!fs.existsSync(shardPath)) {
+    return INDEX_LOOKUP_UNAVAILABLE;
+  }
+
+  try {
+    const raw = fs.readFileSync(shardPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const map = loadWordDefinitionsFromObject(parsed);
+    if (!map) {
+      return INDEX_LOOKUP_UNAVAILABLE;
+    }
+    cacheDefinitionShard(shardId, map);
+    return map;
+  } catch (err) {
+    return INDEX_LOOKUP_UNAVAILABLE;
+  }
+}
+
+function lookupDefinitionByIndexedShard(word) {
+  if (!/^[A-Z]+$/.test(word)) {
+    return null;
+  }
+  const shardId = word[0];
+  const shard = loadDefinitionShard(shardId);
+  if (shard === INDEX_LOOKUP_UNAVAILABLE) {
+    return INDEX_LOOKUP_UNAVAILABLE;
+  }
+  return shard.get(word) || null;
+}
+
+function warnDefinitionIndexFallback() {
+  if (hasWarnedAboutDefinitionIndex) {
+    return;
+  }
+  hasWarnedAboutDefinitionIndex = true;
+  console.warn(
+    "Definition index is missing or invalid. Falling back to lazy full-map lookups."
+  );
+}
+
+function lookupEnglishDefinition(word) {
+  const cached = readDefinitionCache(word);
+  if (cached !== DEFINITION_CACHE_MISS) {
+    return cached;
+  }
+
+  const timer = createPerfTimer("definitions.lookup");
+  let value = null;
+  let source = DEFINITIONS_MODE;
+
+  if (DEFINITIONS_MODE === "memory" || DEFINITIONS_MODE === "lazy") {
+    value = getOrLoadFullDefinitionsMap().get(word) || null;
+  } else if (DEFINITIONS_MODE === "indexed") {
+    const indexedValue = lookupDefinitionByIndexedShard(word);
+    if (indexedValue === INDEX_LOOKUP_UNAVAILABLE) {
+      source = "lazy-fallback";
+      warnDefinitionIndexFallback();
+      value = getOrLoadFullDefinitionsMap().get(word) || null;
+    } else {
+      value = indexedValue;
+    }
+  } else {
+    value = getOrLoadFullDefinitionsMap().get(word) || null;
+  }
+
+  cacheDefinition(word, value);
+  endPerfTimer(timer, `mode=${source} found=${Boolean(value)}`);
+  return value;
+}
+
 const dictionaries = {};
 const availableLanguages = new Map();
 for (const [key, info] of Object.entries(LANGUAGES)) {
@@ -270,6 +535,10 @@ for (const [key, info] of Object.entries(LANGUAGES)) {
       hasDictionary: true
     });
   }
+}
+
+if (DEFINITIONS_MODE === "memory") {
+  getOrLoadFullDefinitionsMap();
 }
 
 app.locals.availableLanguages = availableLanguages;
@@ -306,58 +575,11 @@ function dictionaryRandomWord(dict, length) {
   return list[index];
 }
 
-const englishDefinitions = LOW_MEMORY_DEFINITIONS
-  ? null
-  : loadWordDefinitions(EN_DEFINITIONS_PATH);
-
-function cacheDefinition(word, value) {
-  if (definitionCache.has(word)) {
-    definitionCache.delete(word);
-  }
-  definitionCache.set(word, value);
-  if (definitionCache.size > DEFINITION_CACHE_SIZE) {
-    const oldest = definitionCache.keys().next().value;
-    if (oldest) {
-      definitionCache.delete(oldest);
-    }
-  }
-}
-
-function lookupDefinitionFromFile(word) {
-  if (definitionCache.has(word)) {
-    return definitionCache.get(word);
-  }
-  if (!fs.existsSync(EN_DEFINITIONS_PATH)) {
-    cacheDefinition(word, null);
-    return null;
-  }
-  let value = null;
-  try {
-    const raw = fs.readFileSync(EN_DEFINITIONS_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    const source = parsed && typeof parsed === "object" && parsed.definitions
-      ? parsed.definitions
-      : parsed;
-    const candidate = source && typeof source[word] === "string"
-      ? source[word]
-      : "";
-    const normalized = candidate.trim().replace(/\s+/g, " ");
-    value = normalized || null;
-  } catch (err) {
-    value = null;
-  }
-  cacheDefinition(word, value);
-  return value;
-}
-
 function lookupAnswerMeaning(lang, word) {
   if (lang !== "en") return null;
   const dict = getDictionary(lang);
   if (!dict || !dictionaryHasWord(dict, word)) return null;
-  if (LOW_MEMORY_DEFINITIONS) {
-    return lookupDefinitionFromFile(word);
-  }
-  return englishDefinitions.get(word) || null;
+  return lookupEnglishDefinition(word);
 }
 
 function evaluateGuess(guess, answer) {
@@ -443,7 +665,9 @@ app.get("/api/meta", (req, res) => {
     maxGuesses: MAX_GUESSES,
     defaultGuesses: DEFAULT_GUESSES,
     languages,
-    defaultLang
+    defaultLang,
+    perfLogging: PERF_LOGGING,
+    definitionsMode: DEFINITIONS_MODE
   });
 });
 
@@ -686,6 +910,12 @@ function renderDailyMissing(message) {
 function startServer(listener = app.listen.bind(app)) {
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
+    console.log(`Definitions mode: ${DEFINITIONS_MODE}`);
+    if (PERF_LOGGING) {
+      console.log(
+        `Perf logging enabled (definition cache size=${DEFINITION_CACHE_SIZE}, ttlMs=${DEFINITION_CACHE_TTL_MS})`
+      );
+    }
     if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {
       console.log("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
     }

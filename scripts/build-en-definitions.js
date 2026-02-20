@@ -5,7 +5,10 @@ const path = require("path");
 
 const WORD_LIST_PATH = path.join(__dirname, "..", "data", "dictionaries", "en.txt");
 const OUTPUT_PATH = path.join(__dirname, "..", "data", "dictionaries", "en-definitions.json");
+const INDEX_OUTPUT_DIR = path.join(__dirname, "..", "data", "dictionaries", "en-definitions-index");
+const INDEX_MANIFEST_PATH = path.join(INDEX_OUTPUT_DIR, "manifest.json");
 const MAX_DEFINITION_LENGTH = 220;
+const SHARD_IDS = Object.freeze("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""));
 const TYPE_TO_POS = Object.freeze({
   1: "noun",
   2: "verb",
@@ -157,7 +160,108 @@ function buildDefinitions(wordList, lemmaDefinitions) {
   return definitions;
 }
 
+function writeDefinitionIndexArtifacts(payload) {
+  fs.mkdirSync(INDEX_OUTPUT_DIR, { recursive: true });
+  fs.readdirSync(INDEX_OUTPUT_DIR).forEach((entry) => {
+    if (entry.endsWith(".json")) {
+      fs.unlinkSync(path.join(INDEX_OUTPUT_DIR, entry));
+    }
+  });
+
+  const shards = {};
+  SHARD_IDS.forEach((shardId) => {
+    shards[shardId] = {};
+  });
+
+  const sortedWords = Object.keys(payload.definitions).sort();
+  for (const word of sortedWords) {
+    const shardId = word[0];
+    if (!shards[shardId]) {
+      continue;
+    }
+    shards[shardId][word] = payload.definitions[word];
+  }
+
+  const manifest = {
+    version: 1,
+    generatedAt: payload.generatedAt,
+    source: payload.source,
+    totalWords: payload.totalWords,
+    coveredWords: payload.coveredWords,
+    coveragePercent: payload.coveragePercent,
+    shards: {}
+  };
+
+  SHARD_IDS.forEach((shardId) => {
+    const definitions = shards[shardId];
+    const count = Object.keys(definitions).length;
+    if (count === 0) {
+      return;
+    }
+    const fileName = `${shardId}.json`;
+    const filePath = path.join(INDEX_OUTPUT_DIR, fileName);
+    fs.writeFileSync(filePath, `${JSON.stringify(definitions)}\n`, "utf8");
+    manifest.shards[shardId] = {
+      file: fileName,
+      count
+    };
+  });
+
+  fs.writeFileSync(INDEX_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return {
+    shardCount: Object.keys(manifest.shards).length,
+    outputDir: INDEX_OUTPUT_DIR
+  };
+}
+
+function readExistingDefinitionsPayload(filePath) {
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Definition payload must be an object.");
+  }
+  if (!parsed.definitions || typeof parsed.definitions !== "object" || Array.isArray(parsed.definitions)) {
+    throw new Error("Definition payload is missing a valid `definitions` object.");
+  }
+  return {
+    generatedAt: String(parsed.generatedAt || new Date().toISOString()),
+    source: String(parsed.source || "unknown"),
+    totalWords: Number(parsed.totalWords) || Object.keys(parsed.definitions).length,
+    coveredWords: Number(parsed.coveredWords) || Object.keys(parsed.definitions).length,
+    coveragePercent:
+      Number(parsed.coveragePercent) ||
+      Number(
+        (
+          (Object.keys(parsed.definitions).length /
+            Math.max(Number(parsed.totalWords) || Object.keys(parsed.definitions).length, 1)) *
+          100
+        ).toFixed(2)
+      ),
+    definitions: parsed.definitions
+  };
+}
+
 function main() {
+  const indexOnly = process.argv.includes("--index-only");
+  if (indexOnly) {
+    if (!fs.existsSync(OUTPUT_PATH)) {
+      console.error(`Cannot build definition index. Missing ${OUTPUT_PATH}.`);
+      process.exit(1);
+    }
+    let payload;
+    try {
+      payload = readExistingDefinitionsPayload(OUTPUT_PATH);
+    } catch (err) {
+      console.error(`Invalid definitions file: ${err.message}`);
+      process.exit(1);
+    }
+    const indexDetails = writeDefinitionIndexArtifacts(payload);
+    console.log(
+      `Wrote indexed definition shards (${indexDetails.shardCount}) to ${indexDetails.outputDir}`
+    );
+    return;
+  }
+
   let wordNet;
   try {
     wordNet = require("wordnet-db");
@@ -197,8 +301,12 @@ function main() {
   };
 
   fs.writeFileSync(OUTPUT_PATH, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const indexDetails = writeDefinitionIndexArtifacts(payload);
   console.log(
     `Wrote ${coveredWords}/${words.length} definitions (${coveragePercent}%) to ${OUTPUT_PATH}`
+  );
+  console.log(
+    `Wrote indexed definition shards (${indexDetails.shardCount}) to ${indexDetails.outputDir}`
   );
 }
 
