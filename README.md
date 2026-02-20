@@ -91,10 +91,11 @@ There is no admin UI. Use the API endpoints below.
 - Share link doesn’t work: make sure the link wasn’t truncated and is from the Create screen.
 
 ## Roadmap (Exploratory)
-We are evaluating a larger Admin Platform expansion that includes an Admin UI, dictionary lifecycle management, and selected runtime settings controls.
+We are evaluating two exploratory tracks that are intentionally outside the current core scope:
+- Admin Platform expansion (Admin UI, dictionary lifecycle management, and selected runtime settings controls): https://github.com/curdriceaurora/wordle-local/issues/6
+- LibreOffice English variant sourcing (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via Admin import flows, with Hunspell-based guess handling and curated answer policy: https://github.com/curdriceaurora/wordle-local/issues/17
 
-This is intentionally not in the current core scope and is tracked as an Epic with linked sub-issues:
-- https://github.com/curdriceaurora/wordle-local/issues/6
+This second track is planned after foundational Admin Platform work in #6.
 
 Whether it ships next will depend on adoption signals and community feedback.
 Current priority remains a stable, simple local-hosted gameplay experience.
