@@ -4,6 +4,7 @@ const path = require("path");
 const request = require("supertest");
 
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
+const LANGUAGE_REGISTRY_PATH = path.join(__dirname, "..", "data", "languages.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
@@ -12,6 +13,7 @@ const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(
   "manifest.json"
 );
 const ORIGINAL_WORD_DATA = fs.readFileSync(DATA_PATH, "utf8");
+const ORIGINAL_LANGUAGE_REGISTRY = fs.readFileSync(LANGUAGE_REGISTRY_PATH, "utf8");
 const ORIGINAL_ENV = { ...process.env };
 
 function resetEnv() {
@@ -97,6 +99,10 @@ function writeWordData(data) {
   fs.writeFileSync(DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
 }
 
+function writeLanguageRegistry(data) {
+  fs.writeFileSync(LANGUAGE_REGISTRY_PATH, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
 function createTempStatsStore(initialState = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-stats-"));
   const filePath = path.join(dir, "leaderboard.json");
@@ -171,6 +177,16 @@ async function withTempDefinitionsContent(content, fn) {
     return await fn();
   } finally {
     fs.writeFileSync(EN_DEFINITIONS_PATH, original, "utf8");
+  }
+}
+
+async function withTempLanguageRegistryContent(content, fn) {
+  const original = fs.readFileSync(LANGUAGE_REGISTRY_PATH, "utf8");
+  fs.writeFileSync(LANGUAGE_REGISTRY_PATH, content, "utf8");
+  try {
+    return await fn();
+  } finally {
+    fs.writeFileSync(LANGUAGE_REGISTRY_PATH, original, "utf8");
   }
 }
 
@@ -1458,6 +1474,58 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.headers.location.startsWith("/?word=")).toBe(true);
     expect(response.headers.location).not.toMatch(/lang=/);
     expect(response.headers.location).toMatch(/daily=1/);
+  });
+});
+
+describe("Language registry recovery", () => {
+  afterEach(() => {
+    fs.writeFileSync(LANGUAGE_REGISTRY_PATH, ORIGINAL_LANGUAGE_REGISTRY, "utf8");
+  });
+
+  test("recovers invalid languages.json on startup", async () => {
+    await withTempLanguageRegistryContent("{bad json", async () => {
+      loadApp();
+      const repaired = JSON.parse(fs.readFileSync(LANGUAGE_REGISTRY_PATH, "utf8"));
+      expect(repaired.version).toBe(1);
+      expect(Array.isArray(repaired.languages)).toBe(true);
+      const ids = repaired.languages.map((language) => language.id);
+      expect(ids).toContain("en");
+      expect(ids).toContain("none");
+    });
+  });
+
+  test("keeps /api/meta language payload stable with baked registry defaults", async () => {
+    writeLanguageRegistry({
+      version: 1,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "en.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        }
+      ]
+    });
+
+    const app = loadApp();
+    const response = await request(app).get("/api/meta");
+    expect(response.status).toBe(200);
+    const ids = response.body.languages.map((language) => language.id);
+    expect(ids).toContain("en");
+    expect(ids).toContain("none");
   });
 });
 

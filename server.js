@@ -8,6 +8,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
 const { requireAdmin } = require("./lib/admin-auth");
+const { LanguageRegistryStore } = require("./lib/language-registry");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,6 +46,7 @@ const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(EN_DEFINITIONS_INDEX_DIR, "
 const LEADERBOARD_DATA_PATH = process.env.STATS_STORE_PATH
   ? path.resolve(process.env.STATS_STORE_PATH)
   : path.join(__dirname, "data", "leaderboard.json");
+const LANGUAGE_REGISTRY_PATH = path.join(__dirname, "data", "languages.json");
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -59,7 +61,7 @@ const LEADERBOARD_RANGE = Object.freeze({
   overall: "overall"
 });
 const STATS_UNAVAILABLE_ERROR = "Stats service unavailable right now. Try again soon.";
-const LANGUAGES = Object.freeze({
+const BAKED_LANGUAGES = Object.freeze({
   en: Object.freeze({ label: "English", file: "en.txt" }),
   none: Object.freeze({ label: "No dictionary", file: null })
 });
@@ -206,7 +208,7 @@ function ensureWordData() {
 
 function normalizeLang(raw) {
   const key = String(raw || "").trim().toLowerCase();
-  if (LANGUAGES[key]) return key;
+  if (registeredLanguageCatalog.has(key)) return key;
   if (!key) return DEFAULT_LANG;
   return null;
 }
@@ -521,25 +523,36 @@ function lookupEnglishDefinition(word) {
 }
 
 const dictionaries = {};
+const languageRegistryStore = new LanguageRegistryStore({
+  filePath: LANGUAGE_REGISTRY_PATH,
+  bakedLanguages: BAKED_LANGUAGES,
+  getMinLengthForLang,
+  logger: console
+});
+const languageRegistrySnapshot = languageRegistryStore.loadSync();
+const registeredLanguageCatalog = new Map(
+  languageRegistrySnapshot.languages.map((language) => [language.id, language])
+);
 const availableLanguages = new Map();
-for (const [key, info] of Object.entries(LANGUAGES)) {
-  if (!info.file) {
+for (const language of languageRegistryStore.getEnabledLanguagesSync()) {
+  const key = language.id;
+  if (!language.hasDictionary || !language.dictionaryFile) {
     dictionaries[key] = null;
     availableLanguages.set(key, {
       id: key,
-      label: info.label,
+      label: language.label,
       minLength: getMinLengthForLang(key),
       hasDictionary: false
     });
     continue;
   }
   const minLength = getMinLengthForLang(key);
-  const dict = loadDictionary(info.file, minLength);
+  const dict = loadDictionary(language.dictionaryFile, minLength);
   dictionaries[key] = dict;
   if (dict) {
     availableLanguages.set(key, {
       id: key,
-      label: info.label,
+      label: language.label,
       minLength,
       hasDictionary: true
     });
@@ -551,6 +564,7 @@ if (DEFINITIONS_MODE === "memory") {
 }
 
 app.locals.availableLanguages = availableLanguages;
+app.locals.languageRegistryStore = languageRegistryStore;
 
 function getDictionary(lang) {
   if (lang === "none") return null;
@@ -589,6 +603,10 @@ function lookupAnswerMeaning(lang, word) {
   const dict = getDictionary(lang);
   if (!dict || !dictionaryHasWord(dict, word)) return null;
   return lookupEnglishDefinition(word);
+}
+
+function getLanguageLabel(lang) {
+  return registeredLanguageCatalog.get(lang)?.label || "English";
 }
 
 function evaluateGuess(guess, answer) {
@@ -1251,7 +1269,7 @@ app.post("/api/puzzle", (req, res) => {
   res.json({
     length: code.length,
     lang,
-    label: LANGUAGES[lang]?.label || "English",
+    label: getLanguageLabel(lang),
     maxGuesses: guesses
   });
 });

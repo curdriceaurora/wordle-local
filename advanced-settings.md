@@ -36,3 +36,4 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 - `PORT` — default 3000.
 - `HOST` — default 0.0.0.0.
 - `NODE_ENV` — `development` or `production`.
+- Language registry file: `data/languages.json` (auto-recovers to baked defaults if missing/invalid).
