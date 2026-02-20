@@ -24,6 +24,9 @@ Ensure the English word list has clear licensing/attribution or replace it with 
 - License/credits captured in `data/dictionaries/wordlist-en_US-2020.12.07-README.txt`.
 - Dictionary counts documented in `data/dictionaries/README.md`.
 - Dictionaries are normalized to A–Z only by the loader.
+- Added local `en-definitions.json` (generated from Princeton WordNet 3.1 via `wordnet-db`) for reveal-time meanings.
+- Definition lookup is now fully local (no runtime network dependency).
+- WordNet license text added in `data/dictionaries/wordnet-3.1-LICENSE.txt`.
 
 ## Open Items
 - None.

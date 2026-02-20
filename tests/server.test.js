@@ -4,6 +4,7 @@ const request = require("supertest");
 
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
+const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const ORIGINAL_WORD_DATA = fs.readFileSync(DATA_PATH, "utf8");
 const ORIGINAL_ENV = { ...process.env };
 
@@ -85,6 +86,16 @@ async function withMissingDictionary(file, fn) {
     return await fn();
   } finally {
     fs.renameSync(backupPath, fullPath);
+  }
+}
+
+async function withTempDefinitions(payload, fn) {
+  const original = fs.readFileSync(EN_DEFINITIONS_PATH, "utf8");
+  fs.writeFileSync(EN_DEFINITIONS_PATH, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  try {
+    return await fn();
+  } finally {
+    fs.writeFileSync(EN_DEFINITIONS_PATH, original, "utf8");
   }
 }
 
@@ -232,6 +243,69 @@ describe("Wordle API", () => {
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.isCorrect).toBe(false);
     expect(guessResponse.body.answer).toBe("CRANE");
+    expect(guessResponse.body.answerMeaning).toBeUndefined();
+  });
+
+  test("returns local answer meaning when reveal is true for english puzzles", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp();
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "SLATE", lang: "en", reveal: true });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(false);
+        expect(guessResponse.body.answer).toBe("CRANE");
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
+  });
+
+  test("returns local answer meaning when english puzzle is solved", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp();
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(true);
+        expect(guessResponse.body.answer).toBeUndefined();
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
   });
 
   test("rejects invalid guesses and dictionary misses", async () => {
@@ -497,6 +571,8 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location).toMatch(/word=/);
     expect(response.headers.location).toMatch(/lang=none/);
+    expect(response.headers.location).toMatch(/daily=1/);
+    expect(response.headers.location).toMatch(/day=\d{4}-\d{2}-\d{2}/);
   });
 
   test("redirects using default language when stored lang is unknown", async () => {
@@ -506,6 +582,7 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location.startsWith("/?word=")).toBe(true);
     expect(response.headers.location).not.toMatch(/lang=/);
+    expect(response.headers.location).toMatch(/daily=1/);
   });
 });
 

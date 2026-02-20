@@ -1,6 +1,14 @@
 const { test, expect } = require("./fixtures");
 const gotoOptions = { waitUntil: "commit" };
 
+function todayLocalDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 async function waitForLanguages(page) {
   await page.waitForSelector("#langSelect option", { state: "attached" });
 }
@@ -32,6 +40,69 @@ test("play puzzle from encoded link", async ({ page }) => {
   await page.keyboard.type("JACKS");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6");
+});
+
+test("shows local meaning when english puzzle is solved", async ({ page }) => {
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.keyboard.type("CRANE");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Solved in 1/6!");
+  await expect(page.locator("#message")).toContainText("Meaning:");
+});
+
+test("reveals a local meaning after final failed guess", async ({ page }) => {
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+
+  const failedGuesses = ["SLATE", "CRATE", "STONE", "TRAIL", "ABATE", "ADORE"];
+  for (let i = 0; i < failedGuesses.length; i += 1) {
+    await page.keyboard.type(failedGuesses[i]);
+    await page.keyboard.press("Enter");
+    await expect(
+      page.locator(
+        `#board .row:nth-child(${i + 1}) .tile.absent, #board .row:nth-child(${i + 1}) .tile.present, #board .row:nth-child(${i + 1}) .tile.correct`
+      )
+    ).toHaveCount(5);
+  }
+
+  await expect(page.locator("#message")).toContainText("Out of tries. Word was CRANE.");
+  await expect(page.locator("#message")).toContainText("Meaning:");
+});
+
+test("daily mode requires a player name and updates leaderboard stats", async ({ page }) => {
+  await page.goto(`/?word=fotnd&lang=none&daily=1&day=${todayLocalDate()}`, gotoOptions);
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await expect(page.locator("#profilePanel")).toBeVisible();
+
+  await page.keyboard.type("JACKS");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Pick a player name");
+
+  await page.fill("#profileNameInput", "Ava");
+  await page.click("#profileForm button[type=submit]");
+  await expect(page.locator("#activePlayerWrap")).toContainText("Ava");
+
+  await page.keyboard.type("JACKS");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Solved in 1/6!");
+
+  await expect(page.locator("#statPlayed")).toHaveText("1");
+  await expect(page.locator("#statWinRate")).toHaveText("100%");
+  await expect(page.locator("#statStreak")).toHaveText("1");
+  await expect(page.locator("#statBest")).toHaveText("1");
+  await expect(page.locator("#leaderboardBody")).toContainText("Ava");
+
+  await page.selectOption("#leaderboardRange", "overall");
+  await expect(page.locator("#leaderboardMeta")).toContainText("All recorded daily games");
 });
 
 test("strict mode enforces revealed hints", async ({ page }) => {

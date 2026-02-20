@@ -13,7 +13,7 @@
 - Run fully locally (self‑hosted) with a simple Docker workflow.
 
 **Non‑goals:**
-- User accounts, stats, or leaderboards.
+- Password-protected accounts or cloud identity.
 - Monetization or telemetry.
 - Server‑side persistence of user gameplay.
 
@@ -54,6 +54,7 @@
 **Acceptance criteria:**
 - Correct guess displays “Solved in X/Y”.
 - On final failure, answer is revealed.
+- If a local meaning exists for the answer, it is displayed when the game ends (solved or revealed on failure).
 
 ### 3.4 Strict Mode
 - Enforces all revealed hints:
@@ -70,7 +71,7 @@
 - Increases contrast and provides extra visual indicators.
 
 **Acceptance criteria:**
-- Color palette switches and tiles/keys show A/P/C markers.
+- Color palette switches to a higher-contrast palette for board and keyboard states.
 
 ### 3.6 Daily Word
 - Admin sets a daily word and optional date.
@@ -98,6 +99,7 @@
 - If dictionary selected, guesses are validated against it.
 - Languages with missing dictionary files are omitted from language options.
 - English dictionary is sourced from wordlist-en_US-2020.12.07 (derived from SCOWL) with attribution in `data/dictionaries/wordlist-en_US-2020.12.07-README.txt`.
+- English meanings are sourced from local `en-definitions.json` generated from Princeton WordNet 3.1 data.
 
 **Acceptance criteria:**
 - “Not in word list” displayed for invalid guesses when dictionary is active.
@@ -125,17 +127,32 @@
 - Invalid share links show an interstitial error with a 10-second countdown then redirect to the create screen.
 - Admin endpoints return 401/403 when `ADMIN_KEY` is set and the key is missing or incorrect.
 
+### 3.11 Family Profiles & Daily Leaderboards
+- Daily links (`/daily`) include local daily context in query params.
+- In daily mode, player must pick or create a local profile name before entering guesses.
+- No password or server identity checks (family honor system).
+- Stats are stored in browser localStorage only.
+- Track per-profile daily outcomes and streaks.
+- Show local leaderboard periods: weekly (last 7 days), monthly (current calendar month), and overall.
+
+**Acceptance criteria:**
+- Daily mode blocks guesses until a local player is selected.
+- Player can create/select a name in one step.
+- Solves/failures update local stats for that profile.
+- Leaderboard ranking updates without any server call or account system.
+
 ## 4. Architectural Requirements
 ### 4.1 Client
 - Static HTML/CSS/JS served from `public/`.
 - No authentication or tracking.
-- Local storage used only for user settings (strict/contrast).
+- Local storage used for user settings (strict/contrast) and local daily profile stats.
 
 ### 4.2 Server
 - Node.js + Express.
 - Stateless gameplay: client submits guesses, server evaluates by decoding.
 - Persistent data: daily word stored in `data/word.json`.
 - Dictionaries stored in `data/dictionaries/*.txt`.
+- Local answer-meaning dictionary stored in `data/dictionaries/en-definitions.json`.
 
 ### 4.3 API Endpoints
 - `GET /api/meta`: returns length/guess bounds and language list.
@@ -165,6 +182,7 @@
 - Keyboard centered, with mobile‑like layout.
 - Share link input and “Copy link” button below keyboard.
 - Strict/high‑contrast toggles visible in header.
+- In daily mode: player-name prompt, profile summary, and leaderboard selector/table.
 
 ### 5.3 Responsive Layout
 - Mobile‑first layout.
@@ -173,7 +191,6 @@
 
 ## 6. Accessibility Requirements (WCAG 2.2 AA)
 - **Text contrast** minimum 4.5:1.
-- **Non‑color indicators** (A/P/C markers on tiles/keys).
 - **Keyboard access** for all actions.
 - **Visible focus** for all interactive elements.
 - **Skip link** to main content.
@@ -189,10 +206,11 @@
 - Rate limiting enabled to reduce abuse (configurable via `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS`).
 - Security headers added via Helmet.
 - Shareable links encode the word but do not conceal it from those who know the cipher; intended for light‑weight sharing, not secrecy.
+- Word meanings are served from local static files only (no runtime third-party API calls).
 
 ## 8. Testing Requirements
 - **Unit/API tests**: encode/decode, dictionary validation, puzzle metadata, guess evaluation.
-- **UI tests**: create and play flows, strict mode validation, high‑contrast toggle.
+- **UI tests**: create and play flows, strict mode validation, high‑contrast toggle, daily profile and leaderboard flows.
 - **Manual**: screen reader checks, mobile viewport testing, reduced motion.
 - **Edge cases**: invalid share links, missing daily word, daily date boundary tests.
 
@@ -203,13 +221,14 @@
 - Accessibility toggles persist across reloads.
 
 ## 10. Out of Scope (for now)
-- User accounts or saved statistics.
-- Multiplayer or leaderboard features.
+- Password-protected user accounts.
+- Multiplayer real-time sessions.
 - Analytics or telemetry.
 
 ## 11. Known Limitations
 - Encoded link can be decoded by anyone who knows the cipher.
 - English-only dictionaries; other languages are not supported.
+- Daily profile stats are device/browser-local and do not sync across devices.
 
 ---
 

@@ -68,6 +68,81 @@
           </div>
           <a class="admin-link" href="/">Create yours</a>
         </div>
+        <section id="profilePanel" class="profile-panel hidden" aria-live="polite">
+          <div class="profile-head">
+            <h3>Family Player</h3>
+            <button type="button" id="switchPlayerBtn" class="link-button hidden">Switch player</button>
+          </div>
+          <div id="activePlayerWrap" class="note hidden">
+            Playing as <strong id="activePlayerName"></strong>
+          </div>
+          <form id="profileForm" class="profile-form">
+            <label>
+              Name
+              <input
+                id="profileNameInput"
+                name="profileName"
+                placeholder="Enter your name"
+                autocomplete="off"
+                maxlength="24"
+              />
+            </label>
+            <button type="submit" class="ghost">Use this name</button>
+          </form>
+          <div id="profileStatus" class="message" role="status" aria-live="polite"></div>
+          <div id="savedPlayersWrap" class="saved-players hidden">
+            <p class="note">Saved players</p>
+            <div id="savedPlayers" class="player-chips"></div>
+          </div>
+          <div id="playerStats" class="player-stats hidden">
+            <div class="stat-card">
+              <span>Played</span>
+              <strong id="statPlayed">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Win rate</span>
+              <strong id="statWinRate">0%</strong>
+            </div>
+            <div class="stat-card">
+              <span>Current streak</span>
+              <strong id="statStreak">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Best solve</span>
+              <strong id="statBest">-</strong>
+            </div>
+          </div>
+        </section>
+        <section id="leaderboardPanel" class="leaderboard-panel hidden">
+          <div class="leaderboard-head">
+            <h3>Family Leaderboard</h3>
+            <label>
+              Period
+              <select id="leaderboardRange">
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="overall">Overall</option>
+              </select>
+            </label>
+          </div>
+          <p id="leaderboardMeta" class="note"></p>
+          <div class="leaderboard-table-wrap">
+            <table class="leaderboard-table" aria-label="Family leaderboard">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Player</th>
+                  <th>Wins</th>
+                  <th>Played</th>
+                  <th>Win %</th>
+                  <th>Best</th>
+                  <th>Streak</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody"></tbody>
+            </table>
+          </div>
+        </section>
         <div id="board" class="board" aria-label="Wordle board"></div>
         <div id="message" class="message" role="status" aria-live="polite"></div>
         <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
