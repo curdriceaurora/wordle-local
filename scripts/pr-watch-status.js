@@ -44,6 +44,7 @@ function escapeMarkdownText(value) {
 function escapeTableCell(value) {
   return String(value || "")
     .replace(/\r?\n/g, " ")
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .trim();
 }
