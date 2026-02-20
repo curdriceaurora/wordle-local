@@ -100,6 +100,7 @@ describe("provider-hunspell", () => {
       expect(processed.counts.rawEntries).toBe(4);
       expect(processed.counts.expandedForms).toBe(3);
       expect(processed.counts.filteredOut).toBeGreaterThanOrEqual(1);
+      expect(processed.generatedAt).toBe("2026-02-20T00:00:00.000Z");
 
       const rerun = await buildExpandedFormsArtifacts({
         variant: setup.variant,
@@ -112,7 +113,66 @@ describe("provider-hunspell", () => {
         .trim()
         .split("\n");
       expect(rerunWords).toEqual(words);
+      const rerunProcessed = fs.readFileSync(rerun.processedPath, "utf8");
+      expect(rerunProcessed).toEqual(fs.readFileSync(result.processedPath, "utf8"));
     } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects invalid variant values", async () => {
+    const setup = writeProviderSourceBundle({ variant: "en-US" });
+    try {
+      await expect(
+        buildExpandedFormsArtifacts({
+          variant: "../en-US",
+          commit: setup.commit,
+          providerRoot: setup.providerRoot,
+          policyVersion: "v1"
+        })
+      ).rejects.toMatchObject({
+        code: "INVALID_VARIANT"
+      });
+    } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to replace destination when rename overwrite fails", async () => {
+    const setup = writeProviderSourceBundle();
+    const originalRename = fs.promises.rename;
+    let renameSpy = null;
+    try {
+      await buildExpandedFormsArtifacts({
+        variant: setup.variant,
+        commit: setup.commit,
+        providerRoot: setup.providerRoot,
+        policyVersion: "v1"
+      });
+
+      let shouldFailOnce = true;
+      renameSpy = jest.spyOn(fs.promises, "rename").mockImplementation(async (...args) => {
+        if (shouldFailOnce) {
+          shouldFailOnce = false;
+          const err = new Error("rename blocked");
+          err.code = "EPERM";
+          throw err;
+        }
+        return originalRename(...args);
+      });
+
+      await buildExpandedFormsArtifacts({
+        variant: setup.variant,
+        commit: setup.commit,
+        providerRoot: setup.providerRoot,
+        policyVersion: "v1"
+      });
+
+      expect(renameSpy).toHaveBeenCalled();
+    } finally {
+      if (renameSpy) {
+        renameSpy.mockRestore();
+      }
       fs.rmSync(setup.providerRoot, { recursive: true, force: true });
     }
   });

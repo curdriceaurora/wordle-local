@@ -119,7 +119,7 @@ After provider fetch artifacts are verified, Hunspell expansion produces determi
 - `sourceManifestPath` (relative path to `source-manifest.json`)
 - `policyVersion`
 - `counts` (`rawEntries`, `expandedForms`, `filteredOut`)
-- `generatedAt`
+- `generatedAt` (copied from `source-manifest.json.retrievedAt` to keep reruns reproducible for identical source inputs)
 
 ## Related Issues
 - Epic: `#17`
