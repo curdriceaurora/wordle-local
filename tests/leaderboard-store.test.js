@@ -228,4 +228,35 @@ describe("leaderboard-store", () => {
     expect(normalized.state.resultsByProfile.ava).toBeUndefined();
     expect(normalized.hadInvalidContent).toBe(true);
   });
+
+  test("normalize helper treats pruned-profile results as pruning, not invalid content", () => {
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(10),
+      profiles: [
+        { id: "p1", name: "PlayerA", createdAt: isoAt(1), updatedAt: isoAt(1) },
+        { id: "p2", name: "PlayerB", createdAt: isoAt(2), updatedAt: isoAt(2) },
+        { id: "p3", name: "PlayerC", createdAt: isoAt(3), updatedAt: isoAt(3) }
+      ],
+      resultsByProfile: {
+        p1: {
+          "2026-02-01|en|alpha": {
+            date: "2026-02-01",
+            won: true,
+            attempts: 3,
+            maxGuesses: 6,
+            submissionCount: 1,
+            updatedAt: isoAt(4)
+          }
+        }
+      }
+    };
+
+    const normalized = normalizeLeaderboardState(payload, { maxProfiles: 2 });
+
+    expect(normalized.hadInvalidContent).toBe(false);
+    expect(normalized.wasPruned).toBe(true);
+    expect(normalized.state.profiles.map((profile) => profile.id)).toEqual(["p2", "p3"]);
+    expect(normalized.state.resultsByProfile.p1).toBeUndefined();
+  });
 });
