@@ -31,6 +31,7 @@
 - [ ] Dynamic map keys are protected against prototype pollution (`__proto__`/`constructor`/`prototype`); avoid `obj[userKey] = ...` on plain objects in request paths (prefer `Map` + serialization or allowlisted null-prototype containers).
 - [ ] For mutating store APIs, response payloads are derived from the normalized persisted snapshot returned by the store mutation (not stale draft/callback-captured objects).
 - [ ] Tests that depend on date/time use deterministic fixed timestamps or mocked timers (no real-clock dependency).
+- [ ] If rate limiting/IP logic is in scope and deployment may use proxies/VPNs, `TRUST_PROXY` defaults and docs/compose guidance are explicitly verified.
 - [ ] JSON/file formatting conventions verified (including trailing newline for JSON files).
 - [ ] `docs/review-preflight.md` checklist reviewed before requesting review.
 

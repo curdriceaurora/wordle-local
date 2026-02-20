@@ -18,9 +18,10 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 12. Dynamic key write pattern: never write user-influenced keys via `obj[key] = value` on plain objects in request paths; use `Map` (then serialize) or strict allowlist + null-prototype container.
 13. Post-normalization response source: for mutating store APIs, build response payloads from the normalized snapshot returned by the store mutation, not from draft/captured objects inside the mutator callback.
 14. Deterministic time in tests: avoid real clock dependency in tests (fixed dates or mocked timers), especially for daily/leaderboard date logic.
+15. Proxy-aware rate limiting: when rate limiting depends on client IP and app may sit behind a proxy/VPN/load balancer, ensure `TRUST_PROXY` behavior is explicitly set and documented for deployment defaults (compose + docs).
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
