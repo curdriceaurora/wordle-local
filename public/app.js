@@ -74,6 +74,9 @@ let dailyMode = false;
 let dailyDate = "";
 let dailyPuzzleKey = "";
 let physicalKeyboardBound = false;
+let perfLogging = false;
+let tileGrid = [];
+let keyboardKeyEls = new Map();
 let profileState = {
   profiles: [],
   activeProfileId: null,
@@ -83,11 +86,28 @@ let profileState = {
 const PROFILE_STORAGE_KEY = "lhw_profiles_v1";
 const MAX_PROFILES = 20;
 const MAX_DAILY_RESULTS_PER_PROFILE = 400;
+const KEYBOARD_LAYOUT = Object.freeze([
+  Object.freeze(["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]),
+  Object.freeze(["A", "S", "D", "F", "G", "H", "J", "K", "L"]),
+  Object.freeze(["ENTER", "Z", "X", "C", "V", "B", "N", "M", "BACK"])
+]);
+const KEY_STATUS_PRIORITY = Object.freeze({ absent: 1, present: 2, correct: 3 });
+const LEADERBOARD_RANGE = Object.freeze({
+  weekly: "weekly",
+  monthly: "monthly",
+  overall: "overall"
+});
 let leaderboardDataVersion = 0;
 let leaderboardCache = {
   version: -1,
   range: "",
+  dayKey: "",
   rows: []
+};
+let profilePerformanceCache = {
+  version: -1,
+  dayKey: "",
+  byProfile: new Map()
 };
 
 function isShareModalOpen() {
@@ -124,6 +144,18 @@ function setMessage(text) {
 function setSrStatus(text) {
   if (!srStatusEl) return;
   srStatusEl.textContent = text;
+}
+
+function startPerfMeasure(label) {
+  if (!perfLogging || typeof performance === "undefined") return null;
+  return { label, start: performance.now() };
+}
+
+function endPerfMeasure(measure, details = "") {
+  if (!measure) return;
+  const elapsed = performance.now() - measure.start;
+  const suffix = details ? ` ${details}` : "";
+  console.debug(`[perf] ${measure.label} ${elapsed.toFixed(2)}ms${suffix}`);
 }
 
 function showCreate() {
@@ -311,14 +343,24 @@ function loadProfileState() {
   };
 }
 
+function resetLeaderboardCaches() {
+  leaderboardCache = {
+    version: -1,
+    range: "",
+    dayKey: "",
+    rows: []
+  };
+  profilePerformanceCache = {
+    version: -1,
+    dayKey: "",
+    byProfile: new Map()
+  };
+}
+
 function saveProfileState(options = {}) {
   if (options.bumpLeaderboardVersion) {
     leaderboardDataVersion += 1;
-    leaderboardCache = {
-      version: -1,
-      range: "",
-      rows: []
-    };
+    resetLeaderboardCaches();
   }
   setStoredItem(PROFILE_STORAGE_KEY, JSON.stringify(profileState));
 }
@@ -415,77 +457,134 @@ function ensureProfileBucket(profileId) {
   return profileState.stats[profileId].dailyResults;
 }
 
-function listProfileEntries(profileId) {
-  const results = ensureProfileBucket(profileId);
-  return Object.values(results)
-    .map((entry) => ({
-      date: String(entry?.date || ""),
-      won: Boolean(entry?.won),
-      attempts: Number(entry?.attempts),
-      maxGuesses: Number(entry?.maxGuesses)
-    }))
-    .filter((entry) => parseDateString(entry.date))
-    .sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function summarizeEntries(entries) {
-  const played = entries.length;
-  const wins = entries.filter((entry) => entry.won).length;
-  const winRate = played ? Math.round((wins / played) * 100) : 0;
-  const bestAttempts = entries
-    .filter((entry) => entry.won && Number.isFinite(entry.attempts) && entry.attempts > 0)
-    .reduce((best, entry) => Math.min(best, entry.attempts), Number.POSITIVE_INFINITY);
-
+function createSummaryAccumulator() {
   return {
-    played,
-    wins,
-    winRate,
-    bestAttempts: Number.isFinite(bestAttempts) ? bestAttempts : null
+    played: 0,
+    wins: 0,
+    bestAttempts: Number.POSITIVE_INFINITY
   };
 }
 
-function computeCurrentStreak(entries) {
-  if (!entries.length) return 0;
-  const byDate = new Map();
-  for (const entry of entries) {
-    byDate.set(entry.date, Boolean(byDate.get(entry.date)) || Boolean(entry.won));
+function addSummaryEntry(accumulator, won, attempts) {
+  accumulator.played += 1;
+  if (won) {
+    accumulator.wins += 1;
+    if (Number.isFinite(attempts) && attempts > 0) {
+      accumulator.bestAttempts = Math.min(accumulator.bestAttempts, attempts);
+    }
   }
-  const sortedDates = Array.from(byDate.keys()).sort();
-  const latestDate = sortedDates[sortedDates.length - 1];
-  if (!byDate.get(latestDate)) return 0;
-  const today = toLocalDateString(new Date());
-  const gap = diffDays(today, latestDate);
-  if (gap === null || gap > 1) return 0;
+}
 
+function finalizeSummaryAccumulator(accumulator) {
+  const winRate = accumulator.played
+    ? Math.round((accumulator.wins / accumulator.played) * 100)
+    : 0;
+  return {
+    played: accumulator.played,
+    wins: accumulator.wins,
+    winRate,
+    bestAttempts: Number.isFinite(accumulator.bestAttempts)
+      ? accumulator.bestAttempts
+      : null
+  };
+}
+
+function computeCurrentStreakFromMap(winsByDate, latestDate, today) {
+  if (!latestDate || !winsByDate.get(latestDate)) {
+    return 0;
+  }
+  const gap = diffDays(today, latestDate);
+  if (gap === null || gap > 1) {
+    return 0;
+  }
   let streak = 1;
   let cursor = latestDate;
   while (true) {
     const previous = shiftDate(cursor, -1);
-    if (!previous || !byDate.get(previous)) break;
+    if (!previous || !winsByDate.get(previous)) {
+      break;
+    }
     streak += 1;
     cursor = previous;
   }
   return streak;
 }
 
-function isEntryInRange(entry, range) {
-  if (range === "overall") return true;
+function buildProfilePerformance(profileId, today) {
+  const dailyResults = ensureProfileBucket(profileId);
+  const winsByDate = new Map();
+  const overall = createSummaryAccumulator();
+  const weekly = createSummaryAccumulator();
+  const monthly = createSummaryAccumulator();
+  const monthKey = today.slice(0, 7);
+  let latestDate = "";
+
+  Object.values(dailyResults).forEach((entry) => {
+    const date = String(entry?.date || "");
+    if (!parseDateString(date)) {
+      return;
+    }
+    if (!latestDate || date > latestDate) {
+      latestDate = date;
+    }
+    const won = Boolean(entry?.won);
+    const attempts = Number(entry?.attempts);
+    winsByDate.set(date, Boolean(winsByDate.get(date)) || won);
+    addSummaryEntry(overall, won, attempts);
+
+    const age = diffDays(today, date);
+    if (age !== null && age >= 0 && age <= 6) {
+      addSummaryEntry(weekly, won, attempts);
+    }
+    if (date.slice(0, 7) === monthKey) {
+      addSummaryEntry(monthly, won, attempts);
+    }
+  });
+
+  return {
+    overall: finalizeSummaryAccumulator(overall),
+    weekly: finalizeSummaryAccumulator(weekly),
+    monthly: finalizeSummaryAccumulator(monthly),
+    streak: computeCurrentStreakFromMap(winsByDate, latestDate, today)
+  };
+}
+
+function getProfilePerformance(profileId) {
   const today = toLocalDateString(new Date());
-  if (range === "weekly") {
-    const age = diffDays(today, entry.date);
-    return age !== null && age >= 0 && age <= 6;
+  if (
+    profilePerformanceCache.version !== leaderboardDataVersion ||
+    profilePerformanceCache.dayKey !== today
+  ) {
+    profilePerformanceCache = {
+      version: leaderboardDataVersion,
+      dayKey: today,
+      byProfile: new Map()
+    };
   }
-  if (range === "monthly") {
-    return entry.date.slice(0, 7) === today.slice(0, 7);
+  if (!profilePerformanceCache.byProfile.has(profileId)) {
+    profilePerformanceCache.byProfile.set(
+      profileId,
+      buildProfilePerformance(profileId, today)
+    );
   }
-  return true;
+  return profilePerformanceCache.byProfile.get(profileId);
+}
+
+function getSummaryForRange(performance, range) {
+  if (range === LEADERBOARD_RANGE.weekly) {
+    return performance.weekly;
+  }
+  if (range === LEADERBOARD_RANGE.monthly) {
+    return performance.monthly;
+  }
+  return performance.overall;
 }
 
 function describeRange(range) {
-  if (range === "weekly") {
+  if (range === LEADERBOARD_RANGE.weekly) {
     return "Last 7 days (including today)";
   }
-  if (range === "monthly") {
+  if (range === LEADERBOARD_RANGE.monthly) {
     return "Current calendar month";
   }
   return "All recorded daily games";
@@ -528,20 +627,25 @@ function renderLeaderboard() {
   }
 
   leaderboardPanelEl.classList.remove("hidden");
-  const range = leaderboardRangeEl.value || "weekly";
+  const range = leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly;
   leaderboardMetaEl.textContent = describeRange(range);
+  const renderTimer = startPerfMeasure("ui.render.leaderboard");
+  const today = toLocalDateString(new Date());
 
   let rows = leaderboardCache.rows;
-  if (leaderboardCache.version !== leaderboardDataVersion || leaderboardCache.range !== range) {
+  if (
+    leaderboardCache.version !== leaderboardDataVersion ||
+    leaderboardCache.range !== range ||
+    leaderboardCache.dayKey !== today
+  ) {
     rows = profileState.profiles
       .map((profile) => {
-        const allEntries = listProfileEntries(profile.id);
-        const filtered = allEntries.filter((entry) => isEntryInRange(entry, range));
-        const summary = summarizeEntries(filtered);
+        const performance = getProfilePerformance(profile.id);
+        const summary = getSummaryForRange(performance, range);
         return {
           profile,
           ...summary,
-          streak: computeCurrentStreak(allEntries)
+          streak: performance.streak
         };
       })
       .filter((row) => row.played > 0)
@@ -557,6 +661,7 @@ function renderLeaderboard() {
     leaderboardCache = {
       version: leaderboardDataVersion,
       range,
+      dayKey: today,
       rows
     };
   }
@@ -588,6 +693,7 @@ function renderLeaderboard() {
     });
     leaderboardBodyEl.appendChild(tr);
   });
+  endPerfMeasure(renderTimer, `rows=${rows.length}`);
 }
 
 function renderActivePlayerStats() {
@@ -598,12 +704,12 @@ function renderActivePlayerStats() {
     return;
   }
 
-  const entries = listProfileEntries(activeProfile.id);
-  const summary = summarizeEntries(entries);
+  const performance = getProfilePerformance(activeProfile.id);
+  const summary = performance.overall;
   playerStatsEl.classList.remove("hidden");
   statPlayedEl.textContent = String(summary.played);
   statWinRateEl.textContent = `${summary.winRate}%`;
-  statStreakEl.textContent = String(computeCurrentStreak(entries));
+  statStreakEl.textContent = String(performance.streak);
   statBestEl.textContent = summary.bestAttempts ? String(summary.bestAttempts) : "-";
 }
 
@@ -700,12 +806,13 @@ function createOrSelectProfile(rawName) {
   profileState.activeProfileId = profile.id;
   ensureProfileBucket(profile.id);
   enforceProfileLimits();
-  saveProfileState();
+  saveProfileState({ bumpLeaderboardVersion: true });
   return { ok: true, profile, reused: false };
 }
 
 function buildBoard() {
   boardEl.innerHTML = "";
+  tileGrid = Array.from({ length: maxGuesses }, () => Array(cols).fill(null));
   boardEl.style.setProperty("--rows", String(maxGuesses));
   boardEl.style.setProperty("--cols", String(cols));
   boardEl.setAttribute("role", "grid");
@@ -723,20 +830,16 @@ function buildBoard() {
       tile.setAttribute("role", "gridcell");
       tile.setAttribute("aria-label", "Empty");
       row.appendChild(tile);
+      tileGrid[r][c] = tile;
     }
     boardEl.appendChild(row);
   }
 }
 
 function buildKeyboard() {
-  const layout = [
-    ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
-    ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
-    ["ENTER", "Z", "X", "C", "V", "B", "N", "M", "BACK"]
-  ];
-
   keyboardEl.innerHTML = "";
-  layout.forEach((rowKeys, rowIndex) => {
+  keyboardKeyEls = new Map();
+  KEYBOARD_LAYOUT.forEach((rowKeys, rowIndex) => {
     const rowEl = document.createElement("div");
     rowEl.className = "key-row";
     if (rowIndex === 1) {
@@ -754,13 +857,18 @@ function buildKeyboard() {
       button.setAttribute("aria-label", key === "BACK" ? "Backspace" : key);
       button.addEventListener("click", () => handleKey(key));
       rowEl.appendChild(button);
+      if (key.length === 1) {
+        keyboardKeyEls.set(key, button);
+      }
     });
     keyboardEl.appendChild(rowEl);
   });
 }
 
 function getTile(row, col) {
-  return boardEl.querySelector(`.tile[data-row="${row}"][data-col="${col}"]`);
+  if (row < 0 || row >= tileGrid.length) return null;
+  if (col < 0 || col >= cols) return null;
+  return tileGrid[row][col];
 }
 
 function updateTile(row, col, letter, filled = true) {
@@ -778,6 +886,7 @@ function updateTile(row, col, letter, filled = true) {
 function applyResult(row, result, guess) {
   for (let col = 0; col < cols; col += 1) {
     const tile = getTile(row, col);
+    if (!tile) continue;
     tile.classList.remove("absent", "present", "correct");
     tile.classList.add(result[col]);
     const letter = guess[col] || "";
@@ -796,19 +905,19 @@ function describeResult(guess, result) {
 }
 
 function updateKeyboard(result, guess) {
-  const priority = { absent: 1, present: 2, correct: 3 };
+  const changedLetters = new Set();
   for (let i = 0; i < guess.length; i += 1) {
     const letter = guess[i];
     const status = result[i];
     const current = keyStatus[letter];
-    if (!current || priority[status] > priority[current]) {
+    if (!current || KEY_STATUS_PRIORITY[status] > KEY_STATUS_PRIORITY[current]) {
       keyStatus[letter] = status;
+      changedLetters.add(letter);
     }
   }
-
-  keyboardEl.querySelectorAll(".key").forEach((keyEl) => {
-    const key = keyEl.dataset.key;
-    if (!key || key.length !== 1) return;
+  changedLetters.forEach((key) => {
+    const keyEl = keyboardKeyEls.get(key);
+    if (!keyEl) return;
     keyEl.classList.remove("absent", "present", "correct");
     const status = keyStatus[key];
     if (status) {
@@ -913,6 +1022,7 @@ async function submitGuess() {
 
   busy = true;
   const reveal = currentRow === maxGuesses - 1;
+  const submitTimer = startPerfMeasure("ui.submitGuess");
 
   try {
     const response = await fetch("/api/guess", {
@@ -965,6 +1075,7 @@ async function submitGuess() {
     setMessage("Server error. Try again.");
   } finally {
     busy = false;
+    endPerfMeasure(submitTimer, `row=${currentRow + 1}`);
   }
 }
 
@@ -1045,6 +1156,7 @@ async function loadMeta() {
     maxGuessesAllowed = data.maxGuesses || maxGuessesAllowed;
     defaultGuesses = data.defaultGuesses || defaultGuesses;
     defaultLang = data.defaultLang || defaultLang;
+    perfLogging = Boolean(data.perfLogging);
 
     lengthInput.min = String(minLen);
     lengthInput.max = String(maxLen);
@@ -1171,6 +1283,7 @@ function applyHighContrast(enabled) {
 }
 
 async function initPlay(code, lang, guessesCount, options = {}) {
+  const initTimer = startPerfMeasure("ui.initPlay");
   showPlay();
   if (!physicalKeyboardBound) {
     document.addEventListener("keydown", handlePhysicalKey);
@@ -1185,6 +1298,7 @@ async function initPlay(code, lang, guessesCount, options = {}) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    endPerfMeasure(initTimer, "failed");
     return { ok: false, message: data.error || "That link doesn't work." };
   }
 
@@ -1209,6 +1323,7 @@ async function initPlay(code, lang, guessesCount, options = {}) {
       dailyDate
     })
   );
+  endPerfMeasure(initTimer, `cols=${cols} guesses=${maxGuesses}`);
   return { ok: true };
 }
 

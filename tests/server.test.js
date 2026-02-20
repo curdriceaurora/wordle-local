@@ -5,6 +5,7 @@ const request = require("supertest");
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
+const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
 const ORIGINAL_WORD_DATA = fs.readFileSync(DATA_PATH, "utf8");
 const ORIGINAL_ENV = { ...process.env };
 
@@ -30,7 +31,9 @@ function loadApp(options = {}) {
           trustProxy: options.trustProxy,
           rateLimitMax: options.rateLimitMax,
           rateLimitWindowMs: options.rateLimitWindowMs,
-          lowMemoryDefinitions: options.lowMemoryDefinitions
+          lowMemoryDefinitions: options.lowMemoryDefinitions,
+          definitionsMode: options.definitionsMode,
+          perfLogging: options.perfLogging
         };
 
   jest.resetModules();
@@ -58,6 +61,12 @@ function loadApp(options = {}) {
   }
   if (opts.lowMemoryDefinitions !== undefined) {
     process.env.LOW_MEMORY_DEFINITIONS = opts.lowMemoryDefinitions ? "true" : "false";
+  }
+  if (opts.definitionsMode !== undefined) {
+    process.env.DEFINITIONS_MODE = opts.definitionsMode;
+  }
+  if (opts.perfLogging !== undefined) {
+    process.env.PERF_LOGGING = opts.perfLogging ? "true" : "false";
   }
 
   return require("../server");
@@ -100,6 +109,83 @@ async function withTempDefinitions(payload, fn) {
     return await fn();
   } finally {
     fs.writeFileSync(EN_DEFINITIONS_PATH, original, "utf8");
+  }
+}
+
+async function withTempDefinitionsContent(content, fn) {
+  const original = fs.readFileSync(EN_DEFINITIONS_PATH, "utf8");
+  fs.writeFileSync(EN_DEFINITIONS_PATH, content, "utf8");
+  try {
+    return await fn();
+  } finally {
+    fs.writeFileSync(EN_DEFINITIONS_PATH, original, "utf8");
+  }
+}
+
+function buildIndexPayload(definitions) {
+  const shards = {};
+  const entries = Object.entries(definitions).sort((a, b) => a[0].localeCompare(b[0]));
+  entries.forEach(([word, definition]) => {
+    const shardId = word[0];
+    if (!shards[shardId]) {
+      shards[shardId] = {};
+    }
+    shards[shardId][word] = definition;
+  });
+  return {
+    manifest: {
+      version: 1,
+      generatedAt: "2026-02-20T00:00:00.000Z",
+      source: "test-index",
+      totalWords: entries.length,
+      coveredWords: entries.length,
+      coveragePercent: 100,
+      shards: Object.fromEntries(
+        Object.entries(shards).map(([shardId, values]) => [
+          shardId,
+          { file: `${shardId}.json`, count: Object.keys(values).length }
+        ])
+      )
+    },
+    shards
+  };
+}
+
+async function withTempDefinitionIndex(definitions, fn) {
+  const backupPath = `${EN_DEFINITIONS_INDEX_DIR}.bak-test`;
+  const hadOriginal = fs.existsSync(EN_DEFINITIONS_INDEX_DIR);
+  if (fs.existsSync(backupPath)) {
+    fs.rmSync(backupPath, { recursive: true, force: true });
+  }
+  if (hadOriginal) {
+    fs.renameSync(EN_DEFINITIONS_INDEX_DIR, backupPath);
+  }
+
+  fs.mkdirSync(EN_DEFINITIONS_INDEX_DIR, { recursive: true });
+  const payload = buildIndexPayload(definitions);
+  fs.writeFileSync(
+    path.join(EN_DEFINITIONS_INDEX_DIR, "manifest.json"),
+    `${JSON.stringify(payload.manifest, null, 2)}\n`,
+    "utf8"
+  );
+  Object.entries(payload.shards).forEach(([shardId, values]) => {
+    fs.writeFileSync(
+      path.join(EN_DEFINITIONS_INDEX_DIR, `${shardId}.json`),
+      `${JSON.stringify(values)}\n`,
+      "utf8"
+    );
+  });
+
+  try {
+    return await fn();
+  } finally {
+    fs.rmSync(EN_DEFINITIONS_INDEX_DIR, { recursive: true, force: true });
+    if (hadOriginal) {
+      fs.renameSync(backupPath, EN_DEFINITIONS_INDEX_DIR);
+    }
+    if (fs.existsSync(backupPath)) {
+      fs.rmSync(backupPath, { recursive: true, force: true });
+    }
   }
 }
 
@@ -342,6 +428,91 @@ describe("Wordle API", () => {
     );
   });
 
+  test("returns local answer meaning in lazy definitions mode", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp({ definitionsMode: "lazy" });
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(true);
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
+  });
+
+  test("returns local answer meaning in indexed definitions mode", async () => {
+    await withTempDefinitionIndex(
+      {
+        CRANE: "a large long-necked wading bird"
+      },
+      async () => {
+        await withTempDefinitionsContent("{\"definitions\":{}}\n", async () => {
+          const app = loadApp({ definitionsMode: "indexed" });
+          const encodeResponse = await request(app)
+            .post("/api/encode")
+            .send({ word: "CRANE", lang: "en" });
+
+          const code = encodeResponse.body.code;
+          const guessResponse = await request(app)
+            .post("/api/guess")
+            .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+          expect(guessResponse.status).toBe(200);
+          expect(guessResponse.body.isCorrect).toBe(true);
+          expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+        });
+      }
+    );
+  });
+
+  test("falls back to lazy map loading when indexed artifacts are unavailable", async () => {
+    await withTempDefinitions(
+      {
+        generatedAt: "2026-02-17T00:00:00.000Z",
+        source: "test",
+        totalWords: 1,
+        coveredWords: 1,
+        coveragePercent: 100,
+        definitions: {
+          CRANE: "a large long-necked wading bird"
+        }
+      },
+      async () => {
+        const app = loadApp({ definitionsMode: "indexed" });
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en" });
+
+        const code = encodeResponse.body.code;
+        const guessResponse = await request(app)
+          .post("/api/guess")
+          .send({ code, guess: "CRANE", lang: "en", reveal: false });
+
+        expect(guessResponse.status).toBe(200);
+        expect(guessResponse.body.isCorrect).toBe(true);
+        expect(guessResponse.body.answerMeaning).toBe("a large long-necked wading bird");
+      }
+    );
+  });
+
   test("rejects invalid guesses and dictionary misses", async () => {
     const app = loadApp();
     const encodeResponse = await request(app)
@@ -441,6 +612,21 @@ describe("Wordle API", () => {
       const ids = response.body.languages.map((lang) => lang.id);
       expect(ids).not.toContain("en");
     });
+  });
+
+  test("meta includes performance and definition mode fields", async () => {
+    const app = loadApp({ perfLogging: true, definitionsMode: "lazy" });
+    const response = await request(app).get("/api/meta");
+    expect(response.status).toBe(200);
+    expect(response.body.perfLogging).toBe(true);
+    expect(response.body.definitionsMode).toBe("lazy");
+  });
+
+  test("legacy low-memory toggle maps to indexed definition mode", async () => {
+    const app = loadApp({ lowMemoryDefinitions: true });
+    const response = await request(app).get("/api/meta");
+    expect(response.status).toBe(200);
+    expect(response.body.definitionsMode).toBe("indexed");
   });
 
   test("returns null when default language is unavailable and no fallback exists", async () => {

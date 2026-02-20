@@ -59,7 +59,9 @@ There is no admin UI. Use the API endpoints below.
 - If a dictionary file is missing or empty, that language is not shown in the UI.
 - English word list source: wordlist-en_US-2020.12.07 (derived from SCOWL). See `data/dictionaries/wordlist-en_US-2020.12.07-README.txt` for license and credits.
 - Meanings are loaded from local files only; no external dictionary API calls are made at runtime.
-- To refresh local meanings from WordNet data: `npm run definitions:build`.
+- To refresh local meanings from WordNet data (and rebuild indexed lookup artifacts): `npm run definitions:build`.
+- To rebuild only indexed lookup artifacts from the existing definitions file: `npm run definitions:index`.
+- For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see `advanced-settings.md`).
 
 ## Daily Link
 - Visit `/daily` to play the configured daily word.

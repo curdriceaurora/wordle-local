@@ -9,6 +9,7 @@
     "start": "node server.js",
     "build": "node scripts/build-assets.js",
     "definitions:build": "node scripts/build-en-definitions.js",
+    "definitions:index": "node scripts/build-en-definitions.js --index-only",
     "test": "jest",
     "test:ui": "UI_COVERAGE=1 node scripts/ui-coverage-clean.js && UI_COVERAGE=1 playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
     "test:ui:fast": "UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium node scripts/ui-coverage-clean.js && UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
