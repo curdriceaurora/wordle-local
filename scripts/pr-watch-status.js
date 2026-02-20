@@ -7,6 +7,8 @@ const { formatCommentSummary } = require("./lib/pr-review-utils");
 const STICKY_MARKER = "<!-- pr-watch-status -->";
 const FAILURE_BLOCK_START = "<!-- pr-watch-error:start -->";
 const FAILURE_BLOCK_END = "<!-- pr-watch-error:end -->";
+const COPILOT_LOGIN = "copilot-pull-request-reviewer";
+const MAX_THREADS_TO_SHOW = 10;
 
 function nowIso() {
   return new Date().toISOString();
@@ -32,13 +34,31 @@ function loadEventPayload() {
   return JSON.parse(fs.readFileSync(fullPath, "utf8"));
 }
 
+function escapeMarkdownText(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/([`*_{}[\]()#+\-.!|>])/g, "\\$1")
+    .replace(/\r?\n/g, " ");
+}
+
+function escapeTableCell(value) {
+  return String(value || "")
+    .replace(/\r?\n/g, " ")
+    .replace(/\|/g, "\\|")
+    .trim();
+}
+
+function isCopilotAuthor(login) {
+  return String(login || "") === COPILOT_LOGIN;
+}
+
 async function githubRequest(urlPath, options = {}) {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) {
     throw new Error("Missing GITHUB_TOKEN/GH_TOKEN.");
   }
-  const baseUrl = "https://api.github.com";
-  const response = await fetch(`${baseUrl}${urlPath}`, {
+
+  const response = await fetch(`https://api.github.com${urlPath}`, {
     method: options.method || "GET",
     headers: {
       Accept: "application/vnd.github+json",
@@ -66,7 +86,29 @@ async function githubGraphql(query, variables) {
   });
 }
 
-async function resolvePullRequestNumber(owner, repo, eventName, payload) {
+async function paginateRest(urlBuilder, itemSelector) {
+  const perPage = 100;
+  const allItems = [];
+  let page = 1;
+
+  while (true) {
+    const payload = await githubRequest(urlBuilder(page, perPage));
+    const items = itemSelector(payload);
+    if (!Array.isArray(items) || items.length === 0) {
+      break;
+    }
+
+    allItems.push(...items);
+    if (items.length < perPage) {
+      break;
+    }
+    page += 1;
+  }
+
+  return allItems;
+}
+
+async function resolvePullRequestNumber(owner, repo, _eventName, payload) {
   if (payload?.pull_request?.number) {
     return Number(payload.pull_request.number);
   }
@@ -105,24 +147,24 @@ async function fetchPullRequest(owner, repo, prNumber) {
 }
 
 async function fetchIssueComments(owner, repo, prNumber) {
-  return githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`);
+  return paginateRest(
+    (page, perPage) =>
+      `/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=${perPage}&page=${page}`,
+    (payload) => payload
+  );
 }
 
 async function fetchCheckRuns(owner, repo, headSha) {
-  const payload = await githubRequest(
-    `/repos/${owner}/${repo}/commits/${headSha}/check-runs?per_page=100`
+  return paginateRest(
+    (page, perPage) =>
+      `/repos/${owner}/${repo}/commits/${headSha}/check-runs?per_page=${perPage}&page=${page}`,
+    (payload) => (Array.isArray(payload?.check_runs) ? payload.check_runs : [])
   );
-  return Array.isArray(payload?.check_runs) ? payload.check_runs : [];
 }
 
 function summarizeChecks(checkRuns) {
   const checks = checkRuns
-    .filter((check) => {
-      const name = String(check?.name || "").toLowerCase();
-      // Ignore this monitor job itself to avoid permanently reporting "pending"
-      // while the sticky comment is being rendered.
-      return name !== "pr-watch";
-    })
+    .filter((check) => String(check?.name || "").toLowerCase() !== "pr-watch")
     .map((check) => {
       const status = String(check.status || "");
       const conclusion = String(check.conclusion || "");
@@ -147,45 +189,99 @@ function summarizeChecks(checkRuns) {
 }
 
 async function fetchThreadAndReviewData(owner, repo, prNumber) {
-  const query = `
-    query($owner:String!, $repo:String!, $number:Int!) {
-      repository(owner:$owner, name:$repo) {
-        pullRequest(number:$number) {
-          reviewThreads(first:100) {
-            nodes {
-              isResolved
-              path
-              line
-              comments(last:1) {
-                nodes {
-                  body
-                  url
-                  author { login }
+  async function fetchAllThreads() {
+    const query = `
+      query($owner:String!, $repo:String!, $number:Int!, $after:String) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            reviewThreads(first:100, after:$after) {
+              nodes {
+                isResolved
+                path
+                line
+                comments(last:1) {
+                  nodes {
+                    body
+                    url
+                    author { login }
+                  }
                 }
               }
-            }
-          }
-          reviews(last:100) {
-            nodes {
-              state
-              submittedAt
-              author { login }
-              commit { oid }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
             }
           }
         }
       }
+    `;
+
+    const items = [];
+    let hasNextPage = true;
+    let cursor = null;
+
+    while (hasNextPage) {
+      const result = await githubGraphql(query, {
+        owner,
+        repo,
+        number: prNumber,
+        after: cursor
+      });
+      const payload = result?.data?.repository?.pullRequest?.reviewThreads;
+      const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+      items.push(...nodes);
+      hasNextPage = Boolean(payload?.pageInfo?.hasNextPage);
+      cursor = payload?.pageInfo?.endCursor || null;
     }
-  `;
 
-  const result = await githubGraphql(query, {
-    owner,
-    repo,
-    number: prNumber
-  });
+    return items;
+  }
 
-  const pullRequest = result?.data?.repository?.pullRequest;
-  const rawThreads = pullRequest?.reviewThreads?.nodes || [];
+  async function fetchAllReviews() {
+    const query = `
+      query($owner:String!, $repo:String!, $number:Int!, $after:String) {
+        repository(owner:$owner, name:$repo) {
+          pullRequest(number:$number) {
+            reviews(first:100, after:$after) {
+              nodes {
+                state
+                submittedAt
+                author { login }
+                commit { oid }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const items = [];
+    let hasNextPage = true;
+    let cursor = null;
+
+    while (hasNextPage) {
+      const result = await githubGraphql(query, {
+        owner,
+        repo,
+        number: prNumber,
+        after: cursor
+      });
+      const payload = result?.data?.repository?.pullRequest?.reviews;
+      const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+      items.push(...nodes);
+      hasNextPage = Boolean(payload?.pageInfo?.hasNextPage);
+      cursor = payload?.pageInfo?.endCursor || null;
+    }
+
+    return items;
+  }
+
+  const [rawThreads, reviews] = await Promise.all([fetchAllThreads(), fetchAllReviews()]);
   const unresolvedThreads = rawThreads
     .filter((thread) => !thread.isResolved)
     .map((thread) => {
@@ -199,16 +295,11 @@ async function fetchThreadAndReviewData(owner, repo, prNumber) {
       };
     });
 
-  const reviews = Array.isArray(pullRequest?.reviews?.nodes)
-    ? pullRequest.reviews.nodes
-    : [];
   return { unresolvedThreads, reviews };
 }
 
 function summarizeCopilotReview(reviews, headSha) {
-  const copilotReviews = reviews.filter(
-    (review) => String(review?.author?.login || "") === "copilot-pull-request-reviewer"
-  );
+  const copilotReviews = reviews.filter((review) => isCopilotAuthor(review?.author?.login || ""));
   if (!copilotReviews.length) {
     return "pending";
   }
@@ -218,10 +309,7 @@ function summarizeCopilotReview(reviews, headSha) {
       String(review?.commit?.oid || "") === headSha &&
       ["COMMENTED", "APPROVED", "CHANGES_REQUESTED"].includes(String(review?.state || ""))
   );
-  if (hasCurrent) {
-    return "completed";
-  }
-  return "outdated";
+  return hasCurrent ? "completed" : "outdated";
 }
 
 function statusIcon(state) {
@@ -234,37 +322,45 @@ function statusIcon(state) {
 
 function buildStatusComment(payload) {
   const unresolvedCopilot = payload.unresolvedThreads.filter((thread) =>
-    String(thread.author || "").includes("copilot")
+    isCopilotAuthor(thread.author || "")
   );
   const unresolvedHuman = payload.unresolvedThreads.filter(
-    (thread) => !String(thread.author || "").includes("copilot")
+    (thread) => !isCopilotAuthor(thread.author || "")
   );
 
   const checksTableRows = payload.checkSummary.checks.length
     ? payload.checkSummary.checks
         .map(
           (check) =>
-            `| ${statusIcon(check.state)} | \`${check.name}\` | \`${check.status}\` | \`${check.conclusion}\` |`
+            `| ${statusIcon(check.state)} | ${escapeTableCell(check.name)} | ${escapeTableCell(check.status)} | ${escapeTableCell(check.conclusion)} |`
         )
         .join("\n")
-    : "| ⏳ | `No checks yet` | `pending` | `-` |";
+    : "| ⏳ | No checks yet | pending | - |";
 
-  const openThreadLines = payload.unresolvedThreads.length
-    ? payload.unresolvedThreads
-        .slice(0, 10)
-        .map(
-          (thread) =>
-            `- [${thread.author}](${thread.url}) \`${thread.path}:${thread.line}\` — ${thread.summary}`
-        )
-        .join("\n")
-    : "- None";
+  let openThreadLines = "- None";
+  if (payload.unresolvedThreads.length) {
+    const lines = payload.unresolvedThreads.slice(0, MAX_THREADS_TO_SHOW).map((thread) => {
+      const author = escapeMarkdownText(thread.author || "unknown");
+      const location = `${escapeMarkdownText(thread.path)}:${escapeMarkdownText(thread.line)}`;
+      const summary = escapeMarkdownText(thread.summary || "");
+      if (thread.url) {
+        return `- [${author}](${thread.url}) \`${location}\` — ${summary}`;
+      }
+      return `- ${author} \`${location}\` — ${summary}`;
+    });
+    const remaining = payload.unresolvedThreads.length - MAX_THREADS_TO_SHOW;
+    if (remaining > 0) {
+      lines.push(`- (+${remaining} more unresolved thread${remaining === 1 ? "" : "s"} not shown)`);
+    }
+    openThreadLines = lines.join("\n");
+  }
 
   return [
     STICKY_MARKER,
     "## PR Watch Status",
     "",
-    `- PR: #${payload.prNumber} — ${payload.prTitle}`,
-    `- Head SHA: \`${payload.headSha}\``,
+    `- PR: #${payload.prNumber} — ${escapeMarkdownText(payload.prTitle)}`,
+    `- Head SHA: \`${escapeMarkdownText(payload.headSha)}\``,
     `- CI Overall: ${statusIcon(payload.checkSummary.overall)} \`${payload.checkSummary.overall}\``,
     `- Copilot Review: ${statusIcon(payload.copilotStatus)} \`${payload.copilotStatus}\``,
     `- Open Threads: ${payload.unresolvedThreads.length} (Copilot: ${unresolvedCopilot.length}, Human: ${unresolvedHuman.length})`,
@@ -284,7 +380,7 @@ function buildStatusComment(payload) {
 function upsertFailureBlock(existingBody, message) {
   const note = [
     FAILURE_BLOCK_START,
-    `- Monitor note: ${message}`,
+    `- Monitor note: ${escapeMarkdownText(message)}`,
     `- Timestamp: ${nowIso()}`,
     FAILURE_BLOCK_END
   ].join("\n");
@@ -332,7 +428,7 @@ async function annotateFailure(owner, repo, prNumber, message) {
     await githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
       method: "POST",
       body: {
-        body: `${STICKY_MARKER}\n## PR Watch Status\n\n${FAILURE_BLOCK_START}\n- Monitor note: ${message}\n- Timestamp: ${nowIso()}\n${FAILURE_BLOCK_END}\n`
+        body: `${STICKY_MARKER}\n## PR Watch Status\n\n${FAILURE_BLOCK_START}\n- Monitor note: ${escapeMarkdownText(message)}\n- Timestamp: ${nowIso()}\n${FAILURE_BLOCK_END}\n`
       }
     });
   } catch (err) {
