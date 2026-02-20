@@ -40,6 +40,25 @@ function createFetchMock(responseMap) {
   };
 }
 
+function createAbortFetchMock() {
+  return async (_url, options = {}) => new Promise((_resolve, reject) => {
+    if (options.signal && typeof options.signal.addEventListener === "function") {
+      options.signal.addEventListener("abort", () => {
+        const abortError = new Error("Request aborted");
+        abortError.name = "AbortError";
+        reject(abortError);
+      });
+      return;
+    }
+
+    setTimeout(() => {
+      const abortError = new Error("Request aborted");
+      abortError.name = "AbortError";
+      reject(abortError);
+    }, 10);
+  });
+}
+
 describe("provider-fetch", () => {
   test("builds descriptor for allowed variant", () => {
     const descriptor = buildProviderDescriptor({
@@ -221,6 +240,109 @@ describe("provider-fetch", () => {
     });
   });
 
+  test("returns friendly error when upstream responds with server error", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const dicUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.dic`;
+    const affUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.aff`;
+
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit,
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
+        fetchImpl: createFetchMock({
+          [dicUrl]: { status: 500, body: Buffer.alloc(0) },
+          [affUrl]: { status: 200, body: Buffer.from("SET UTF-8\n", "utf8") }
+        })
+      })
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_SERVER_ERROR",
+      status: 500
+    });
+  });
+
+  test("returns friendly error for non-404/429/5xx upstream failures", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const dicUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.dic`;
+    const affUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.aff`;
+
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit,
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
+        fetchImpl: createFetchMock({
+          [dicUrl]: { status: 401, body: Buffer.alloc(0) },
+          [affUrl]: { status: 200, body: Buffer.from("SET UTF-8\n", "utf8") }
+        })
+      })
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_REQUEST_FAILED",
+      status: 401
+    });
+  });
+
+  test("returns timeout error when provider fetch exceeds timeout", async () => {
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
+        timeoutMs: 1,
+        fetchImpl: createAbortFetchMock()
+      })
+    ).rejects.toMatchObject({
+      code: "FETCH_TIMEOUT",
+      retriable: true
+    });
+  });
+
+  test("returns network error when fetch implementation throws", async () => {
+    const networkError = new Error("network down");
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
+        fetchImpl: async () => {
+          throw networkError;
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "FETCH_NETWORK_ERROR",
+      retriable: true,
+      cause: networkError
+    });
+  });
+
+  test("returns explicit fetch unavailable error when fetch implementation is not callable", async () => {
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
+        fetchImpl: "not-a-function"
+      })
+    ).rejects.toMatchObject({
+      code: "FETCH_UNAVAILABLE"
+    });
+  });
+
   test("returns persistence error when source manifest cannot replace existing directory", async () => {
     const commit = "0123456789abcdef0123456789abcdef01234567";
     const dicBody = Buffer.from("2\nCAT\nDOG\n", "utf8");
@@ -249,6 +371,56 @@ describe("provider-fetch", () => {
       ).rejects.toMatchObject({
         code: "PERSISTENCE_WRITE_FAILED"
       });
+    } finally {
+      fs.rmSync(outputRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("supports replacing an existing source-manifest file", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const outputRoot = createTempDir();
+    const dicUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.dic`;
+    const affUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.aff`;
+    const firstDicBody = Buffer.from("2\nCAT\nDOG\n", "utf8");
+    const firstAffBody = Buffer.from("SET UTF-8\n", "utf8");
+    const secondDicBody = Buffer.from("2\nCAT\nEEL\n", "utf8");
+    const secondAffBody = Buffer.from("SET UTF-8\nFLAG long\n", "utf8");
+
+    try {
+      const firstResult = await fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit,
+        outputRoot,
+        expectedChecksums: {
+          dic: computeSha256(firstDicBody),
+          aff: computeSha256(firstAffBody)
+        },
+        fetchImpl: createFetchMock({
+          [dicUrl]: { status: 200, body: firstDicBody },
+          [affUrl]: { status: 200, body: firstAffBody }
+        })
+      });
+
+      const firstManifest = JSON.parse(fs.readFileSync(firstResult.manifestPath, "utf8"));
+
+      const secondResult = await fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit,
+        outputRoot,
+        expectedChecksums: {
+          dic: computeSha256(secondDicBody),
+          aff: computeSha256(secondAffBody)
+        },
+        fetchImpl: createFetchMock({
+          [dicUrl]: { status: 200, body: secondDicBody },
+          [affUrl]: { status: 200, body: secondAffBody }
+        })
+      });
+
+      const secondManifest = JSON.parse(fs.readFileSync(secondResult.manifestPath, "utf8"));
+      expect(secondManifest.sourceFiles.dic.sha256).toBe(computeSha256(secondDicBody));
+      expect(secondManifest.sourceFiles.aff.sha256).toBe(computeSha256(secondAffBody));
+      expect(secondManifest.retrievedAt >= firstManifest.retrievedAt).toBe(true);
     } finally {
       fs.rmSync(outputRoot, { recursive: true, force: true });
     }

@@ -27,7 +27,7 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 21. Endpoint docs parity: documentation and rollout guides must match exact endpoint response contracts (status code + payload shape), not shorthand text.
 22. Schema identity consistency: new JSON schema `$id` values must follow existing repository domain/namespace conventions.
 23. Import integrity fail-closed: remote provider fetch paths must require both expected checksums (no silent no-op verification path).
-24. Atomic write resilience: JSON persistence must use unique temp paths and cleanup-on-failure for write/rename errors.
+24. Atomic write resilience: JSON persistence must use unique temp paths, cleanup-on-failure, and cross-platform replace semantics when destination files already exist (including Windows rename behavior).
 25. Manifest intent clarity: stage-specific manifests must avoid near-duplicate contract shapes unless fully aligned; include explicit type and unambiguous source-vs-local path fields.
 26. Error-branch test parity: every new runtime error code/path added in a PR must have direct test coverage.
 
