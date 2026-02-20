@@ -48,8 +48,41 @@ describe("admin-auth", () => {
     expect(allowed).toBe(true);
   });
 
+  test("isAuthorizedRequest denies when x-admin-key is incorrect", () => {
+    const req = {
+      headers: {
+        "x-admin-key": "nope"
+      }
+    };
+    const allowed = isAuthorizedRequest(req, {
+      adminKey: "secret",
+      requireAdminKey: true
+    });
+    expect(allowed).toBe(false);
+  });
+
   test("requireAdmin middleware blocks unauthorized requests", () => {
     const req = { headers: {} };
+    const res = createResponseRecorder();
+    const next = jest.fn();
+    const middleware = requireAdmin({
+      adminKey: "secret",
+      requireAdminKey: true
+    });
+
+    middleware(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.payload).toEqual({ error: "Admin key required." });
+  });
+
+  test("requireAdmin middleware blocks incorrect admin key", () => {
+    const req = {
+      headers: {
+        "x-admin-key": "wrong"
+      }
+    };
     const res = createResponseRecorder();
     const next = jest.fn();
     const middleware = requireAdmin({
