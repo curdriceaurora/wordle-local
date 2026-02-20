@@ -571,6 +571,8 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location).toMatch(/word=/);
     expect(response.headers.location).toMatch(/lang=none/);
+    expect(response.headers.location).toMatch(/daily=1/);
+    expect(response.headers.location).toMatch(/day=\d{4}-\d{2}-\d{2}/);
   });
 
   test("redirects using default language when stored lang is unknown", async () => {
@@ -580,6 +582,7 @@ describe("Daily word data recovery and daily route", () => {
     expect(response.status).toBe(302);
     expect(response.headers.location.startsWith("/?word=")).toBe(true);
     expect(response.headers.location).not.toMatch(/lang=/);
+    expect(response.headers.location).toMatch(/daily=1/);
   });
 });
 

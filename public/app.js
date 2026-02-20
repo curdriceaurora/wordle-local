@@ -27,6 +27,24 @@ const keyboardEl = document.getElementById("keyboard");
 const messageEl = document.getElementById("message");
 const playMetaEl = document.getElementById("playMeta");
 const srStatusEl = document.getElementById("srStatus");
+const profilePanelEl = document.getElementById("profilePanel");
+const profileFormEl = document.getElementById("profileForm");
+const profileNameInputEl = document.getElementById("profileNameInput");
+const profileStatusEl = document.getElementById("profileStatus");
+const savedPlayersWrapEl = document.getElementById("savedPlayersWrap");
+const savedPlayersEl = document.getElementById("savedPlayers");
+const activePlayerWrapEl = document.getElementById("activePlayerWrap");
+const activePlayerNameEl = document.getElementById("activePlayerName");
+const switchPlayerBtnEl = document.getElementById("switchPlayerBtn");
+const playerStatsEl = document.getElementById("playerStats");
+const statPlayedEl = document.getElementById("statPlayed");
+const statWinRateEl = document.getElementById("statWinRate");
+const statStreakEl = document.getElementById("statStreak");
+const statBestEl = document.getElementById("statBest");
+const leaderboardPanelEl = document.getElementById("leaderboardPanel");
+const leaderboardRangeEl = document.getElementById("leaderboardRange");
+const leaderboardMetaEl = document.getElementById("leaderboardMeta");
+const leaderboardBodyEl = document.getElementById("leaderboardBody");
 
 let currentRow = 0;
 let currentCol = 0;
@@ -52,6 +70,17 @@ let lastFocusedElement = null;
 let languageMinLengths = {};
 let defaultLang = "en";
 let errorTimer = null;
+let dailyMode = false;
+let dailyDate = "";
+let dailyPuzzleKey = "";
+let physicalKeyboardBound = false;
+let profileState = {
+  profiles: [],
+  activeProfileId: null,
+  stats: {}
+};
+
+const PROFILE_STORAGE_KEY = "lhw_profiles_v1";
 
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
@@ -123,6 +152,422 @@ function showErrorPanel(message) {
       window.location.href = "/";
     }
   }, 1000);
+}
+
+function safeJsonParse(raw, fallback) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function toLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateString(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
+}
+
+function dateToUtcStamp(dateString) {
+  const date = parseDateString(dateString);
+  if (!date) return null;
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function diffDays(laterDate, earlierDate) {
+  const laterStamp = dateToUtcStamp(laterDate);
+  const earlierStamp = dateToUtcStamp(earlierDate);
+  if (laterStamp === null || earlierStamp === null) return null;
+  return Math.floor((laterStamp - earlierStamp) / (24 * 60 * 60 * 1000));
+}
+
+function shiftDate(dateString, deltaDays) {
+  const date = parseDateString(dateString);
+  if (!date) return null;
+  date.setDate(date.getDate() + deltaDays);
+  return toLocalDateString(date);
+}
+
+function loadProfileState() {
+  const empty = {
+    profiles: [],
+    activeProfileId: null,
+    stats: {}
+  };
+  let raw = null;
+  try {
+    raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+  } catch (err) {
+    return empty;
+  }
+  if (!raw) return empty;
+  const parsed = safeJsonParse(raw, null);
+  if (!parsed || typeof parsed !== "object") return empty;
+  const profiles = Array.isArray(parsed.profiles)
+    ? parsed.profiles
+      .map((profile) => {
+        const id = String(profile?.id || "").trim();
+        const name = normalizeProfileName(profile?.name);
+        const createdAt = String(profile?.createdAt || "").trim() || new Date().toISOString();
+        if (!id || !name) return null;
+        return { id, name, createdAt };
+      })
+      .filter(Boolean)
+    : [];
+  const stats = parsed.stats && typeof parsed.stats === "object" ? parsed.stats : {};
+  const activeProfileId = profiles.some((profile) => profile.id === parsed.activeProfileId)
+    ? parsed.activeProfileId
+    : null;
+
+  return {
+    profiles,
+    activeProfileId,
+    stats
+  };
+}
+
+function saveProfileState() {
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileState));
+  } catch (err) {
+    // Ignore storage failures so gameplay still works.
+  }
+}
+
+function normalizeProfileName(rawName) {
+  const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
+  if (!cleaned) return "";
+  if (cleaned.length > 24) return "";
+  if (!/^[A-Za-z][A-Za-z '\-]*$/.test(cleaned)) return "";
+  return cleaned;
+}
+
+function profileIdForName(name) {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24) || "player";
+  let nextId = base;
+  let i = 2;
+  while (profileState.profiles.some((profile) => profile.id === nextId)) {
+    nextId = `${base}-${i}`;
+    i += 1;
+  }
+  return nextId;
+}
+
+function getActiveProfile() {
+  if (!profileState.activeProfileId) return null;
+  return profileState.profiles.find((profile) => profile.id === profileState.activeProfileId) || null;
+}
+
+function ensureProfileBucket(profileId) {
+  if (!profileState.stats[profileId] || typeof profileState.stats[profileId] !== "object") {
+    profileState.stats[profileId] = {};
+  }
+  if (
+    !profileState.stats[profileId].dailyResults ||
+    typeof profileState.stats[profileId].dailyResults !== "object"
+  ) {
+    profileState.stats[profileId].dailyResults = {};
+  }
+  return profileState.stats[profileId].dailyResults;
+}
+
+function listProfileEntries(profileId) {
+  const results = ensureProfileBucket(profileId);
+  return Object.values(results)
+    .map((entry) => ({
+      date: String(entry?.date || ""),
+      won: Boolean(entry?.won),
+      attempts: Number(entry?.attempts),
+      maxGuesses: Number(entry?.maxGuesses)
+    }))
+    .filter((entry) => parseDateString(entry.date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function summarizeEntries(entries) {
+  const played = entries.length;
+  const wins = entries.filter((entry) => entry.won).length;
+  const winRate = played ? Math.round((wins / played) * 100) : 0;
+  const bestAttempts = entries
+    .filter((entry) => entry.won && Number.isFinite(entry.attempts) && entry.attempts > 0)
+    .reduce((best, entry) => Math.min(best, entry.attempts), Number.POSITIVE_INFINITY);
+
+  return {
+    played,
+    wins,
+    winRate,
+    bestAttempts: Number.isFinite(bestAttempts) ? bestAttempts : null
+  };
+}
+
+function computeCurrentStreak(entries) {
+  if (!entries.length) return 0;
+  const byDate = new Map();
+  for (const entry of entries) {
+    byDate.set(entry.date, Boolean(byDate.get(entry.date)) || Boolean(entry.won));
+  }
+  const sortedDates = Array.from(byDate.keys()).sort();
+  const latestDate = sortedDates[sortedDates.length - 1];
+  if (!byDate.get(latestDate)) return 0;
+  const today = toLocalDateString(new Date());
+  const gap = diffDays(today, latestDate);
+  if (gap === null || gap > 1) return 0;
+
+  let streak = 1;
+  let cursor = latestDate;
+  while (true) {
+    const previous = shiftDate(cursor, -1);
+    if (!previous || !byDate.get(previous)) break;
+    streak += 1;
+    cursor = previous;
+  }
+  return streak;
+}
+
+function isEntryInRange(entry, range) {
+  if (range === "overall") return true;
+  const today = toLocalDateString(new Date());
+  if (range === "weekly") {
+    const age = diffDays(today, entry.date);
+    return age !== null && age >= 0 && age <= 6;
+  }
+  if (range === "monthly") {
+    return entry.date.slice(0, 7) === today.slice(0, 7);
+  }
+  return true;
+}
+
+function describeRange(range) {
+  if (range === "weekly") {
+    return "Last 7 days (including today)";
+  }
+  if (range === "monthly") {
+    return "Current calendar month";
+  }
+  return "All recorded daily games";
+}
+
+function renderSavedPlayers() {
+  if (!savedPlayersWrapEl || !savedPlayersEl) return;
+  savedPlayersEl.innerHTML = "";
+  if (!profileState.profiles.length) {
+    savedPlayersWrapEl.classList.add("hidden");
+    return;
+  }
+  savedPlayersWrapEl.classList.remove("hidden");
+  profileState.profiles.forEach((profile) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "player-chip";
+    const isActive = profile.id === profileState.activeProfileId;
+    button.textContent = isActive ? `${profile.name} (active)` : profile.name;
+    button.addEventListener("click", () => {
+      profileState.activeProfileId = profile.id;
+      saveProfileState();
+      renderDailyPlayerPanels();
+      setProfileStatus("");
+    });
+    savedPlayersEl.appendChild(button);
+  });
+}
+
+function setProfileStatus(text) {
+  if (!profileStatusEl) return;
+  profileStatusEl.textContent = text;
+}
+
+function renderLeaderboard() {
+  if (!leaderboardPanelEl || !leaderboardBodyEl || !leaderboardRangeEl || !leaderboardMetaEl) return;
+  if (!dailyMode) {
+    leaderboardPanelEl.classList.add("hidden");
+    return;
+  }
+
+  leaderboardPanelEl.classList.remove("hidden");
+  const range = leaderboardRangeEl.value || "weekly";
+  leaderboardMetaEl.textContent = describeRange(range);
+
+  const rows = profileState.profiles
+    .map((profile) => {
+      const allEntries = listProfileEntries(profile.id);
+      const filtered = allEntries.filter((entry) => isEntryInRange(entry, range));
+      const summary = summarizeEntries(filtered);
+      return {
+        profile,
+        ...summary,
+        streak: computeCurrentStreak(allEntries)
+      };
+    })
+    .filter((row) => row.played > 0)
+    .sort((a, b) => {
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+      if (b.played !== a.played) return b.played - a.played;
+      if ((a.bestAttempts || 99) !== (b.bestAttempts || 99)) {
+        return (a.bestAttempts || 99) - (b.bestAttempts || 99);
+      }
+      return a.profile.name.localeCompare(b.profile.name);
+    });
+
+  leaderboardBodyEl.innerHTML = "";
+  if (!rows.length) {
+    const row = document.createElement("tr");
+    row.innerHTML = '<td class="leaderboard-empty" colspan="7">No games in this period yet.</td>';
+    leaderboardBodyEl.appendChild(row);
+    return;
+  }
+
+  rows.forEach((row, index) => {
+    const tr = document.createElement("tr");
+    const safeBest = row.bestAttempts ? String(row.bestAttempts) : "-";
+    const values = [
+      String(index + 1),
+      row.profile.name,
+      String(row.wins),
+      String(row.played),
+      `${row.winRate}%`,
+      safeBest,
+      String(row.streak)
+    ];
+    values.forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      tr.appendChild(cell);
+    });
+    leaderboardBodyEl.appendChild(tr);
+  });
+}
+
+function renderActivePlayerStats() {
+  if (!playerStatsEl) return;
+  const activeProfile = getActiveProfile();
+  if (!dailyMode || !activeProfile) {
+    playerStatsEl.classList.add("hidden");
+    return;
+  }
+
+  const entries = listProfileEntries(activeProfile.id);
+  const summary = summarizeEntries(entries);
+  playerStatsEl.classList.remove("hidden");
+  statPlayedEl.textContent = String(summary.played);
+  statWinRateEl.textContent = `${summary.winRate}%`;
+  statStreakEl.textContent = String(computeCurrentStreak(entries));
+  statBestEl.textContent = summary.bestAttempts ? String(summary.bestAttempts) : "-";
+}
+
+function renderDailyPlayerPanels() {
+  if (!profilePanelEl || !profileFormEl || !activePlayerWrapEl || !activePlayerNameEl || !switchPlayerBtnEl) return;
+  if (!dailyMode) {
+    profilePanelEl.classList.add("hidden");
+    leaderboardPanelEl.classList.add("hidden");
+    keyboardEl.classList.remove("locked");
+    return;
+  }
+
+  profilePanelEl.classList.remove("hidden");
+  const activeProfile = getActiveProfile();
+  const hasActive = Boolean(activeProfile);
+  profileFormEl.classList.toggle("hidden", hasActive);
+  activePlayerWrapEl.classList.toggle("hidden", !hasActive);
+  switchPlayerBtnEl.classList.toggle("hidden", !hasActive);
+  keyboardEl.classList.toggle("locked", !hasActive);
+
+  if (hasActive) {
+    activePlayerNameEl.textContent = activeProfile.name;
+  } else if (profileNameInputEl) {
+    profileNameInputEl.focus();
+  }
+
+  renderSavedPlayers();
+  renderActivePlayerStats();
+  renderLeaderboard();
+}
+
+function upsertDailyResult(won, attempts, guessLimit) {
+  if (!dailyMode || !dailyPuzzleKey) return;
+  const activeProfile = getActiveProfile();
+  if (!activeProfile) return;
+
+  const bucket = ensureProfileBucket(activeProfile.id);
+  const existing = bucket[dailyPuzzleKey];
+  const normalizedAttempts = Number.isInteger(attempts) && attempts > 0 ? attempts : null;
+  const next = {
+    date: dailyDate,
+    won: Boolean(won),
+    attempts: normalizedAttempts,
+    maxGuesses: Number.isInteger(guessLimit) ? guessLimit : maxGuesses,
+    updatedAt: new Date().toISOString()
+  };
+
+  if (!existing) {
+    bucket[dailyPuzzleKey] = next;
+  } else if (existing.won && !next.won) {
+    // Keep an existing win if the same daily puzzle is replayed and lost later.
+    bucket[dailyPuzzleKey] = existing;
+  } else if (existing.won && next.won) {
+    const best = Math.min(existing.attempts || Number.POSITIVE_INFINITY, next.attempts || Number.POSITIVE_INFINITY);
+    bucket[dailyPuzzleKey] = {
+      ...existing,
+      attempts: Number.isFinite(best) ? best : existing.attempts
+    };
+  } else {
+    bucket[dailyPuzzleKey] = next;
+  }
+
+  saveProfileState();
+  renderDailyPlayerPanels();
+}
+
+function createOrSelectProfile(rawName) {
+  const normalizedName = normalizeProfileName(rawName);
+  if (!normalizedName) {
+    return {
+      ok: false,
+      error: "Use letters, spaces, apostrophes, or hyphens (max 24 chars)."
+    };
+  }
+
+  const existing = profileState.profiles.find(
+    (profile) => profile.name.toLowerCase() === normalizedName.toLowerCase()
+  );
+  if (existing) {
+    profileState.activeProfileId = existing.id;
+    saveProfileState();
+    return { ok: true, profile: existing, reused: true };
+  }
+
+  const profile = {
+    id: profileIdForName(normalizedName),
+    name: normalizedName,
+    createdAt: new Date().toISOString()
+  };
+  profileState.profiles.push(profile);
+  profileState.activeProfileId = profile.id;
+  ensureProfileBucket(profile.id);
+  saveProfileState();
+  return { ok: true, profile, reused: false };
 }
 
 function buildBoard() {
@@ -355,6 +800,7 @@ async function submitGuess() {
 
     if (data.isCorrect) {
       locked = true;
+      upsertDailyResult(true, currentRow + 1, maxGuesses);
       const suffix =
         typeof data.answerMeaning === "string" && data.answerMeaning.trim()
           ? ` Meaning: ${data.answerMeaning.trim()}`
@@ -365,6 +811,7 @@ async function submitGuess() {
 
     if (currentRow === maxGuesses - 1) {
       locked = true;
+      upsertDailyResult(false, maxGuesses, maxGuesses);
       if (data.answer) {
         const suffix =
           typeof data.answerMeaning === "string" && data.answerMeaning.trim()
@@ -389,6 +836,10 @@ async function submitGuess() {
 
 function handleKey(rawKey) {
   if (locked || busy) return;
+  if (dailyMode && !getActiveProfile()) {
+    setMessage("Pick a player name to start this daily game.");
+    return;
+  }
 
   const key = rawKey.toUpperCase();
   if (key === "ENTER") {
@@ -427,7 +878,7 @@ function handlePhysicalKey(event) {
   }
 }
 
-function buildShareLink(code, lang, guessesCount) {
+function buildShareLink(code, lang, guessesCount, options = {}) {
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
@@ -437,6 +888,14 @@ function buildShareLink(code, lang, guessesCount) {
   }
   if (guessesCount) {
     url.searchParams.set("g", String(guessesCount));
+  }
+  const includeDaily = options.dailyMode !== undefined ? options.dailyMode : dailyMode;
+  const shareDay = options.dailyDate !== undefined ? options.dailyDate : dailyDate;
+  if (includeDaily) {
+    url.searchParams.set("daily", "1");
+    if (shareDay) {
+      url.searchParams.set("day", shareDay);
+    }
   }
   return url.toString();
 }
@@ -577,9 +1036,12 @@ function applyHighContrast(enabled) {
   document.body.classList.toggle("high-contrast", enabled);
 }
 
-async function initPlay(code, lang, guessesCount) {
+async function initPlay(code, lang, guessesCount, options = {}) {
   showPlay();
-  document.addEventListener("keydown", handlePhysicalKey);
+  if (!physicalKeyboardBound) {
+    document.addEventListener("keydown", handlePhysicalKey);
+    physicalKeyboardBound = true;
+  }
 
   const response = await fetch("/api/puzzle", {
     method: "POST",
@@ -596,26 +1058,46 @@ async function initPlay(code, lang, guessesCount) {
   maxGuesses = data.maxGuesses || defaultGuesses;
   puzzleCode = code.toUpperCase();
   puzzleLang = data.lang || "en";
+  dailyMode = Boolean(options.dailyMode);
+  dailyDate = options.dailyDate || toLocalDateString(new Date());
+  dailyPuzzleKey = dailyMode ? `${dailyDate}|${puzzleLang}|${puzzleCode}` : "";
 
   resetGame();
 
-  baseMeta = `Language: ${data.label} · Length: ${cols} · ${maxGuesses} tries`;
+  const dailyPrefix = dailyMode ? `Daily (${dailyDate}) · ` : "";
+  baseMeta = `${dailyPrefix}Language: ${data.label} · Length: ${cols} · ${maxGuesses} tries`;
   updatePlayMeta();
+  renderDailyPlayerPanels();
   updatedEl.textContent = "Game ready";
-  updateShareLink(buildShareLink(code, puzzleLang, maxGuesses));
+  updateShareLink(
+    buildShareLink(code, puzzleLang, maxGuesses, {
+      dailyMode,
+      dailyDate
+    })
+  );
   return { ok: true };
 }
 
 function initCreate() {
+  dailyMode = false;
+  dailyDate = "";
+  dailyPuzzleKey = "";
+  renderDailyPlayerPanels();
   showCreate();
   updatedEl.textContent = "Create mode";
 }
 
 async function startPuzzle(code, lang, guessesCount) {
   maxGuesses = guessesCount || defaultGuesses;
-  const link = buildShareLink(code, lang, maxGuesses);
+  const link = buildShareLink(code, lang, maxGuesses, {
+    dailyMode: false,
+    dailyDate: ""
+  });
   updateShareLink(link);
-  const result = await initPlay(code, lang, guessesCount);
+  const result = await initPlay(code, lang, guessesCount, {
+    dailyMode: false,
+    dailyDate: ""
+  });
   if (!result.ok) {
     showCreate();
     setCreateStatus(result.message || "Could not start puzzle.");
@@ -641,6 +1123,37 @@ createForm.addEventListener("submit", async (event) => {
 });
 
 randomBtn.addEventListener("click", handleRandom);
+
+if (profileFormEl) {
+  profileFormEl.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const result = createOrSelectProfile(profileNameInputEl ? profileNameInputEl.value : "");
+    if (!result.ok) {
+      setProfileStatus(result.error);
+      return;
+    }
+    if (profileNameInputEl) {
+      profileNameInputEl.value = "";
+    }
+    setProfileStatus(result.reused ? `Welcome back, ${result.profile.name}.` : `Player ${result.profile.name} added.`);
+    renderDailyPlayerPanels();
+  });
+}
+
+if (switchPlayerBtnEl) {
+  switchPlayerBtnEl.addEventListener("click", () => {
+    profileState.activeProfileId = null;
+    saveProfileState();
+    setProfileStatus("Choose an existing player or enter a new name.");
+    renderDailyPlayerPanels();
+  });
+}
+
+if (leaderboardRangeEl) {
+  leaderboardRangeEl.addEventListener("change", () => {
+    renderLeaderboard();
+  });
+}
 
 shareCopyBtn.addEventListener("click", async () => {
   if (!shareLinkInput.value) return;
@@ -723,6 +1236,7 @@ strictToggle.addEventListener("change", () => {
 
 async function init() {
   await loadMeta();
+  profileState = loadProfileState();
 
   const storedContrast = localStorage.getItem("highContrast") === "true";
   const storedStrict = localStorage.getItem("strictMode") === "true";
@@ -735,12 +1249,18 @@ async function init() {
   const codeParam = params.get("word");
   const langParam = params.get("lang");
   const guessesParam = params.get("g");
+  const dailyParam = params.get("daily");
+  const dayParam = params.get("day");
 
   if (codeParam) {
     const trimmedCode = String(codeParam).trim();
     const resolvedLang = langParam
       ? String(langParam).trim().toLowerCase()
       : defaultLang;
+    const isDailyFromLink = dailyParam === "1";
+    const resolvedDailyDate = isDailyFromLink
+      ? (dayParam ? String(dayParam).trim() : toLocalDateString(new Date()))
+      : "";
     const availableLang = languageMinLengths[resolvedLang]
       ? resolvedLang
       : null;
@@ -750,6 +1270,10 @@ async function init() {
       return;
     }
     if (!availableLang) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+    if (isDailyFromLink && !parseDateString(resolvedDailyDate)) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
     }
@@ -770,9 +1294,15 @@ async function init() {
       guessesCount = parsed;
     }
 
-    const link = buildShareLink(trimmedCode, availableLang, guessesCount);
+    const link = buildShareLink(trimmedCode, availableLang, guessesCount, {
+      dailyMode: isDailyFromLink,
+      dailyDate: resolvedDailyDate
+    });
     updateShareLink(link);
-    const result = await initPlay(trimmedCode, availableLang, guessesCount);
+    const result = await initPlay(trimmedCode, availableLang, guessesCount, {
+      dailyMode: isDailyFromLink,
+      dailyDate: resolvedDailyDate
+    });
     if (!result.ok) {
       showErrorPanel(result.message || "That link doesn't work. Let's make a new puzzle.");
     }

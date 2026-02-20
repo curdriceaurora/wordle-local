@@ -568,10 +568,13 @@ app.get("/daily", (req, res) => {
 
   const code = encodeWord(word).toLowerCase();
   const lang = resolveLang(data.lang) || DEFAULT_LANG;
+  const dailyDate = getLocalDateString(new Date());
   let target = `/?word=${code}`;
   if (lang !== "en") {
     target += `&lang=${lang}`;
   }
+  target += "&daily=1";
+  target += `&day=${dailyDate}`;
   res.redirect(target);
 });
 

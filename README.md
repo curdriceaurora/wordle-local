@@ -65,6 +65,16 @@ There is no admin UI. Use the API endpoints below.
 - Visit `/daily` to play the configured daily word.
 - If no daily word is set (or the date doesn’t match today), a friendly error page is shown.
 
+## Family Profiles & Leaderboards
+- Daily mode prompts for a player name (no password; honor system for families).
+- Profiles and stats are stored only in browser localStorage on that device.
+- Leaderboards support three views:
+  - Weekly: last 7 days including today.
+  - Monthly: current calendar month.
+  - Overall: all recorded daily games.
+- Streaks are tracked per profile based on consecutive winning daily entries.
+- Pitfall: clearing browser storage resets profile history and leaderboards.
+
 ## Security Notes
 - Rate limiting is enabled by default.
 - `TRUST_PROXY=true` is recommended behind proxies or Tailscale.
