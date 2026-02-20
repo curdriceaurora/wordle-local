@@ -19,9 +19,13 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 13. Post-normalization response source: for mutating store APIs, build response payloads from the normalized snapshot returned by the store mutation, not from draft/captured objects inside the mutator callback.
 14. Deterministic time in tests: avoid real clock dependency in tests (fixed dates or mocked timers), especially for daily/leaderboard date logic.
 15. Proxy-aware rate limiting: when rate limiting depends on client IP and app may sit behind a proxy/VPN/load balancer, ensure `TRUST_PROXY` behavior is explicitly set and documented for deployment defaults (compose + docs).
+16. Partial failure isolation: when one panel/API fails, avoid clearing unrelated panel state; handle profile and leaderboard fetch failures independently.
+17. Request minimization: UI controls should not trigger unrelated API calls (for example, leaderboard range changes must not refresh profile summary).
+18. Loading-state lockout: disable all controls that can trigger concurrent state mutations while request-path loading flags are true.
+19. Fixture parity for spawned pages: Playwright pages created outside shared fixtures must explicitly apply the same timeout/navigation defaults as fixture-managed pages.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
