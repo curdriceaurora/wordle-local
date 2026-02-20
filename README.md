@@ -90,6 +90,15 @@ There is no admin UI. Use the API endpoints below.
 - Daily link says no puzzle set: set one via `POST /api/word`.
 - Share link doesn’t work: make sure the link wasn’t truncated and is from the Create screen.
 
+## Roadmap (Exploratory)
+We are evaluating a larger Admin Platform expansion that includes an Admin UI, dictionary lifecycle management, and selected runtime settings controls.
+
+This is intentionally not in the current core scope and is tracked as an Epic with linked sub-issues:
+- https://github.com/curdriceaurora/wordle-local/issues/6
+
+Whether it ships next will depend on adoption signals and community feedback.
+Current priority remains a stable, simple local-hosted gameplay experience.
+
 ## License
 CC0-1.0 public domain dedication. See `LICENSE`.
 Third-party assets (notably the English dictionary) are licensed separately. See `THIRD_PARTY_NOTICES.md`.
