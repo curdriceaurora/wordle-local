@@ -28,7 +28,7 @@
 ## Operator checklist for upgrade
 1. Back up current app data (`data/word.json`, dictionaries, and existing `data/leaderboard.json` if present).
 2. Deploy the new build.
-3. Verify `GET /api/health` returns `ok`.
+3. Verify `GET /api/health` returns HTTP 200 with body `{ "ok": true }`.
 4. Open `/daily`, create/select a profile, complete a game, and confirm leaderboard updates.
 5. Validate cross-device behavior by loading `/daily` from a second device and confirming shared results.
 

@@ -21,6 +21,7 @@
 
 ## Review-Nit Preflight (Required)
 - [ ] Docs and schema/API constraints are consistent (or explicitly documented where enforcement differs).
+- [ ] Endpoint docs use exact contracts (status code + payload shape), not shorthand wording.
 - [ ] Conditional invariants are encoded (`if/then/else`) or explicitly delegated to implementation checks.
 - [ ] Ambiguous wording removed (deterministic tie-breaks, ordering, and timestamp semantics).
 - [ ] Redundant fields have explicit consistency rules.
