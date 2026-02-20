@@ -671,9 +671,11 @@ function renderLeaderboard() {
     const row = document.createElement("tr");
     row.innerHTML = '<td class="leaderboard-empty" colspan="7">No games in this period yet.</td>';
     leaderboardBodyEl.appendChild(row);
+    endPerfMeasure(renderTimer, "rows=0");
     return;
   }
 
+  const fragment = document.createDocumentFragment();
   rows.forEach((row, index) => {
     const tr = document.createElement("tr");
     const safeBest = row.bestAttempts ? String(row.bestAttempts) : "-";
@@ -691,8 +693,9 @@ function renderLeaderboard() {
       cell.textContent = value;
       tr.appendChild(cell);
     });
-    leaderboardBodyEl.appendChild(tr);
+    fragment.appendChild(tr);
   });
+  leaderboardBodyEl.appendChild(fragment);
   endPerfMeasure(renderTimer, `rows=${rows.length}`);
 }
 
