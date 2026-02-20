@@ -29,6 +29,7 @@
 - [ ] Unsupported persisted schema versions are rejected (fail-closed) instead of silently normalized.
 - [ ] Extra/unknown object properties trigger canonicalization so persisted JSON honors schema `additionalProperties` rules.
 - [ ] Dynamic map keys are protected against prototype pollution (`__proto__`/`constructor`/`prototype`); avoid `obj[userKey] = ...` on plain objects in request paths (prefer `Map` + serialization or allowlisted null-prototype containers).
+- [ ] For mutating store APIs, response payloads are derived from the normalized persisted snapshot returned by the store mutation (not stale draft/callback-captured objects).
 - [ ] JSON/file formatting conventions verified (including trailing newline for JSON files).
 - [ ] `docs/review-preflight.md` checklist reviewed before requesting review.
 

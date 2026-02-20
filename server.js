@@ -978,34 +978,39 @@ app.post("/api/stats/profile", async (req, res) => {
   }
 
   try {
-    let createdProfile = null;
+    let createdProfileId = "";
     let reused = false;
 
-    await leaderboardStore.mutate((draft) => {
+    const snapshot = await leaderboardStore.mutate((draft) => {
       const existing = draft.profiles.find(
         (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
       );
       if (existing) {
-        createdProfile = existing;
+        createdProfileId = existing.id;
         reused = true;
         return;
       }
 
       const nowIso = new Date().toISOString();
-      createdProfile = {
+      const createdProfile = {
         id: randomUUID(),
         name: profileName,
         createdAt: nowIso,
         updatedAt: nowIso
       };
       draft.profiles.push(createdProfile);
+      createdProfileId = createdProfile.id;
     });
+    const responseProfile = snapshot.profiles.find((profile) => profile.id === createdProfileId);
+    if (!responseProfile) {
+      throw new Error("Failed to persist player profile.");
+    }
 
     return res.json({
       ok: true,
       reused,
-      playerId: createdProfile.id,
-      profile: createdProfile
+      playerId: responseProfile.id,
+      profile: responseProfile
     });
   } catch (err) {
     return statsServiceError(res, err);
@@ -1021,9 +1026,7 @@ app.post("/api/stats/result", async (req, res) => {
   }
 
   try {
-    let savedEntry = null;
-
-    await leaderboardStore.mutate((draft) => {
+    const snapshot = await leaderboardStore.mutate((draft) => {
       const profile = draft.profiles.find((item) => item.id === payload.profileId);
       if (!profile) {
         throw new StatsApiError(404, "Player profile not found.");
@@ -1039,14 +1042,15 @@ app.post("/api/stats/result", async (req, res) => {
       currentEntries.set(payload.dailyKey, merged);
       draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
       profile.updatedAt = nowIso;
-      savedEntry = merged;
     });
+    const persistedEntry = snapshot.resultsByProfile[payload.profileId]?.[payload.dailyKey] || null;
 
     return res.json({
       ok: true,
       profileId: payload.profileId,
       dailyKey: payload.dailyKey,
-      result: savedEntry
+      retained: Boolean(persistedEntry),
+      result: persistedEntry
     });
   } catch (err) {
     return statsServiceError(res, err);

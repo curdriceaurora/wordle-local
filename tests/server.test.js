@@ -107,6 +107,12 @@ function createTempStatsStore(initialState = null) {
   };
 }
 
+function formatUtcDate(offsetDays) {
+  const base = Date.UTC(2024, 0, 1);
+  const date = new Date(base + offsetDays * 24 * 60 * 60 * 1000);
+  return date.toISOString().slice(0, 10);
+}
+
 async function withTempDictionary(file, contents, fn) {
   const fullPath = path.join(DICT_PATH, file);
   const original = fs.readFileSync(fullPath, "utf8");
@@ -1007,6 +1013,7 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
       expect(first.status).toBe(200);
+      expect(first.body.retained).toBe(true);
       expect(first.body.result.won).toBe(false);
       expect(first.body.result.attempts).toBeNull();
       expect(first.body.result.submissionCount).toBe(1);
@@ -1019,6 +1026,7 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
       expect(second.status).toBe(200);
+      expect(second.body.retained).toBe(true);
       expect(second.body.result.won).toBe(true);
       expect(second.body.result.attempts).toBe(4);
       expect(second.body.result.submissionCount).toBe(2);
@@ -1031,6 +1039,7 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
       expect(third.status).toBe(200);
+      expect(third.body.retained).toBe(true);
       expect(third.body.result.won).toBe(true);
       expect(third.body.result.attempts).toBe(4);
       expect(third.body.result.submissionCount).toBe(3);
@@ -1047,6 +1056,62 @@ describe("Stats API", () => {
       expect(leaderboard.body.rows[0].profileId).toBe(profileId);
       expect(leaderboard.body.rows[0].wins).toBe(1);
       expect(leaderboard.body.rows[0].played).toBe(1);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("returns retained=false when result is pruned by per-profile retention cap", async () => {
+    const profileId = "player-casey";
+    const nowIso = new Date().toISOString();
+    const existingResults = Object.create(null);
+    for (let i = 0; i < 400; i += 1) {
+      const date = formatUtcDate(i);
+      const dailyKey = `${date}|en|seed${String(i).padStart(3, "0")}`;
+      existingResults[dailyKey] = {
+        date,
+        won: i % 2 === 0,
+        attempts: i % 2 === 0 ? 3 : null,
+        maxGuesses: 6,
+        submissionCount: 1,
+        updatedAt: nowIso
+      };
+    }
+
+    const tempStore = createTempStatsStore({
+      version: 1,
+      updatedAt: nowIso,
+      profiles: [
+        {
+          id: profileId,
+          name: "Casey",
+          createdAt: nowIso,
+          updatedAt: nowIso
+        }
+      ],
+      resultsByProfile: {
+        [profileId]: existingResults
+      }
+    });
+
+    try {
+      const app = loadApp({ statsStorePath: tempStore.filePath });
+      const oldDailyKey = "2020-01-01|en|oldseed";
+      const response = await request(app).post("/api/stats/result").send({
+        profileId,
+        dailyKey: oldDailyKey,
+        won: true,
+        attempts: 2,
+        maxGuesses: 6
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.retained).toBe(false);
+      expect(response.body.result).toBeNull();
+
+      const profileSummary = await request(app).get(`/api/stats/profile/${profileId}`);
+      expect(profileSummary.status).toBe(200);
+      expect(profileSummary.body.summary.overall.played).toBe(400);
+      expect(profileSummary.body.summary.totalSubmissions).toBe(400);
     } finally {
       tempStore.cleanup();
     }
