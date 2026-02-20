@@ -91,11 +91,13 @@ There is no admin UI. Use the API endpoints below.
 - Share link doesn’t work: make sure the link wasn’t truncated and is from the Create screen.
 
 ## Roadmap (Exploratory)
-We are evaluating two exploratory tracks that are intentionally outside the current core scope:
+We are evaluating exploratory tracks that are intentionally outside the current core scope:
 - Admin Platform expansion (Admin UI, dictionary lifecycle management, and selected runtime settings controls): https://github.com/curdriceaurora/wordle-local/issues/6
 - LibreOffice English variant sourcing (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via Admin import flows, with Hunspell-based guess handling and curated answer policy: https://github.com/curdriceaurora/wordle-local/issues/17
+- Server-backed leaderboard/profile persistence for multi-device family usage: https://github.com/curdriceaurora/wordle-local/issues/29
 
 This second track is planned after foundational Admin Platform work in #6.
+The server-backed leaderboard track is high-priority product direction, but remains roadmap-scoped until implementation lands.
 
 Whether it ships next will depend on adoption signals and community feedback.
 Current priority remains a stable, simple local-hosted gameplay experience.
