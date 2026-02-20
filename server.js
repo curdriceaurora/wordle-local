@@ -1029,12 +1029,15 @@ app.post("/api/stats/result", async (req, res) => {
         throw new StatsApiError(404, "Player profile not found.");
       }
 
-      const currentEntries = draft.resultsByProfile[payload.profileId] || Object.create(null);
+      const rawEntries = draft.resultsByProfile[payload.profileId];
+      const currentEntries = new Map(
+        Object.entries(rawEntries && typeof rawEntries === "object" ? rawEntries : {})
+      );
       const nowIso = new Date().toISOString();
-      const existing = currentEntries[payload.dailyKey] || null;
+      const existing = currentEntries.get(payload.dailyKey) || null;
       const merged = mergeDailyResult(existing, payload.entry, nowIso);
-      currentEntries[payload.dailyKey] = merged;
-      draft.resultsByProfile[payload.profileId] = currentEntries;
+      currentEntries.set(payload.dailyKey, merged);
+      draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
       profile.updatedAt = nowIso;
       savedEntry = merged;
     });
