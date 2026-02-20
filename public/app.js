@@ -1085,9 +1085,14 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   updatePlayMeta();
   renderDailyPlayerPanels();
   if (dailyMode) {
-    await refreshStatsPanels({
-      range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly
-    });
+    try {
+      await refreshStatsPanels({
+        range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly
+      });
+    } catch (err) {
+      console.error("Failed to refresh stats panels for daily puzzle:", err);
+      window.alert("Couldn't load leaderboard and profile stats for the daily puzzle. You can still play the game.");
+    }
     renderDailyPlayerPanels();
   }
   updatedEl.textContent = "Game ready";
