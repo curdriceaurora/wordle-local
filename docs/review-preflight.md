@@ -16,10 +16,17 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 10. Canonical shape enforcement: entries with unknown properties are treated as normalization-required so persisted JSON remains schema-compliant.
 11. Key safety: dynamic object keys are validated against prototype-pollution sentinels (for example `__proto__`, `constructor`, `prototype`) and/or stored in null-prototype maps.
 
+## Automation Coverage Map
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11
+- Manual only: 3 (deterministic wording and ambiguity review still requires human check)
+
 ## Review Comment Handling Standard
 1. Triage every comment as `must-fix`, `follow-up issue`, or `decline with rationale`.
 2. Reply with commit hash + validation command when code/docs changed.
 3. Do not leave unresolved threads when merging.
+
+## Local Gate Requirement
+Run `npm run check` before requesting review. ESLint + Ajv schema checks are required and must pass locally.
 
 ## Merged PR Learnings Log
 Update this table after every successful PR merge.

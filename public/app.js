@@ -420,7 +420,7 @@ function normalizeProfileName(rawName) {
   const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
   if (!cleaned) return "";
   if (cleaned.length > 24) return "";
-  if (!/^[A-Za-z][A-Za-z '\-]*$/.test(cleaned)) return "";
+  if (!/^[A-Za-z][A-Za-z '-]*$/.test(cleaned)) return "";
   return cleaned;
 }
 

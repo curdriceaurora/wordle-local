@@ -5,6 +5,10 @@ Thanks for your interest in contributing!
 ## Quick Start
 - Fork the repo and create a feature branch.
 - Keep changes focused and include tests when behavior changes.
+- Install dependencies to bootstrap local hooks:
+  - `npm install`
+- Run the local quality gate before pushing:
+  - `npm run check`
 - Run tests locally:
   - `npm test`
   - `npm run test:ui` (or `npm run test:ui:fast` for a quick check)
