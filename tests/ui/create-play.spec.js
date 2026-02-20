@@ -87,6 +87,7 @@ test("daily mode requires a player name and updates leaderboard stats", async ({
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Pick a player name");
 
+  await expect(page.locator("#profileNameInput")).toBeEnabled();
   await page.fill("#profileNameInput", "Ava");
   await page.click("#profileForm button[type=submit]");
   await expect(page.locator("#activePlayerWrap")).toContainText("Ava");
@@ -107,6 +108,8 @@ test("daily mode requires a player name and updates leaderboard stats", async ({
 
 test("strict mode enforces revealed hints", async ({ page }) => {
   await page.goto("/?word=fotnd&lang=none", gotoOptions);
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
   await page.keyboard.type("JELLO");
   await page.keyboard.press("Enter");
@@ -126,6 +129,8 @@ test("strict mode requires repeated letters when revealed", async ({ page }) => 
   await page.selectOption("#langSelect", "none");
   await page.fill("#wordInput", "LEVEL");
   await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
   await page.keyboard.type("ALLOT");
   await page.keyboard.press("Enter");

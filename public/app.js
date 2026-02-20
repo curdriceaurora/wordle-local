@@ -96,6 +96,8 @@ const LEADERBOARD_RANGE = Object.freeze({
   overall: "overall"
 });
 const STATS_REQUEST_ERROR = "Stats unavailable right now. Try again soon.";
+const STATS_DEGRADED_MESSAGE =
+  "Leaderboard and player stats are temporarily unavailable. You can still play this puzzle.";
 let leaderboardState = {
   range: LEADERBOARD_RANGE.weekly,
   description: "",
@@ -103,6 +105,7 @@ let leaderboardState = {
   dayKey: "",
   loading: false
 };
+let statsServiceUnavailable = false;
 
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
@@ -138,6 +141,12 @@ function setMessage(text) {
 function setSrStatus(text) {
   if (!srStatusEl) return;
   srStatusEl.textContent = text;
+}
+
+function setHiddenState(element, hidden) {
+  if (!element) return;
+  element.classList.toggle("hidden", hidden);
+  element.style.display = hidden ? "none" : "";
 }
 
 function startPerfMeasure(label) {
@@ -242,6 +251,28 @@ async function requestJson(url, options = {}) {
   throw err;
 }
 
+function isStatsServiceUnavailableError(err) {
+  const status = Number(err?.status || 0);
+  if (status >= 500) {
+    return true;
+  }
+  const message = String(err?.message || "").toLowerCase();
+  return message.includes("stats unavailable") || message.includes("stats service unavailable");
+}
+
+function enableStatsDegradedMode() {
+  if (!dailyMode || statsServiceUnavailable) {
+    return;
+  }
+  statsServiceUnavailable = true;
+  profileState.loading = false;
+  leaderboardState.loading = false;
+  setProfileStatus(STATS_DEGRADED_MESSAGE);
+  setMessage(STATS_DEGRADED_MESSAGE);
+  setSrStatus(STATS_DEGRADED_MESSAGE);
+  renderDailyPlayerPanels();
+}
+
 function normalizeProfileName(rawName) {
   const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
   if (!cleaned) return "";
@@ -301,7 +332,7 @@ function describeRange(range) {
 }
 
 async function refreshProfileSummary(profileId) {
-  if (!profileId) return;
+  if (!profileId || statsServiceUnavailable) return;
   const payload = await requestJson(`/api/stats/profile/${encodeURIComponent(profileId)}`);
   if (payload?.profile) {
     upsertKnownProfile(payload.profile);
@@ -313,6 +344,11 @@ async function refreshProfileSummary(profileId) {
 }
 
 async function refreshLeaderboard(range) {
+  if (statsServiceUnavailable) {
+    leaderboardState.loading = false;
+    renderLeaderboard();
+    return;
+  }
   const selectedRange =
     range || (leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly);
   leaderboardState.loading = true;
@@ -338,14 +374,20 @@ async function refreshLeaderboard(range) {
 }
 
 async function refreshStatsPanels(options = {}) {
+  if (statsServiceUnavailable) {
+    return;
+  }
   const activeProfileId = String(options.activeProfileId || profileState.activeProfileId || "").trim();
   let profileError = "";
   let leaderboardError = "";
+  let profileFailure = null;
+  let leaderboardFailure = null;
 
   if (activeProfileId) {
     try {
       await refreshProfileSummary(activeProfileId);
     } catch (err) {
+      profileFailure = err;
       profileError = err?.message || STATS_REQUEST_ERROR;
     }
   }
@@ -353,12 +395,18 @@ async function refreshStatsPanels(options = {}) {
   try {
     await refreshLeaderboard(options.range);
   } catch (err) {
+    leaderboardFailure = err;
     leaderboardError = err?.message || STATS_REQUEST_ERROR;
     leaderboardState.loading = false;
     leaderboardState.rows = [];
     leaderboardState.description = describeRange(
       options.range || leaderboardState.range || LEADERBOARD_RANGE.weekly
     );
+  }
+
+  if (isStatsServiceUnavailableError(profileFailure) || isStatsServiceUnavailableError(leaderboardFailure)) {
+    enableStatsDegradedMode();
+    return;
   }
 
   if (profileError && leaderboardError) {
@@ -387,10 +435,10 @@ function renderSavedPlayers() {
   if (!savedPlayersWrapEl || !savedPlayersEl) return;
   savedPlayersEl.innerHTML = "";
   if (!profileState.profiles.length) {
-    savedPlayersWrapEl.classList.add("hidden");
+    setHiddenState(savedPlayersWrapEl, true);
     return;
   }
-  savedPlayersWrapEl.classList.remove("hidden");
+  setHiddenState(savedPlayersWrapEl, false);
   profileState.profiles.forEach((profile) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -412,12 +460,12 @@ function setProfileStatus(text) {
 
 function renderLeaderboard() {
   if (!leaderboardPanelEl || !leaderboardBodyEl || !leaderboardRangeEl || !leaderboardMetaEl) return;
-  if (!dailyMode) {
-    leaderboardPanelEl.classList.add("hidden");
+  if (!dailyMode || statsServiceUnavailable) {
+    setHiddenState(leaderboardPanelEl, true);
     return;
   }
 
-  leaderboardPanelEl.classList.remove("hidden");
+  setHiddenState(leaderboardPanelEl, false);
   leaderboardRangeEl.disabled = profileState.loading || leaderboardState.loading;
   const range = leaderboardRangeEl.value || leaderboardState.range || LEADERBOARD_RANGE.weekly;
   leaderboardMetaEl.textContent = leaderboardState.loading
@@ -463,13 +511,13 @@ function renderActivePlayerStats() {
   if (!playerStatsEl) return;
   const activeProfile = getActiveProfile();
   if (!dailyMode || !activeProfile) {
-    playerStatsEl.classList.add("hidden");
+    setHiddenState(playerStatsEl, true);
     return;
   }
 
   const profileSummary = getProfileSummary(activeProfile.id);
   const summary = profileSummary.overall || createEmptySummaryBucket().overall;
-  playerStatsEl.classList.remove("hidden");
+  setHiddenState(playerStatsEl, false);
   statPlayedEl.textContent = String(summary.played || 0);
   statWinRateEl.textContent = `${summary.winRate || 0}%`;
   statStreakEl.textContent = String(profileSummary.streak || 0);
@@ -479,18 +527,25 @@ function renderActivePlayerStats() {
 function renderDailyPlayerPanels() {
   if (!profilePanelEl || !profileFormEl || !activePlayerWrapEl || !activePlayerNameEl || !switchPlayerBtnEl) return;
   if (!dailyMode) {
-    profilePanelEl.classList.add("hidden");
-    leaderboardPanelEl.classList.add("hidden");
+    setHiddenState(profilePanelEl, true);
+    setHiddenState(leaderboardPanelEl, true);
     keyboardEl.classList.remove("locked");
     return;
   }
 
-  profilePanelEl.classList.remove("hidden");
+  if (statsServiceUnavailable) {
+    setHiddenState(profilePanelEl, true);
+    setHiddenState(leaderboardPanelEl, true);
+    keyboardEl.classList.remove("locked");
+    return;
+  }
+
+  setHiddenState(profilePanelEl, false);
   const activeProfile = getActiveProfile();
   const hasActive = Boolean(activeProfile);
-  profileFormEl.classList.toggle("hidden", hasActive);
-  activePlayerWrapEl.classList.toggle("hidden", !hasActive);
-  switchPlayerBtnEl.classList.toggle("hidden", !hasActive);
+  setHiddenState(profileFormEl, hasActive);
+  setHiddenState(activePlayerWrapEl, !hasActive);
+  setHiddenState(switchPlayerBtnEl, !hasActive);
   switchPlayerBtnEl.disabled = profileState.loading;
   if (profileNameInputEl) {
     profileNameInputEl.disabled = profileState.loading;
@@ -503,8 +558,6 @@ function renderDailyPlayerPanels() {
 
   if (hasActive) {
     activePlayerNameEl.textContent = activeProfile.name;
-  } else if (profileNameInputEl) {
-    profileNameInputEl.focus();
   }
 
   renderSavedPlayers();
@@ -513,7 +566,7 @@ function renderDailyPlayerPanels() {
 }
 
 async function upsertDailyResult(won, attempts, guessLimit) {
-  if (!dailyMode || !dailyPuzzleKey) return;
+  if (!dailyMode || !dailyPuzzleKey || statsServiceUnavailable) return;
   const activeProfile = getActiveProfile();
   if (!activeProfile) return;
 
@@ -537,6 +590,10 @@ async function upsertDailyResult(won, attempts, guessLimit) {
     }
     await refreshStatsPanels({ activeProfileId: activeProfile.id });
   } catch (err) {
+    if (isStatsServiceUnavailableError(err)) {
+      enableStatsDegradedMode();
+      return;
+    }
     setProfileStatus(err?.message || STATS_REQUEST_ERROR);
   } finally {
     profileState.loading = false;
@@ -545,6 +602,12 @@ async function upsertDailyResult(won, attempts, guessLimit) {
 }
 
 async function createOrSelectProfile(rawName) {
+  if (statsServiceUnavailable) {
+    return {
+      ok: false,
+      error: STATS_DEGRADED_MESSAGE
+    };
+  }
   const normalizedName = normalizeProfileName(rawName);
   if (!normalizedName) {
     return {
@@ -576,6 +639,10 @@ async function createOrSelectProfile(rawName) {
       reused: Boolean(payload?.reused)
     };
   } catch (err) {
+    if (isStatsServiceUnavailableError(err)) {
+      enableStatsDegradedMode();
+      return { ok: false, error: STATS_DEGRADED_MESSAGE };
+    }
     return { ok: false, error: err?.message || STATS_REQUEST_ERROR };
   } finally {
     profileState.loading = false;
@@ -854,7 +921,7 @@ async function submitGuess() {
 
 function handleKey(rawKey) {
   if (locked || busy || profileState.loading) return;
-  if (dailyMode && !getActiveProfile()) {
+  if (dailyMode && !statsServiceUnavailable && !getActiveProfile()) {
     setMessage("Pick a player name to start this daily game.");
     return;
   }
@@ -885,6 +952,19 @@ function handlePhysicalKey(event) {
     if (event.key === "Escape") {
       closeShareModal();
     }
+    return;
+  }
+  const target = event.target;
+  const isTextInputTarget =
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
+      (target.tagName === "INPUT" &&
+        !["checkbox", "radio", "button", "submit", "reset"].includes(
+          String(target.getAttribute("type") || "text").toLowerCase()
+        )));
+  if (isTextInputTarget) {
     return;
   }
   if (event.key === "Enter") {
@@ -1082,6 +1162,7 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   dailyMode = Boolean(options.dailyMode);
   dailyDate = options.dailyDate || toLocalDateString(new Date());
   dailyPuzzleKey = dailyMode ? `${dailyDate}|${puzzleLang}|${puzzleCode}` : "";
+  statsServiceUnavailable = false;
 
   resetGame();
 
@@ -1090,14 +1171,9 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   updatePlayMeta();
   renderDailyPlayerPanels();
   if (dailyMode) {
-    try {
-      await refreshStatsPanels({
-        range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly
-      });
-    } catch (err) {
-      console.error("Failed to refresh stats panels for daily puzzle:", err);
-      window.alert("Couldn't load leaderboard and profile stats for the daily puzzle. You can still play the game.");
-    }
+    await refreshStatsPanels({
+      range: leaderboardRangeEl ? leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly : LEADERBOARD_RANGE.weekly
+    });
     renderDailyPlayerPanels();
   }
   updatedEl.textContent = "Game ready";
@@ -1115,6 +1191,7 @@ function initCreate() {
   dailyMode = false;
   dailyDate = "";
   dailyPuzzleKey = "";
+  statsServiceUnavailable = false;
   renderDailyPlayerPanels();
   showCreate();
   updatedEl.textContent = "Create mode";
@@ -1183,11 +1260,15 @@ if (switchPlayerBtnEl) {
 
 if (leaderboardRangeEl) {
   leaderboardRangeEl.addEventListener("change", async () => {
-    if (!dailyMode) return;
+    if (!dailyMode || statsServiceUnavailable) return;
     try {
       await refreshLeaderboard(leaderboardRangeEl.value || LEADERBOARD_RANGE.weekly);
       setProfileStatus("");
     } catch (err) {
+      if (isStatsServiceUnavailableError(err)) {
+        enableStatsDegradedMode();
+        return;
+      }
       setProfileStatus(err?.message || STATS_REQUEST_ERROR);
       leaderboardState.loading = false;
       leaderboardState.rows = [];
@@ -1293,6 +1374,7 @@ async function init() {
     dayKey: "",
     loading: false
   };
+  statsServiceUnavailable = false;
 
   const storedContrast = getStoredItem("highContrast") === "true";
   const storedStrict = getStoredItem("strictMode") === "true";
