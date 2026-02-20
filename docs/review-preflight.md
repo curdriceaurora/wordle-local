@@ -23,4 +23,5 @@ If a PR had no substantive review nits, add a row with `Nit observed = none` and
 
 | Date (UTC) | PR | Type | Nit observed | Preventive rule added |
 | --- | --- | --- | --- | --- |
-| _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| 2026-02-20 | [#39](https://github.com/curdriceaurora/wordle-local/pull/39) | docs+schema | Docs/schema parity gaps, ambiguous replay wording, missing conditional invariant for `won` vs `attempts`, key/date consistency wording gaps. | Added mandatory preflight checks for contract parity, conditional invariants, deterministic wording, redundancy consistency, and recovery specificity. |
+| 2026-02-20 | [#40](https://github.com/curdriceaurora/wordle-local/pull/40) | process/docs | none | no change |
