@@ -9,6 +9,9 @@ const {
   fetchAndPersistProviderSource
 } = require("../lib/provider-fetch");
 
+const VALID_CHECKSUM_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const VALID_CHECKSUM_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 function createTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "lhw-provider-fetch-"));
 }
@@ -99,8 +102,15 @@ describe("provider-fetch", () => {
       expect(fs.readFileSync(result.sourceFiles.aff.path, "utf8")).toBe(affBody.toString("utf8"));
 
       const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+      expect(manifest.manifestType).toBe("provider-source-fetch");
       expect(manifest.provider.variant).toBe("en-US");
       expect(manifest.provider.commit).toBe(commit);
+      expect(manifest.sourceFiles.dic.sourcePath).toBe("en/en_US.dic");
+      expect(manifest.sourceFiles.aff.sourcePath).toBe("en/en_US.aff");
+      expect(manifest.sourceFiles.dic.localPath).toBe(`en-US/${commit}/en_US.dic`);
+      expect(manifest.sourceFiles.aff.localPath).toBe(`en-US/${commit}/en_US.aff`);
+      expect(manifest.sourceFiles.dic.url).toBe(dicUrl);
+      expect(manifest.sourceFiles.aff.url).toBe(affUrl);
       expect(manifest.sourceFiles.dic.sha256).toBe(computeSha256(dicBody));
       expect(manifest.sourceFiles.aff.sha256).toBe(computeSha256(affBody));
       expect(typeof manifest.retrievedAt).toBe("string");
@@ -121,7 +131,8 @@ describe("provider-fetch", () => {
         variant: "en-CA",
         commit,
         expectedChecksums: {
-          dic: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          dic: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          aff: computeSha256(affBody)
         },
         fetchImpl: createFetchMock({
           [dicUrl]: { status: 200, body: dicBody },
@@ -130,6 +141,35 @@ describe("provider-fetch", () => {
       })
     ).rejects.toMatchObject({
       code: "CHECKSUM_MISMATCH"
+    });
+  });
+
+  test("requires both expected checksums for fetch integrity verification", async () => {
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "CHECKSUM_REQUIRED"
+    });
+  });
+
+  test("rejects malformed expected checksum values", async () => {
+    await expect(
+      fetchAndPersistProviderSource({
+        variant: "en-GB",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: "ABCDEF",
+          aff: VALID_CHECKSUM_B
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_CHECKSUM"
     });
   });
 
@@ -142,6 +182,10 @@ describe("provider-fetch", () => {
       fetchAndPersistProviderSource({
         variant: "en-AU",
         commit,
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
         fetchImpl: createFetchMock({
           [dicUrl]: { status: 200, body: Buffer.from("1\nCAT\n", "utf8") },
           [affUrl]: { status: 404, body: Buffer.alloc(0) }
@@ -162,6 +206,10 @@ describe("provider-fetch", () => {
       fetchAndPersistProviderSource({
         variant: "en-ZA",
         commit,
+        expectedChecksums: {
+          dic: VALID_CHECKSUM_A,
+          aff: VALID_CHECKSUM_B
+        },
         fetchImpl: createFetchMock({
           [dicUrl]: { status: 429, body: Buffer.alloc(0) },
           [affUrl]: { status: 200, body: Buffer.from("SET UTF-8\n", "utf8") }
@@ -171,5 +219,38 @@ describe("provider-fetch", () => {
       code: "UPSTREAM_RATE_LIMITED",
       status: 429
     });
+  });
+
+  test("returns persistence error when source manifest cannot replace existing directory", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const dicBody = Buffer.from("2\nCAT\nDOG\n", "utf8");
+    const affBody = Buffer.from("SET UTF-8\n", "utf8");
+    const dicUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.dic`;
+    const affUrl = `https://raw.githubusercontent.com/LibreOffice/dictionaries/${commit}/en/en_GB.aff`;
+    const outputRoot = createTempDir();
+    const variantRoot = path.join(outputRoot, "en-GB", commit);
+    fs.mkdirSync(path.join(variantRoot, "source-manifest.json"), { recursive: true });
+
+    try {
+      await expect(
+        fetchAndPersistProviderSource({
+          variant: "en-GB",
+          commit,
+          outputRoot,
+          expectedChecksums: {
+            dic: computeSha256(dicBody),
+            aff: computeSha256(affBody)
+          },
+          fetchImpl: createFetchMock({
+            [dicUrl]: { status: 200, body: dicBody },
+            [affUrl]: { status: 200, body: affBody }
+          })
+        })
+      ).rejects.toMatchObject({
+        code: "PERSISTENCE_WRITE_FAILED"
+      });
+    } finally {
+      fs.rmSync(outputRoot, { recursive: true, force: true });
+    }
   });
 });
