@@ -105,6 +105,18 @@ function memoryDelta(after, before) {
 async function requestJson(port, requestPath, payload, timeoutMs) {
   const body = JSON.stringify(payload);
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const safeResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const safeReject = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
     const req = http.request(
       {
         hostname: "127.0.0.1",
@@ -119,6 +131,11 @@ async function requestJson(port, requestPath, payload, timeoutMs) {
       (res) => {
         let data = "";
         res.setEncoding("utf8");
+        res.on("error", (err) => {
+          safeReject(
+            new Error(`Response stream failed for ${requestPath}: ${err.message}`)
+          );
+        });
         res.on("data", (chunk) => {
           data += chunk;
         });
@@ -128,19 +145,19 @@ async function requestJson(port, requestPath, payload, timeoutMs) {
             try {
               parsed = JSON.parse(data);
             } catch (err) {
-              reject(new Error(`Invalid JSON response from ${requestPath}: ${err.message}`));
+              safeReject(new Error(`Invalid JSON response from ${requestPath}: ${err.message}`));
               return;
             }
           }
           if (res.statusCode < 200 || res.statusCode >= 300) {
-            reject(
+            safeReject(
               new Error(
                 `Request ${requestPath} failed (${res.statusCode}): ${JSON.stringify(parsed)}`
               )
             );
             return;
           }
-          resolve(parsed);
+          safeResolve(parsed);
         });
       }
     );
@@ -148,7 +165,7 @@ async function requestJson(port, requestPath, payload, timeoutMs) {
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error(`Request ${requestPath} timed out after ${timeoutMs}ms.`));
     });
-    req.on("error", reject);
+    req.on("error", safeReject);
     req.write(body);
     req.end();
   });
