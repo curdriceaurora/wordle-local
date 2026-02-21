@@ -98,7 +98,41 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "hasDictionary": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dictionaryFile": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hasDictionary": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dictionaryFile": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

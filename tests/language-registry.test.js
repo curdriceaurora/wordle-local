@@ -211,6 +211,72 @@ describe("language-registry", () => {
     expect(normalized).toBeNull();
   });
 
+  test("normalizeRegistryPayload rejects hasDictionary=true with null dictionaryFile", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: null
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
+  test("normalizeRegistryPayload rejects hasDictionary=false with non-null dictionaryFile", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: true,
+          dictionaryFile: "en.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: "should-not-exist.txt"
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
   test("loadSync recovers missing registry file with baked defaults", () => {
     const dir = createTempDir();
     const filePath = path.join(dir, "languages.json");
