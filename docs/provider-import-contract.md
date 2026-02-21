@@ -101,6 +101,26 @@ Captures counts for audit and diagnostics:
 2. Paths are contract-level relative paths; runtime code still must sanitize filesystem joins.
 3. This contract is provenance and processing metadata, not a queue/job schema.
 
+## Hunspell Expansion Artifacts (Issue #21)
+After provider fetch artifacts are verified, Hunspell expansion produces deterministic runtime inputs under:
+- `data/providers/<variant>/<commit>/expanded-forms.txt`
+- `data/providers/<variant>/<commit>/processed.json`
+
+`expanded-forms.txt` contract:
+- uppercase `A-Z` words only
+- one word per line
+- unique and sorted lexicographically
+- constrained to gameplay length policy (`3-12` for current MVP)
+
+`processed.json` contract:
+- `schemaVersion`
+- `variant`
+- `commit`
+- `sourceManifestPath` (relative path to `source-manifest.json`)
+- `policyVersion`
+- `counts` (`rawEntries`, `expandedForms`, `filteredOut`)
+- `generatedAt` (copied from `source-manifest.json.retrievedAt` to keep reruns reproducible for identical source inputs)
+
 ## Related Issues
 - Epic: `#17`
 - Next dependent stories: `#19`, `#21`, `#22`, `#23`, `#24`, `#26`
