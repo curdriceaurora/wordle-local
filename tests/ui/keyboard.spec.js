@@ -1,7 +1,7 @@
 const { test, expect } = require("./fixtures");
 
 test("ignores non-letter keyboard input", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none", { waitUntil: "commit" });
+  await page.goto("/?word=yfrqp&lang=en", { waitUntil: "commit" });
   await page.waitForSelector("#board");
   await page.waitForSelector("#keyboard .key");
   await page.keyboard.type("A1!");
@@ -10,7 +10,7 @@ test("ignores non-letter keyboard input", async ({ page }) => {
 });
 
 test("backspace removes the last letter", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none", { waitUntil: "commit" });
+  await page.goto("/?word=yfrqp&lang=en", { waitUntil: "commit" });
   await page.waitForSelector("#board");
   await page.waitForSelector("#keyboard .key");
   await page.keyboard.type("ABC");

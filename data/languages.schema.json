@@ -30,7 +30,11 @@
   "$defs": {
     "languageId": {
       "type": "string",
-      "pattern": "^(?:none|[a-z]{2}(?:-[A-Z]{2})?)$"
+      "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
     },
     "languageEntry": {
       "type": "object",
@@ -85,7 +89,8 @@
           "additionalProperties": false,
           "required": [
             "providerId",
-            "variant"
+            "variant",
+            "commit"
           ],
           "properties": {
             "providerId": {
@@ -95,6 +100,9 @@
             },
             "variant": {
               "$ref": "#/$defs/languageId"
+            },
+            "commit": {
+              "$ref": "#/$defs/commitSha"
             }
           }
         }

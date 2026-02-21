@@ -1,9 +1,9 @@
 const { test, expect } = require("./fixtures");
 
 const gotoOptions = { waitUntil: "commit" };
-const DAILY_WORD_CODE = "fotnd"; // JACKS
-const DAILY_LANG = "none";
-const WRONG_GUESSES = ["PLANT", "MERRY", "VIVID", "QUEUE", "BLOOM", "TRUCK"];
+const DAILY_WORD_CODE = "yfrqp"; // CRANE
+const DAILY_LANG = "en";
+const WRONG_GUESSES = ["SLATE", "CRATE", "STONE", "TRAIL", "ABATE", "ADORE"];
 const RUN_TOKEN =
   Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 6).toUpperCase() || "RUNNER";
 
@@ -86,7 +86,7 @@ async function selectProfile(page, name) {
 }
 
 async function solveInOne(page) {
-  await page.keyboard.type("JACKS");
+  await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(
     page.locator(
@@ -104,7 +104,7 @@ async function solveInTwo(page) {
       "#board .row:nth-child(1) .tile.absent, #board .row:nth-child(1) .tile.present, #board .row:nth-child(1) .tile.correct"
     )
   ).toHaveCount(5);
-  await page.keyboard.type("JACKS");
+  await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(
     page.locator(

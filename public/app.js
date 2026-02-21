@@ -1008,7 +1008,7 @@ async function loadMeta() {
     minGuesses = data.minGuesses || minGuesses;
     maxGuessesAllowed = data.maxGuesses || maxGuessesAllowed;
     defaultGuesses = data.defaultGuesses || defaultGuesses;
-    defaultLang = data.defaultLang || defaultLang;
+    defaultLang = canonicalizeLanguageId(data.defaultLang || defaultLang) || defaultLang;
     perfLogging = Boolean(data.perfLogging);
 
     lengthInput.min = String(minLen);
@@ -1022,7 +1022,7 @@ async function loadMeta() {
     data.languages.forEach((lang) => {
       const option = document.createElement("option");
       option.value = lang.id;
-      option.textContent = lang.label + (lang.id !== "none" ? "" : "");
+      option.textContent = lang.label;
       langSelect.appendChild(option);
       languageMinLengths[lang.id] = lang.minLength || minLen;
     });
@@ -1030,10 +1030,10 @@ async function loadMeta() {
     if (!langSelect.value) {
       langSelect.value = languageMinLengths[defaultLang]
         ? defaultLang
-        : data.languages[0]?.id || "none";
+        : data.languages[0]?.id || "en";
     }
     updateLanguageConstraints(langSelect.value);
-    randomBtn.disabled = langSelect.value === "none";
+    randomBtn.disabled = false;
 
     guessInput.min = String(minGuesses);
     guessInput.max = String(maxGuessesAllowed);
@@ -1076,10 +1076,6 @@ async function generateLinkFromWord(word, lang, guessesCount) {
 
 async function handleRandom() {
   const lang = langSelect.value;
-  if (lang === "none") {
-    setCreateStatus("Random word requires a dictionary language.");
-    return;
-  }
 
   const length = Number(lengthInput.value);
   const minLength = getMinLengthForLang(lang);
@@ -1108,6 +1104,20 @@ async function handleRandom() {
 
 function sanitizeInputWord(value) {
   return value.toUpperCase().replace(/[^A-Z]/g, "");
+}
+
+function canonicalizeLanguageId(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const match = /^([a-zA-Z]{2})(?:-([a-zA-Z]{2}))?$/.exec(value);
+  if (!match) {
+    return value;
+  }
+  const language = match[1].toLowerCase();
+  if (!match[2]) {
+    return language;
+  }
+  return `${language}-${match[2].toUpperCase()}`;
 }
 
 function getMinLengthForLang(lang) {
@@ -1340,7 +1350,7 @@ guessInput.addEventListener("change", () => {
 });
 
 langSelect.addEventListener("change", () => {
-  randomBtn.disabled = langSelect.value === "none";
+  randomBtn.disabled = false;
   updateLanguageConstraints(langSelect.value);
 });
 
@@ -1393,7 +1403,7 @@ async function init() {
   if (codeParam) {
     const trimmedCode = String(codeParam).trim();
     const resolvedLang = langParam
-      ? String(langParam).trim().toLowerCase()
+      ? canonicalizeLanguageId(langParam)
       : defaultLang;
     const isDailyFromLink = dailyParam === "1";
     const resolvedDailyDate = isDailyFromLink
