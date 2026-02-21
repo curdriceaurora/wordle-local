@@ -121,6 +121,51 @@ After provider fetch artifacts are verified, Hunspell expansion produces determi
 - `counts` (`rawEntries`, `expandedForms`, `filteredOut`)
 - `generatedAt` (copied from `source-manifest.json.retrievedAt` to keep reruns reproducible for identical source inputs)
 
+## Guess + Answer Pool Policy Artifacts (Issue #22)
+After Hunspell expansion, policy generation derives gameplay pools under:
+- `data/providers/<variant>/<commit>/guess-pool.txt`
+- `data/providers/<variant>/<commit>/answer-pool.txt`
+- `data/providers/<variant>/<commit>/pool-policy.json`
+
+Policy behavior for MVP:
+- Guess pool policy: `expanded-forms` (all normalized expanded forms from `expanded-forms.txt`).
+- Answer pool policy: `base-plus-irregular`.
+  - Base words come from `.dic` stems (token before `/`), constrained to `A-Z` and `3-12` length.
+  - Irregular words are opt-in from `irregular-answer-allowlist.txt` (same variant/commit folder) and only accepted if present in guess pool.
+
+Why this split exists:
+- Guesses should be forgiving (accept valid inflections).
+- Answers should stay simpler for daily play while still allowing explicitly-curated irregular forms.
+
+`pool-policy.json` contract:
+- `schemaVersion`
+- `variant`
+- `commit`
+- `policyVersion`
+- `guessPoolPolicy` (`expanded-forms`)
+- `answerPoolPolicy` (`base-plus-irregular`)
+- `sourceManifestPath`
+- `expandedFormsPath`
+- `irregularAllowlistPath`
+- `counts`:
+  - `rawBaseEntries`
+  - `baseWords`
+  - `baseWordsFilteredOut`
+  - `baseMissingFromGuessPool`
+  - `irregularAllowlisted`
+  - `irregularAllowlistFilteredOut`
+  - `irregularAccepted`
+  - `irregularMissingFromGuessPool`
+  - `expandedForms`
+  - `expandedFormsFilteredOut`
+  - `answerPool`
+- `generatedAt`
+
+Gotchas:
+1. Plurals/past tense/gerunds from Hunspell stay valid guesses but do not become answers unless explicitly allowlisted.
+2. Allowlist entries that are not in guess pool are ignored and counted in metadata for auditability.
+3. If base+irregular selection yields an empty answer pool, generation fails closed.
+
 ## Related Issues
 - Epic: `#17`
 - Next dependent stories: `#19`, `#21`, `#22`, `#23`, `#24`, `#26`
