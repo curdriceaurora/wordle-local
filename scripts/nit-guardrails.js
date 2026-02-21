@@ -19,18 +19,30 @@ function parseQuotedValues(source) {
 }
 
 function checkProviderVariantAllowlist(errors) {
-  const source = readFile("lib/provider-hunspell.js");
-  const setMatch = source.match(/SUPPORTED_VARIANTS\s*=\s*new Set\(\[(?<items>[\s\S]*?)\]\);/);
-  if (!setMatch || !setMatch.groups || !setMatch.groups.items) {
-    errors.push("lib/provider-hunspell.js must define SUPPORTED_VARIANTS as an explicit Set.");
+  const sharedSource = readFile("lib/provider-artifact-shared.js");
+  const arrayMatch = sharedSource.match(
+    /SUPPORTED_VARIANT_IDS\s*=\s*Object\.freeze\(\[(?<items>[\s\S]*?)\]\);/
+  );
+  if (!arrayMatch || !arrayMatch.groups || !arrayMatch.groups.items) {
+    errors.push("lib/provider-artifact-shared.js must define SUPPORTED_VARIANT_IDS as an explicit array.");
     return;
   }
-  const values = parseQuotedValues(setMatch.groups.items);
+  const values = parseQuotedValues(arrayMatch.groups.items);
   const expected = ["en-GB", "en-US", "en-CA", "en-AU", "en-ZA"];
   if (values.length !== expected.length || values.some((value, idx) => value !== expected[idx])) {
     errors.push(
-      `SUPPORTED_VARIANTS must match ${expected.join(", ")} exactly (current: ${values.join(", ")}).`
+      `SUPPORTED_VARIANT_IDS must match ${expected.join(", ")} exactly (current: ${values.join(", ")}).`
     );
+  }
+
+  const hunspellSource = readFile("lib/provider-hunspell.js");
+  if (!hunspellSource.includes("new Set(SUPPORTED_VARIANT_IDS)")) {
+    errors.push("lib/provider-hunspell.js must derive SUPPORTED_VARIANTS from shared SUPPORTED_VARIANT_IDS.");
+  }
+
+  const poolSource = readFile("lib/provider-pool-policy.js");
+  if (!poolSource.includes("new Set(SUPPORTED_VARIANT_IDS)")) {
+    errors.push("lib/provider-pool-policy.js must derive SUPPORTED_VARIANTS from shared SUPPORTED_VARIANT_IDS.");
   }
 }
 
