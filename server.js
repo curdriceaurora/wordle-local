@@ -7,6 +7,7 @@ const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
+const { requireAdmin } = require("./lib/admin-auth");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -201,11 +202,6 @@ function ensureWordData() {
   wordDataCache = fallback;
   console.warn("Daily word data was invalid and has been reset.");
   return fallback;
-}
-
-function isAuthorized(req) {
-  if (!ADMIN_KEY) return !REQUIRE_ADMIN_KEY;
-  return req.headers["x-admin-key"] === ADMIN_KEY;
 }
 
 function normalizeLang(raw) {
@@ -928,6 +924,11 @@ app.use(
 );
 app.use(compression());
 app.use(express.json());
+const requireAdminAccess = requireAdmin({
+  adminKey: ADMIN_KEY,
+  requireAdminKey: REQUIRE_ADMIN_KEY
+});
+app.use("/api/admin", requireAdminAccess);
 const STATIC_MAX_AGE = NODE_ENV === "production" ? 60 * 60 * 1000 : 0;
 app.use(
   express.static(PUBLIC_PATH, {
@@ -1120,10 +1121,6 @@ app.get("/api/stats/profile/:id", async (req, res) => {
 });
 
 app.patch("/api/admin/stats/profile/:id", async (req, res) => {
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "Admin key required." });
-  }
-
   const profileId = String(req.params.id || "").trim();
   if (!profileId) {
     return res.status(400).json({ error: "Profile ID is required." });
@@ -1161,6 +1158,12 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
   } catch (err) {
     return statsServiceError(res, err);
   }
+});
+
+app.get("/api/admin/providers", (req, res) => {
+  res.status(501).json({
+    error: "Provider admin endpoints are not implemented yet."
+  });
 });
 
 app.post("/api/encode", (req, res) => {
@@ -1297,18 +1300,11 @@ app.post("/api/guess", (req, res) => {
   });
 });
 
-app.get("/api/word", (req, res) => {
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "Admin key required." });
-  }
+app.get("/api/word", requireAdminAccess, (req, res) => {
   res.json(wordDataCache || buildDefaultWordData());
 });
 
-app.post("/api/word", async (req, res) => {
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "Admin key required." });
-  }
-
+app.post("/api/word", requireAdminAccess, async (req, res) => {
   const word = normalizeWord(req.body.word);
   const date = req.body.date ? String(req.body.date) : null;
   const lang = resolveLang(req.body.lang);
