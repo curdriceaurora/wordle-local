@@ -109,6 +109,22 @@ function run() {
       "lib/provider-pool-policy.js must reuse resolveWithinRoot for allowlist path boundary checks."
     );
   }
+  if (!providerPoolPolicy.includes("resolveWithinSharedRoot")) {
+    errors.push("lib/provider-pool-policy.js must use shared provider artifact boundary helpers.");
+  }
+
+  const providerAnswerFilter = readFile("lib/provider-answer-filter.js");
+  if (!providerAnswerFilter.includes("resolveWithinSharedRoot")) {
+    errors.push("lib/provider-answer-filter.js must use shared provider artifact boundary helpers.");
+  }
+  if (!providerAnswerFilter.includes("writeSharedFileAtomic")) {
+    errors.push("lib/provider-answer-filter.js must use shared atomic write helpers.");
+  }
+  if (providerAnswerFilter.includes("path.resolve(providerRoot, relativePath)")) {
+    errors.push(
+      "lib/provider-answer-filter.js must avoid manual providerRoot path resolution for list files."
+    );
+  }
 
   checkLanguageSchemaDictionaryCoupling(errors);
 

@@ -166,6 +166,50 @@ Gotchas:
 2. Allowlist entries that are not in guess pool are ignored and counted in metadata for auditability.
 3. If base+irregular selection yields an empty answer pool, generation fails closed.
 
+## Family-Safe Activation Filter (Issue #23)
+After policy generation, answer activation applies family-safety filtering under:
+- `data/providers/<variant>/<commit>/answer-pool-active.txt`
+- `data/providers/<variant>/<commit>/answer-filter.json`
+
+Filtering modes:
+- `denylist-only` (default): remove words listed in `family-denylist.txt`.
+- `allowlist-required` (optional strict mode): after denylist filtering, keep only words explicitly listed in `family-allowlist.txt`.
+
+Why this stage is separate:
+- It keeps lexical policy (`#22`) independent from family moderation policy.
+- Families can tune safety controls without rebuilding the earlier import/expansion stages.
+- Metadata provides explainability for why answer counts changed.
+
+Input files:
+- source answers: `answer-pool.txt` (from `#22`)
+- denylist: `family-denylist.txt` (optional, variant+commit scoped)
+- allowlist: `family-allowlist.txt` (required only when `allowlist-required` mode is selected)
+
+`answer-filter.json` contract:
+- `schemaVersion`
+- `variant`
+- `commit`
+- `filterMode`
+- `sourceAnswerPoolPath`
+- `denylistPath`
+- `allowlistPath`
+- `counts`:
+  - `inputAnswers`
+  - `inputFilteredOut`
+  - `denylistEntries`
+  - `denylistFilteredOut`
+  - `denylistMatched`
+  - `allowlistEntries`
+  - `allowlistFilteredOut`
+  - `allowlistExcluded`
+  - `activatedAnswers`
+- `generatedAt`
+
+Gotchas:
+1. `allowlist-required` fails closed if the allowlist file is missing.
+2. Invalid/non-`A-Z` list entries are ignored and counted in `*FilteredOut` metrics.
+3. If filtering removes all candidate answers, activation fails closed to avoid silent unsafe defaults.
+
 ## Related Issues
 - Epic: `#17`
 - Next dependent stories: `#19`, `#21`, `#22`, `#23`, `#24`, `#26`
