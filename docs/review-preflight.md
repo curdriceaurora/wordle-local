@@ -58,7 +58,7 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 8. Merge target is `0` unresolved actionable nits.
 
 ## Local Gate Requirement
-Run `npm run check` before requesting review. ESLint + Ajv schema checks are required and must pass locally.
+Run `npm run check` before requesting review. ESLint + Ajv schema checks + `guardrails:nits` are required and must pass locally.
 
 ## Merged PR Learnings Log
 Update this table after every successful PR merge.
