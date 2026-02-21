@@ -178,6 +178,39 @@ describe("language-registry", () => {
     expect(normalized).toBeNull();
   });
 
+  test("normalizeRegistryPayload rejects non-boolean enabled and hasDictionary values", () => {
+    const payload = {
+      version: REGISTRY_SCHEMA_VERSION,
+      updatedAt: "2026-02-20T00:00:00.000Z",
+      languages: [
+        {
+          id: "en",
+          label: "English",
+          enabled: "true",
+          source: "baked",
+          minLength: 3,
+          hasDictionary: 1,
+          dictionaryFile: "en.txt"
+        },
+        {
+          id: "none",
+          label: "No dictionary",
+          enabled: true,
+          source: "baked",
+          minLength: 3,
+          hasDictionary: false,
+          dictionaryFile: null
+        }
+      ]
+    };
+
+    const normalized = normalizeRegistryPayload(payload, {
+      bakedLanguages: BAKED_LANGUAGES,
+      getMinLengthForLang: () => 3
+    });
+    expect(normalized).toBeNull();
+  });
+
   test("loadSync recovers missing registry file with baked defaults", () => {
     const dir = createTempDir();
     const filePath = path.join(dir, "languages.json");
