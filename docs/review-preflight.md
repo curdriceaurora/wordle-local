@@ -30,9 +30,16 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 24. Atomic write resilience: JSON persistence must use unique temp paths, cleanup-on-failure, and cross-platform replace semantics when destination files already exist (including Windows rename behavior).
 25. Manifest intent clarity: stage-specific manifests must avoid near-duplicate contract shapes unless fully aligned; include explicit type and unambiguous source-vs-local path fields.
 26. Error-branch test parity: every new runtime error code/path added in a PR must have direct test coverage.
+27. Secret comparison hardening: security-sensitive token/key checks use constant-time comparison (`timingSafeEqual`) after explicit length checks.
+28. Path-boundary hardening: any user/config/provider path segment used in `path.join` is allowlisted and traversal-safe before filesystem access.
+29. Locale-independent determinism: deterministic artifact outputs use code-point ordering, not locale-dependent comparators.
+30. BCP47 canonicalization: language IDs preserve canonical region casing (for example `en-US`) during normalization and lookup.
+31. Registry fail-closed rules: partial-invalid persisted registry entries invalidate the snapshot (no best-effort drop-and-continue).
+32. Baked baseline invariants: persisted language registry must retain required baked IDs until the migration issue explicitly removes them.
+33. Coupled field invariants: when one field implies another (for example, `hasDictionary` ↔ `dictionaryFile`), enforce the pair consistently in both schema and runtime normalization.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

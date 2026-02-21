@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/languages.schema.json",
+  "title": "Language Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "updatedAt",
+    "languages"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/languageEntry"
+      }
+    }
+  },
+  "$defs": {
+    "languageId": {
+      "type": "string",
+      "pattern": "^(?:none|[a-z]{2}(?:-[A-Z]{2})?)$"
+    },
+    "languageEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "enabled",
+        "source",
+        "minLength",
+        "hasDictionary",
+        "dictionaryFile"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/languageId"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "baked",
+            "provider"
+          ]
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "hasDictionary": {
+          "type": "boolean"
+        },
+        "dictionaryFile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+        },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "providerId",
+            "variant"
+          ],
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "variant": {
+              "$ref": "#/$defs/languageId"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "hasDictionary": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dictionaryFile": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hasDictionary": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "dictionaryFile": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

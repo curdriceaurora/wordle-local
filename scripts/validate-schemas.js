@@ -21,6 +21,8 @@ const providerManifestExamplePath = path.join(
   "providers",
   "provider-import-manifest.example.json"
 );
+const languageRegistrySchemaPath = path.join(projectRoot, "data", "languages.schema.json");
+const languageRegistryDataPath = path.join(projectRoot, "data", "languages.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -68,6 +70,11 @@ function runSchemaChecks() {
       schemaPath: providerManifestSchemaPath,
       dataPath: providerManifestExamplePath,
       schemaLabel: "provider import manifest schema"
+    },
+    {
+      schemaPath: languageRegistrySchemaPath,
+      dataPath: languageRegistryDataPath,
+      schemaLabel: "language registry schema"
     }
   ];
 

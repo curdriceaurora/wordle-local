@@ -53,6 +53,7 @@ There is no admin UI. Use the API endpoints below.
 ## Languages & Dictionaries
 - English dictionary is baked in (`en`).
 - English meanings are baked in locally (`data/dictionaries/en-definitions.json`).
+- Language registry state is persisted in `data/languages.json`; missing/invalid registry data auto-recovers to baked defaults.
 - `none` disables dictionary checks for fully custom words and guesses (A–Z only, length rules still apply).
 - Minimum word length is 3.
 - Dictionaries accept A–Z only (no accents).
