@@ -133,6 +133,17 @@ describe("provider-hunspell", () => {
       ).rejects.toMatchObject({
         code: "INVALID_VARIANT"
       });
+
+      await expect(
+        buildExpandedFormsArtifacts({
+          variant: "fr-FR",
+          commit: setup.commit,
+          providerRoot: setup.providerRoot,
+          policyVersion: "v1"
+        })
+      ).rejects.toMatchObject({
+        code: "INVALID_VARIANT"
+      });
     } finally {
       fs.rmSync(setup.providerRoot, { recursive: true, force: true });
     }
@@ -214,6 +225,67 @@ describe("provider-hunspell", () => {
       });
     } finally {
       fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("fails when source file manifest path contains traversal segment", async () => {
+    const setup = writeProviderSourceBundle({ variant: "en-US" });
+    const manifestPath = path.join(setup.providerRoot, setup.variant, setup.commit, "source-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.sourceFiles.dic.localPath = `${setup.variant}/${setup.commit}/foo/../en_US.dic`;
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    try {
+      await expect(
+        buildExpandedFormsArtifacts({
+          variant: "en-US",
+          commit: setup.commit,
+          providerRoot: setup.providerRoot,
+          policyVersion: "v1"
+        })
+      ).rejects.toMatchObject({
+        code: "INVALID_MANIFEST"
+      });
+    } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects overriding fixed gameplay length policy", async () => {
+    const setup = writeProviderSourceBundle({ variant: "en-US" });
+    try {
+      await expect(
+        buildExpandedFormsArtifacts({
+          variant: "en-US",
+          commit: setup.commit,
+          providerRoot: setup.providerRoot,
+          policyVersion: "v1",
+          minLength: 2
+        })
+      ).rejects.toMatchObject({
+        code: "INVALID_POLICY_BOUNDS"
+      });
+    } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps source manifest path stable when outputRoot differs", async () => {
+    const setup = writeProviderSourceBundle({ variant: "en-US" });
+    const outputRoot = createTempDir();
+    try {
+      const result = await buildExpandedFormsArtifacts({
+        variant: "en-US",
+        commit: setup.commit,
+        providerRoot: setup.providerRoot,
+        outputRoot,
+        policyVersion: "v1"
+      });
+      const processed = JSON.parse(fs.readFileSync(result.processedPath, "utf8"));
+      expect(processed.sourceManifestPath).toBe(`${setup.variant}/${setup.commit}/source-manifest.json`);
+      expect(processed.sourceManifestPath.includes("..")).toBe(false);
+    } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+      fs.rmSync(outputRoot, { recursive: true, force: true });
     }
   });
 
