@@ -103,6 +103,13 @@ function run() {
     errors.push("lib/language-registry.js must reject hasDictionary=false with non-null dictionaryFile.");
   }
 
+  const providerPoolPolicy = readFile("lib/provider-pool-policy.js");
+  if (providerPoolPolicy.includes("path.resolve(providerRoot, relativePath)")) {
+    errors.push(
+      "lib/provider-pool-policy.js must reuse resolveWithinRoot for allowlist path boundary checks."
+    );
+  }
+
   checkLanguageSchemaDictionaryCoupling(errors);
 
   if (errors.length > 0) {
