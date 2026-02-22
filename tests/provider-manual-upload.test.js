@@ -213,4 +213,107 @@ describe("provider-manual-upload", () => {
       code: "INVALID_UPLOAD_FILENAME"
     });
   });
+
+  test("rejects additional unsafe upload file name edge cases", async () => {
+    const dicText = "1\nDOG\n";
+    const affText = "SET UTF-8\n";
+    const dicChecksum = computeSha256(Buffer.from(dicText, "utf8"));
+    const affChecksum = computeSha256(Buffer.from(affText, "utf8"));
+
+    const baseOptions = {
+      variant: "en-US",
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      expectedChecksums: { dic: dicChecksum, aff: affChecksum }
+    };
+
+    // Path traversal attempts
+    for (const traversal of ["../en_US.dic", "..\\en_US.dic"]) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        persistManualProviderSource({
+          ...baseOptions,
+          manualFiles: {
+            dicBase64: toBase64(dicText),
+            affBase64: toBase64(affText),
+            dicFileName: traversal
+          }
+        })
+      ).rejects.toMatchObject({ code: "INVALID_UPLOAD_FILENAME" });
+    }
+
+    // Special dot-only directory names
+    for (const specialName of [".", "..", "..."]) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        persistManualProviderSource({
+          ...baseOptions,
+          manualFiles: {
+            dicBase64: toBase64(dicText),
+            affBase64: toBase64(affText),
+            dicFileName: specialName
+          }
+        })
+      ).rejects.toMatchObject({ code: "INVALID_UPLOAD_FILENAME" });
+    }
+
+    // Filenames starting with a dot
+    await expect(
+      persistManualProviderSource({
+        ...baseOptions,
+        manualFiles: {
+          dicBase64: toBase64(dicText),
+          affBase64: toBase64(affText),
+          dicFileName: ".hidden.dic"
+        }
+      })
+    ).rejects.toMatchObject({ code: "INVALID_UPLOAD_FILENAME" });
+
+    // Empty basename (e.g., "/" or "\\")
+    for (const badName of ["/", "\\"]) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        persistManualProviderSource({
+          ...baseOptions,
+          manualFiles: {
+            dicBase64: toBase64(dicText),
+            affBase64: toBase64(affText),
+            dicFileName: badName
+          }
+        })
+      ).rejects.toMatchObject({ code: "INVALID_UPLOAD_FILENAME" });
+    }
+
+    // Maximum length boundary: 128 characters allowed, 129 rejected
+    // (limit defined by SAFE_UPLOAD_FILE_NAME_PATTERN in lib/provider-manual-upload.js)
+    const maxSafeDicName = "a".repeat(124) + ".dic"; // total length 128
+    const tooLongDicName = "a".repeat(125) + ".dic"; // total length 129
+
+    const outputRoot = createTempDir();
+    try {
+      await expect(
+        persistManualProviderSource({
+          ...baseOptions,
+          outputRoot,
+          manualFiles: {
+            dicBase64: toBase64(dicText),
+            affBase64: toBase64(affText),
+            dicFileName: maxSafeDicName
+          }
+        })
+      ).resolves.toBeDefined();
+    } finally {
+      fs.rmSync(outputRoot, { recursive: true, force: true });
+    }
+
+    await expect(
+      persistManualProviderSource({
+        ...baseOptions,
+        manualFiles: {
+          dicBase64: toBase64(dicText),
+          affBase64: toBase64(affText),
+          dicFileName: tooLongDicName
+        }
+      })
+    ).rejects.toMatchObject({ code: "INVALID_UPLOAD_FILENAME" });
+  });
 });

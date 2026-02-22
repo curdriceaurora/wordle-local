@@ -1384,7 +1384,7 @@ const adminWriteRateLimiter = rateLimit({
   message: { error: "Too many admin write requests. Try again later." }
 });
 function limitAdminWrites(req, res, next) {
-  if (req.method === "GET") {
+  if (req.method === "GET" || req.method === "HEAD") {
     next();
     return;
   }
