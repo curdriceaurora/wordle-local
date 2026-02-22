@@ -39,6 +39,8 @@ test("random word generates link", async ({ page }) => {
 test("play puzzle from encoded link", async ({ page }) => {
   await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#board");
+  // Firefox can leave focus on non-game chrome after initial navigation; click board to bind keystrokes.
+  await page.click("#board");
   await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6");

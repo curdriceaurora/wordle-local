@@ -18,7 +18,7 @@ This contract covers MVP variants only:
 
 MVP assumptions locked here:
 - Source repository is pinned to `https://github.com/LibreOffice/dictionaries`.
-- Import mode is remote fetch only.
+- Import mode supports both remote fetch and manual `.dic + .aff` upload fallback.
 - Allowed output character set is strict `A-Z`.
 
 ## Files
@@ -60,11 +60,16 @@ Top-level required fields:
 - `artifacts`
 - `stats`
 
+`manifestType` values:
+- `provider-source-fetch` for remote fetch imports
+- `provider-source-manual-upload` for manual file uploads
+
 ### `sourceFiles`
 Contains both source files and their integrity metadata:
 - `path` (relative path)
 - `sha256` (64 lowercase hex chars)
 - `byteSize` (positive integer)
+- `uploadFileName` (manual-upload manifests only)
 
 ### `processing`
 Tracks policy identity used to generate runtime pools:

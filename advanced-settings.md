@@ -18,7 +18,9 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - `POST /api/admin/providers/:variant/enable`
   - `POST /api/admin/providers/:variant/disable`
 - Import request body example:
-  - `{"variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
+  - Remote fetch: `{"sourceType":"remote-fetch","variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
+  - Manual upload fallback: `{"sourceType":"manual-upload","variant":"en-US","commit":"<optional-40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"},"manualFiles":{"dicBase64":"<base64>","affBase64":"<base64>","dicFileName":"en_US.dic","affFileName":"en_US.aff"}}`
+    - If `commit` is omitted for manual uploads, the server derives a deterministic synthetic commit from file checksums.
 - Manual update-check outcomes:
   - `up-to-date` (installed commit matches latest upstream)
   - `update-available` (newer upstream commit found)
@@ -48,4 +50,6 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 - `PORT` — default 3000.
 - `HOST` — default 0.0.0.0.
 - `NODE_ENV` — `development` or `production`.
+- `JSON_BODY_LIMIT` — max JSON payload size for API requests (default `12mb`).
+- `PROVIDER_MANUAL_MAX_FILE_BYTES` — max bytes per manual upload file (default `8388608` / 8 MiB).
 - Language registry file: `data/languages.json` (auto-recovers to baked defaults if missing/invalid).

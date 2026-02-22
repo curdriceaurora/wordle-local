@@ -137,6 +137,33 @@ function checkProviderUpdateCheckSemantics(errors) {
   }
 }
 
+function checkManualUploadGuardrails(errors) {
+  const serverSource = readFile("server.js");
+  if (!serverSource.includes("parseProviderImportSource(")) {
+    errors.push("server.js must validate provider import sourceType explicitly.");
+  }
+  if (!serverSource.includes("persistManualProviderSource(")) {
+    errors.push("server.js must route manual upload imports through persistManualProviderSource.");
+  }
+  if (!serverSource.includes("PROVIDER_MANUAL_MAX_FILE_BYTES")) {
+    errors.push("server.js must enforce a provider manual upload max file size guardrail.");
+  }
+  if (!serverSource.includes("express.json({ limit: JSON_BODY_LIMIT })")) {
+    errors.push("server.js must set an explicit JSON body limit for admin upload payloads.");
+  }
+
+  const adminAppSource = readFile("public/admin/app.js");
+  if (!adminAppSource.includes("sourceType")) {
+    errors.push("public/admin/app.js must include sourceType in provider import payloads.");
+  }
+  if (!adminAppSource.includes("manualFiles")) {
+    errors.push("public/admin/app.js must send manualFiles payload for manual imports.");
+  }
+  if (!adminAppSource.includes("sha256Hex(")) {
+    errors.push("public/admin/app.js manual import path must compute and send SHA-256 checksums.");
+  }
+}
+
 function run() {
   const errors = [];
 
@@ -198,6 +225,7 @@ function run() {
   checkProviderDiagnosticsContract(errors);
   checkProviderWorkflowCiGate(errors);
   checkProviderUpdateCheckSemantics(errors);
+  checkManualUploadGuardrails(errors);
 
   if (errors.length > 0) {
     console.error("[nit:guardrails] Failed:");

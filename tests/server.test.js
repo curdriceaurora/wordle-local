@@ -1245,6 +1245,60 @@ describe("Admin auth", () => {
     }
   });
 
+  test("imports provider artifacts through manual upload fallback", async () => {
+    const dicText = "2\nDOG/S\nCAT\n";
+    const affText = "SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n";
+
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      await withIsolatedProviderVariant("en-US", async () => {
+        const app = loadApp({ adminKey: "secret" });
+        const importResponse = await request(app)
+          .post("/api/admin/providers/import")
+          .set("x-admin-key", "secret")
+          .send({
+            sourceType: "manual-upload",
+            variant: "en-US",
+            filterMode: "denylist-only",
+            expectedChecksums: {
+              dic: sha256Text(dicText),
+              aff: sha256Text(affText)
+            },
+            manualFiles: {
+              dicBase64: Buffer.from(dicText, "utf8").toString("base64"),
+              affBase64: Buffer.from(affText, "utf8").toString("base64"),
+              dicFileName: "offline-en_US.dic",
+              affFileName: "offline-en_US.aff"
+            }
+          });
+
+        expect(importResponse.status).toBe(200);
+        expect(importResponse.body.ok).toBe(true);
+        expect(importResponse.body.action).toBe("imported");
+        expect(importResponse.body.sourceType).toBe("manual-upload");
+        expect(importResponse.body.variant).toBe("en-US");
+        expect(importResponse.body.commit).toMatch(/^[a-f0-9]{40}$/);
+        expect(importResponse.body.counts.filteredAnswers).toBeGreaterThan(0);
+
+        const commitRoot = path.join(PROVIDERS_PATH, "en-US", importResponse.body.commit);
+        const sourceManifestPath = path.join(commitRoot, "source-manifest.json");
+        expect(fs.existsSync(sourceManifestPath)).toBe(true);
+        const sourceManifest = JSON.parse(fs.readFileSync(sourceManifestPath, "utf8"));
+        expect(sourceManifest.manifestType).toBe("provider-source-manual-upload");
+        expect(sourceManifest.manualUpload.sourceType).toBe("manual-upload");
+        expect(sourceManifest.sourceFiles.dic.uploadFileName).toBe("offline-en_US.dic");
+        expect(sourceManifest.sourceFiles.aff.uploadFileName).toBe("offline-en_US.aff");
+
+        const enableResponse = await request(app)
+          .post("/api/admin/providers/en-US/enable")
+          .set("x-admin-key", "secret")
+          .send({ commit: importResponse.body.commit });
+        expect(enableResponse.status).toBe(200);
+        expect(enableResponse.body.action).toBe("enabled");
+        expect(enableResponse.body.language.enabled).toBe(true);
+      });
+    });
+  });
+
   test("rejects provider import when required checksums are missing", async () => {
     await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
       const app = loadApp({ adminKey: "secret" });
@@ -1261,6 +1315,27 @@ describe("Admin auth", () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/expectedChecksums\.aff/i);
+    });
+  });
+
+  test("rejects manual upload import when required file payload is missing", async () => {
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/import")
+        .set("x-admin-key", "secret")
+        .send({
+          sourceType: "manual-upload",
+          variant: "en-US",
+          expectedChecksums: {
+            dic: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            aff: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          filterMode: "denylist-only"
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/manualFiles/i);
     });
   });
 

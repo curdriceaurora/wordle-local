@@ -9,16 +9,28 @@ const refreshProvidersBtnEl = document.getElementById("refreshProvidersBtn");
 const lockSessionBtnEl = document.getElementById("lockSessionBtn");
 const updatedEl = document.getElementById("adminUpdated");
 const importFormEl = document.getElementById("importForm");
+const importSourceTypeEl = document.getElementById("importSourceType");
 const importVariantEl = document.getElementById("importVariant");
 const importCommitEl = document.getElementById("importCommit");
+const importRemoteFieldsEl = document.getElementById("importRemoteFields");
+const importManualFieldsEl = document.getElementById("importManualFields");
 const importChecksumDicEl = document.getElementById("importChecksumDic");
 const importChecksumAffEl = document.getElementById("importChecksumAff");
+const importDicFileEl = document.getElementById("importDicFile");
+const importAffFileEl = document.getElementById("importAffFile");
 const importFilterModeEl = document.getElementById("importFilterMode");
 const importSubmitBtnEl = document.getElementById("importSubmitBtn");
 const importStatusEl = document.getElementById("importStatus");
 
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
+const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
+  REMOTE_FETCH: "remote-fetch",
+  MANUAL_UPLOAD: "manual-upload"
+});
+const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_MANUAL_FILE_BYTES = 8 * 1024 * 1024;
 
 const state = {
   adminKey: "",
@@ -89,6 +101,48 @@ function toProviderUpdateInfo(payload) {
     message: String(payload?.message || "").trim(),
     checkedAt: payload?.checkedAt || null
   };
+}
+
+function readFileAsArrayBuffer(file) {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    throw new Error("Selected file is not readable.");
+  }
+  return file.arrayBuffer();
+}
+
+function bytesToHex(buffer) {
+  const bytes = new Uint8Array(buffer);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(buffer) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Browser does not support SHA-256 hashing for manual uploads.");
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
+  return bytesToHex(digest);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const slice = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
+}
+
+function getImportSourceType() {
+  return String(importSourceTypeEl?.value || PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH).trim();
+}
+
+function updateImportModeUi() {
+  const sourceType = getImportSourceType();
+  const isManual = sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD;
+  setHidden(importRemoteFieldsEl, isManual);
+  setHidden(importManualFieldsEl, !isManual);
 }
 
 function renderTabs() {
@@ -237,6 +291,30 @@ function renderWorkspace() {
   setHidden(shellPanelEl, !state.unlocked);
   refreshProvidersBtnEl.disabled = !state.unlocked || state.loading || state.importing;
   lockSessionBtnEl.disabled = state.loading || state.importing;
+  if (importSourceTypeEl) {
+    importSourceTypeEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importVariantEl) {
+    importVariantEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importCommitEl) {
+    importCommitEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importChecksumDicEl) {
+    importChecksumDicEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importChecksumAffEl) {
+    importChecksumAffEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importDicFileEl) {
+    importDicFileEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importAffFileEl) {
+    importAffFileEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
+  if (importFilterModeEl) {
+    importFilterModeEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
   if (importSubmitBtnEl) {
     importSubmitBtnEl.disabled = !state.unlocked || state.loading || state.importing;
   }
@@ -335,29 +413,70 @@ async function checkProviderUpdateStatus(variant) {
   }
 }
 
-function parseImportPayloadFromForm() {
+async function parseImportPayloadFromForm() {
+  const sourceType = getImportSourceType();
   const variant = String(importVariantEl?.value || "").trim();
   const commit = String(importCommitEl?.value || "").trim();
-  const checksumDic = String(importChecksumDicEl?.value || "").trim().toLowerCase();
-  const checksumAff = String(importChecksumAffEl?.value || "").trim().toLowerCase();
   const filterMode = String(importFilterModeEl?.value || "denylist-only").trim();
 
-  const commitPattern = /^[a-f0-9]{40}$/;
-  const checksumPattern = /^[a-f0-9]{64}$/;
   if (!variant) {
     throw new Error("Select a variant before importing.");
-  }
-  if (!commitPattern.test(commit)) {
-    throw new Error("Commit must be a 40-character lowercase hexadecimal SHA.");
-  }
-  if (!checksumPattern.test(checksumDic) || !checksumPattern.test(checksumAff)) {
-    throw new Error("Checksums must be 64-character lowercase SHA-256 values.");
   }
   if (filterMode !== "denylist-only" && filterMode !== "allowlist-required") {
     throw new Error("Filter mode must be denylist-only or allowlist-required.");
   }
 
+  if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD) {
+    const dicFile = importDicFileEl?.files?.[0];
+    const affFile = importAffFileEl?.files?.[0];
+    if (!dicFile || !affFile) {
+      throw new Error("Select both .dic and .aff files for manual upload.");
+    }
+    if (dicFile.size > MAX_MANUAL_FILE_BYTES || affFile.size > MAX_MANUAL_FILE_BYTES) {
+      throw new Error(`Manual upload files must each be <= ${MAX_MANUAL_FILE_BYTES} bytes.`);
+    }
+    if (commit && !COMMIT_PATTERN.test(commit)) {
+      throw new Error("Commit must be a 40-character lowercase hexadecimal SHA when provided.");
+    }
+
+    const [dicBuffer, affBuffer] = await Promise.all([
+      readFileAsArrayBuffer(dicFile),
+      readFileAsArrayBuffer(affFile)
+    ]);
+    const [dicChecksum, affChecksum] = await Promise.all([
+      sha256Hex(dicBuffer),
+      sha256Hex(affBuffer)
+    ]);
+
+    return {
+      sourceType,
+      variant,
+      commit,
+      filterMode,
+      expectedChecksums: {
+        dic: dicChecksum,
+        aff: affChecksum
+      },
+      manualFiles: {
+        dicBase64: arrayBufferToBase64(dicBuffer),
+        affBase64: arrayBufferToBase64(affBuffer),
+        dicFileName: dicFile.name,
+        affFileName: affFile.name
+      }
+    };
+  }
+
+  const checksumDic = String(importChecksumDicEl?.value || "").trim().toLowerCase();
+  const checksumAff = String(importChecksumAffEl?.value || "").trim().toLowerCase();
+  if (!COMMIT_PATTERN.test(commit)) {
+    throw new Error("Commit must be a 40-character lowercase hexadecimal SHA.");
+  }
+  if (!CHECKSUM_PATTERN.test(checksumDic) || !CHECKSUM_PATTERN.test(checksumAff)) {
+    throw new Error("Checksums must be 64-character lowercase SHA-256 values.");
+  }
+
   return {
+    sourceType,
     variant,
     commit,
     filterMode,
@@ -369,7 +488,7 @@ function parseImportPayloadFromForm() {
 }
 
 async function importProvider() {
-  const payload = parseImportPayloadFromForm();
+  const payload = await parseImportPayloadFromForm();
   state.importing = true;
   renderWorkspace();
   setStatus(importStatusEl, "Import started. Building provider artifacts...", "admin-status-off");
@@ -380,9 +499,10 @@ async function importProvider() {
       body: JSON.stringify(payload)
     });
     const activated = Number(response?.counts?.filteredAnswers || 0);
+    const shortCommit = String(response?.commit || payload.commit || "").slice(0, 10) || "auto";
     setStatus(
       importStatusEl,
-      `Import complete for ${payload.variant} @ ${payload.commit.slice(0, 10)}... (${activated} family-safe answers).`,
+      `Import complete for ${payload.variant} @ ${shortCommit}... (${activated} family-safe answers).`,
       "admin-status-ok"
     );
     await loadProviders();
@@ -488,6 +608,10 @@ providersBodyEl.addEventListener("click", async (event) => {
   if (action === "prefill-import") {
     const provider = findProviderByVariant(variant);
     if (!provider) return;
+    if (importSourceTypeEl) {
+      importSourceTypeEl.value = PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH;
+      updateImportModeUi();
+    }
     if (importVariantEl) importVariantEl.value = provider.variant;
     if (importCommitEl) {
       importCommitEl.value = provider.activeCommit || provider.importedCommits?.[0] || "";
@@ -547,4 +671,18 @@ tabButtons.forEach((button) => {
   });
 });
 
+if (importSourceTypeEl) {
+  importSourceTypeEl.addEventListener("change", () => {
+    updateImportModeUi();
+    setStatus(
+      importStatusEl,
+      getImportSourceType() === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
+        ? "Manual upload mode selected. Choose .dic and .aff files to continue."
+        : "Remote fetch mode selected. Enter commit and checksums to continue.",
+      "admin-status-off"
+    );
+  });
+}
+
+updateImportModeUi();
 renderWorkspace();

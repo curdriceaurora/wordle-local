@@ -12,9 +12,11 @@ Provider imports add an external-source trust boundary and an admin-controlled a
 
 ## Provenance and integrity checks (required)
 1. Confirm import payload requires:
-   - pinned 40-char commit SHA
+   - `sourceType` (`remote-fetch` or `manual-upload`)
+   - pinned 40-char commit SHA for `remote-fetch` (optional for `manual-upload`)
    - `expectedChecksums.dic`
    - `expectedChecksums.aff`
+   - `manualFiles.dicBase64` + `manualFiles.affBase64` when `sourceType=manual-upload`
 2. Confirm imported commit folder includes:
    - `source-manifest.json`
    - `expanded-forms.txt`
@@ -48,12 +50,34 @@ curl -sS -X POST http://localhost:3000/api/admin/providers/import \
   -H 'content-type: application/json' \
   -H 'x-admin-key: ADMIN_KEY_VALUE' \
   -d '{
+    "sourceType":"remote-fetch",
     "variant":"en-US",
     "commit":"0123456789abcdef0123456789abcdef01234567",
     "filterMode":"denylist-only",
     "expectedChecksums":{
       "dic":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "aff":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }'
+```
+
+```bash
+curl -sS -X POST http://localhost:3000/api/admin/providers/import \
+  -H 'content-type: application/json' \
+  -H 'x-admin-key: ADMIN_KEY_VALUE' \
+  -d '{
+    "sourceType":"manual-upload",
+    "variant":"en-US",
+    "filterMode":"denylist-only",
+    "expectedChecksums":{
+      "dic":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "aff":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "manualFiles":{
+      "dicBase64":"<base64-dic>",
+      "affBase64":"<base64-aff>",
+      "dicFileName":"en_US.dic",
+      "affFileName":"en_US.aff"
     }
   }'
 ```

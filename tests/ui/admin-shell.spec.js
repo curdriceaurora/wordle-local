@@ -154,6 +154,82 @@ test("admin shell supports import and enable workflows without CLI usage", async
   await expect(page.locator('button[data-action="disable"][data-variant="en-US"]')).toBeVisible();
 });
 
+test("admin shell supports manual upload fallback import mode", async ({ page }) => {
+  const state = {
+    imported: false,
+    enabled: false,
+    commit: ""
+  };
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.route("**/api/admin/providers/import", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    expect(payload.sourceType).toBe("manual-upload");
+    expect(payload.manualFiles).toMatchObject({
+      dicFileName: "offline-en_US.dic",
+      affFileName: "offline-en_US.aff"
+    });
+    expect(typeof payload.manualFiles.dicBase64).toBe("string");
+    expect(typeof payload.manualFiles.affBase64).toBe("string");
+    const decodedDic = Buffer.from(payload.manualFiles.dicBase64, "base64").toString("utf8");
+    const decodedAff = Buffer.from(payload.manualFiles.affBase64, "base64").toString("utf8");
+    expect(decodedDic).toContain("DOG/S");
+    expect(decodedAff).toContain("SET UTF-8");
+    expect(payload.expectedChecksums.dic).toMatch(/^[a-f0-9]{64}$/);
+    expect(payload.expectedChecksums.aff).toMatch(/^[a-f0-9]{64}$/);
+
+    state.imported = true;
+    state.commit = "fedcba9876543210fedcba9876543210fedcba98";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        action: "imported",
+        sourceType: "manual-upload",
+        variant: "en-US",
+        commit: state.commit,
+        filterMode: payload.filterMode,
+        counts: { filteredAnswers: 88 },
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click("#admin-tab-imports");
+  await page.selectOption("#importSourceType", "manual-upload");
+  await page.selectOption("#importVariant", "en-US");
+  await page.setInputFiles("#importDicFile", {
+    name: "offline-en_US.dic",
+    mimeType: "text/plain",
+    buffer: Buffer.from("2\nDOG/S\nCAT\n", "utf8")
+  });
+  await page.setInputFiles("#importAffFile", {
+    name: "offline-en_US.aff",
+    mimeType: "text/plain",
+    buffer: Buffer.from("SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n", "utf8")
+  });
+  await page.click("#importSubmitBtn");
+
+  await expect(page.locator("#importStatus")).toContainText("Import complete");
+  await expect(page.locator("#workspaceStatus")).toContainText("Provider import succeeded");
+});
+
 test("admin shell supports manual provider update checks", async ({ page }) => {
   const state = {
     imported: true,
