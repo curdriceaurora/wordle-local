@@ -10,6 +10,13 @@ const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib
 const { requireAdmin } = require("./lib/admin-auth");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
+const { fetchAndPersistProviderSource } = require("./lib/provider-fetch");
+const { buildExpandedFormsArtifacts } = require("./lib/provider-hunspell");
+const { buildProviderPoolsArtifacts } = require("./lib/provider-pool-policy");
+const {
+  buildFilteredAnswerPoolArtifacts,
+  FILTER_MODES: PROVIDER_FILTER_MODES
+} = require("./lib/provider-answer-filter");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,6 +76,7 @@ const PROVIDER_ADMIN_UNAVAILABLE_ERROR =
 const PROVIDER_ID = "libreoffice-dictionaries";
 const PROVIDER_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const PROVIDER_MIN_LENGTH = 3;
+const PROVIDER_POLICY_VERSION = "v1";
 const PROVIDER_VARIANT_LABELS = Object.freeze({
   "en-GB": "English (UK)",
   "en-US": "English (US)",
@@ -77,6 +85,7 @@ const PROVIDER_VARIANT_LABELS = Object.freeze({
   "en-ZA": "English (South Africa)"
 });
 const SUPPORTED_PROVIDER_VARIANTS = new Set(SUPPORTED_VARIANT_IDS);
+const SUPPORTED_PROVIDER_FILTER_MODES = new Set(Object.values(PROVIDER_FILTER_MODES));
 const BAKED_LANGUAGES = Object.freeze({
   en: Object.freeze({ label: "English", file: "en.txt" })
 });
@@ -577,6 +586,7 @@ const languageRegistryStore = new LanguageRegistryStore({
 });
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
+let providerImportInFlight = null;
 
 function clearObjectValues(target) {
   for (const key of Object.keys(target)) {
@@ -635,6 +645,30 @@ function listImportableProviderCommits(variant) {
   return commits;
 }
 
+function listProviderCommitDirectories(variant) {
+  if (!SUPPORTED_PROVIDER_VARIANTS.has(variant)) {
+    return [];
+  }
+  const variantRoot = path.join(PROVIDERS_ROOT, variant);
+  if (!fs.existsSync(variantRoot)) {
+    return [];
+  }
+  try {
+    return fs
+      .readdirSync(variantRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((commit) => PROVIDER_COMMIT_PATTERN.test(commit))
+      // Commits are lowercase hex strings; code-point sort keeps ordering deterministic across locales/filesystems.
+      .sort((left, right) => {
+        if (left === right) return 0;
+        return left > right ? -1 : 1;
+      });
+  } catch (err) {
+    return [];
+  }
+}
+
 function resolvePreferredProviderCommit(variant, requestedCommit) {
   if (requestedCommit) {
     const normalized = String(requestedCommit || "").trim();
@@ -655,6 +689,66 @@ function resolvePreferredProviderCommit(variant, requestedCommit) {
     throw new StatsApiError(404, "No imported provider artifacts found for that variant.");
   }
   return available[0];
+}
+
+function parseProviderFilterMode(value) {
+  const normalized = String(value || PROVIDER_FILTER_MODES.DENYLIST_ONLY).trim();
+  if (!SUPPORTED_PROVIDER_FILTER_MODES.has(normalized)) {
+    throw new StatsApiError(
+      400,
+      `filterMode must be one of ${Array.from(SUPPORTED_PROVIDER_FILTER_MODES).join(", ")}.`
+    );
+  }
+  return normalized;
+}
+
+function mapProviderPipelineError(err) {
+  if (err instanceof StatsApiError) {
+    return err;
+  }
+
+  const code = String(err?.code || "").toUpperCase();
+  if (
+    code === "INVALID_VARIANT"
+    || code === "UNSUPPORTED_VARIANT"
+    || code === "INVALID_COMMIT"
+    || code === "INVALID_CHECKSUM"
+    || code === "CHECKSUM_REQUIRED"
+    || code === "INVALID_FILTER_MODE"
+    || code === "INVALID_POLICY_VERSION"
+    || code === "INVALID_POLICY_BOUNDS"
+    || code === "INVALID_PATH"
+    || code === "INVALID_MANIFEST"
+    || code === "ALLOWLIST_REQUIRED"
+  ) {
+    return new StatsApiError(400, err.message);
+  }
+  if (code === "SOURCE_NOT_FOUND" || code === "SOURCE_MANIFEST_MISSING") {
+    return new StatsApiError(404, err.message);
+  }
+  if (
+    code === "CHECKSUM_MISMATCH"
+    || code === "GUESS_POOL_EMPTY"
+    || code === "ANSWER_POOL_EMPTY"
+    || code === "FILTERED_POOL_EMPTY"
+    || code === "HUNSPELL_PARSE_FAILED"
+  ) {
+    return new StatsApiError(409, err.message);
+  }
+  if (
+    code === "UPSTREAM_RATE_LIMITED"
+    || code === "UPSTREAM_SERVER_ERROR"
+    || code === "UPSTREAM_REQUEST_FAILED"
+    || code === "FETCH_TIMEOUT"
+    || code === "FETCH_NETWORK_ERROR"
+    || code === "FETCH_UNAVAILABLE"
+    || code === "PERSISTENCE_WRITE_FAILED"
+    || code === "INPUT_ARTIFACT_MISSING"
+    || code === "ALLOWLIST_READ_FAILED"
+  ) {
+    return new StatsApiError(503, PROVIDER_ADMIN_UNAVAILABLE_ERROR);
+  }
+  return err;
 }
 
 function rebuildLanguageRuntimeCatalog() {
@@ -1122,15 +1216,36 @@ function parseProviderVariant(value) {
 function buildProviderStatusRows() {
   const rows = [];
   for (const variant of SUPPORTED_VARIANT_IDS) {
+    const discoveredCommits = listProviderCommitDirectories(variant);
     const importedCommits = listImportableProviderCommits(variant);
+    const incompleteCommits = discoveredCommits.filter((commit) => !importedCommits.includes(commit));
     const entry = registeredLanguageCatalog.get(variant) || null;
+    const enabled = Boolean(entry?.enabled);
+    const incompleteDetails = incompleteCommits.length
+      ? `Incomplete artifacts found for commits: ${incompleteCommits.join(", ")}.`
+      : null;
+    let status = "not-imported";
+    if (enabled) {
+      status = "enabled";
+    } else if (importedCommits.length > 0) {
+      status = "imported";
+    } else if (incompleteCommits.length > 0) {
+      status = "error";
+    }
     rows.push({
       variant,
       label: getProviderVariantLabel(variant),
       imported: importedCommits.length > 0,
-      enabled: Boolean(entry?.enabled),
+      enabled,
+      status,
       activeCommit: entry?.provider?.commit || null,
-      importedCommits
+      importedCommits,
+      incompleteCommits,
+      warning:
+        status === "enabled" || status === "imported"
+          ? incompleteDetails
+          : null,
+      error: status === "error" ? incompleteDetails : null
     });
   }
   return rows;
@@ -1440,6 +1555,108 @@ app.get("/api/admin/providers", (req, res) => {
     ok: true,
     providers: buildProviderStatusRows()
   });
+});
+
+app.post("/api/admin/providers/import", async (req, res) => {
+  let variant;
+  try {
+    variant = parseProviderVariant(req.body?.variant);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  const commit = String(req.body?.commit || "").trim();
+  if (!PROVIDER_COMMIT_PATTERN.test(commit)) {
+    return providerAdminError(
+      res,
+      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.")
+    );
+  }
+
+  const checksums = req.body?.expectedChecksums;
+  const expectedChecksums = {
+    dic: String(checksums?.dic || "").trim().toLowerCase(),
+    aff: String(checksums?.aff || "").trim().toLowerCase()
+  };
+
+  let filterMode;
+  try {
+    filterMode = parseProviderFilterMode(req.body?.filterMode);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  if (providerImportInFlight) {
+    return providerAdminError(
+      res,
+      new StatsApiError(
+        409,
+        `Another import is already running (${providerImportInFlight.variant} @ ${providerImportInFlight.commit}).`
+      )
+    );
+  }
+
+  const inFlightToken = {
+    variant,
+    commit,
+    startedAt: new Date().toISOString()
+  };
+  providerImportInFlight = inFlightToken;
+
+  try {
+    const sourceResult = await fetchAndPersistProviderSource({
+      variant,
+      commit,
+      expectedChecksums,
+      outputRoot: PROVIDERS_ROOT
+    });
+    const expandedResult = await buildExpandedFormsArtifacts({
+      variant,
+      commit,
+      providerRoot: PROVIDERS_ROOT,
+      outputRoot: PROVIDERS_ROOT,
+      policyVersion: PROVIDER_POLICY_VERSION
+    });
+    const poolsResult = await buildProviderPoolsArtifacts({
+      variant,
+      commit,
+      providerRoot: PROVIDERS_ROOT,
+      outputRoot: PROVIDERS_ROOT,
+      policyVersion: PROVIDER_POLICY_VERSION
+    });
+    const filteredResult = await buildFilteredAnswerPoolArtifacts({
+      variant,
+      commit,
+      providerRoot: PROVIDERS_ROOT,
+      outputRoot: PROVIDERS_ROOT,
+      filterMode
+    });
+
+    return res.json({
+      ok: true,
+      action: "imported",
+      variant,
+      commit,
+      filterMode,
+      counts: {
+        sourceFiles: {
+          dicBytes: sourceResult.sourceFiles.dic.byteSize,
+          affBytes: sourceResult.sourceFiles.aff.byteSize
+        },
+        expandedForms: expandedResult.counts.expandedForms,
+        guessPool: poolsResult.counts.expandedForms,
+        answerPool: poolsResult.counts.answerPool,
+        filteredAnswers: filteredResult.counts.activatedAnswers
+      },
+      providers: buildProviderStatusRows()
+    });
+  } catch (err) {
+    return providerAdminError(res, mapProviderPipelineError(err));
+  } finally {
+    if (providerImportInFlight === inFlightToken) {
+      providerImportInFlight = null;
+    }
+  }
 });
 
 app.post("/api/admin/providers/:variant/enable", (req, res) => {

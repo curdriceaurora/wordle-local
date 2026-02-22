@@ -1,6 +1,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const nodeCrypto = require("node:crypto");
 const request = require("supertest");
 
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
@@ -139,6 +140,10 @@ function formatLocalDateOffset(offsetDays) {
   return formatLocalDateFromDate(date);
 }
 
+function sha256Text(value) {
+  return nodeCrypto.createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
+}
+
 async function withTempDictionary(file, contents, fn) {
   const fullPath = path.join(DICT_PATH, file);
   const original = fs.readFileSync(fullPath, "utf8");
@@ -208,6 +213,25 @@ async function withTempProviderArtifacts(variant, commit, fn) {
     `${JSON.stringify({ variant, commit }, null, 2)}\n`,
     "utf8"
   );
+
+  try {
+    return await fn();
+  } finally {
+    fs.rmSync(variantRoot, { recursive: true, force: true });
+    if (hadOriginal && fs.existsSync(backupPath)) {
+      fs.renameSync(backupPath, variantRoot);
+    }
+  }
+}
+
+async function withIsolatedProviderVariant(variant, fn) {
+  const variantRoot = path.join(PROVIDERS_PATH, variant);
+  const backupPath = `${variantRoot}.bak-test-${Date.now()}`;
+  const hadOriginal = fs.existsSync(variantRoot);
+  if (hadOriginal) {
+    fs.renameSync(variantRoot, backupPath);
+  }
+  fs.rmSync(variantRoot, { recursive: true, force: true });
 
   try {
     return await fn();
@@ -1100,6 +1124,144 @@ describe("Admin auth", () => {
       "en-AU",
       "en-ZA"
     ]);
+  });
+
+  test("surfaces incomplete artifacts as warning when variant remains usable", async () => {
+    const enabledCommit = "0123456789abcdef0123456789abcdef01234567";
+    const incompleteCommit = "fedcba9876543210fedcba9876543210fedcba98";
+    const registry = JSON.parse(ORIGINAL_LANGUAGE_REGISTRY);
+    registry.updatedAt = "2026-02-22T00:00:00.000Z";
+    registry.languages = [
+      ...registry.languages,
+      {
+        id: "en-US",
+        label: "English (US)",
+        enabled: true,
+        source: "provider",
+        minLength: 3,
+        hasDictionary: true,
+        dictionaryFile: `providers/en-US/${enabledCommit}/guess-pool.txt`,
+        provider: {
+          providerId: "libreoffice",
+          variant: "en-US",
+          commit: enabledCommit
+        }
+      }
+    ];
+
+    await withTempLanguageRegistryContent(`${JSON.stringify(registry, null, 2)}\n`, async () => {
+      await withTempProviderArtifacts("en-US", enabledCommit, async () => {
+        fs.mkdirSync(path.join(PROVIDERS_PATH, "en-US", incompleteCommit), { recursive: true });
+        const app = loadApp({ adminKey: "secret" });
+        const response = await request(app)
+          .get("/api/admin/providers")
+          .set("x-admin-key", "secret");
+
+        expect(response.status).toBe(200);
+        const usRow = response.body.providers.find((row) => row.variant === "en-US");
+        expect(usRow).toBeDefined();
+        expect(usRow.status).toBe("enabled");
+        expect(usRow.error).toBeNull();
+        expect(usRow.warning).toMatch(/Incomplete artifacts found for commits:/);
+        expect(usRow.warning).toContain(incompleteCommit);
+        expect(usRow.incompleteCommits).toEqual([incompleteCommit]);
+      });
+    });
+  });
+
+  test("imports provider artifacts through admin endpoint and enables variant", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const dicText = "2\nDOG/S\nCAT\n";
+    const affText = "SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n";
+    const expectedChecksums = {
+      dic: sha256Text(dicText),
+      aff: sha256Text(affText)
+    };
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (url) => {
+      const rawUrl = String(url || "");
+      if (rawUrl.endsWith("/en/en_US.dic")) {
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => Buffer.from(dicText, "utf8")
+        };
+      }
+      if (rawUrl.endsWith("/en/en_US.aff")) {
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => Buffer.from(affText, "utf8")
+        };
+      }
+      return {
+        ok: false,
+        status: 404,
+        arrayBuffer: async () => Buffer.from("", "utf8")
+      };
+    });
+
+    try {
+      await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+        await withIsolatedProviderVariant("en-US", async () => {
+          const app = loadApp({ adminKey: "secret" });
+
+          const importResponse = await request(app)
+            .post("/api/admin/providers/import")
+            .set("x-admin-key", "secret")
+            .send({
+              variant: "en-US",
+              commit,
+              filterMode: "denylist-only",
+              expectedChecksums
+            });
+
+          expect(importResponse.status).toBe(200);
+          expect(importResponse.body.ok).toBe(true);
+          expect(importResponse.body.action).toBe("imported");
+          expect(importResponse.body.variant).toBe("en-US");
+          expect(importResponse.body.commit).toBe(commit);
+          expect(importResponse.body.counts.filteredAnswers).toBeGreaterThan(0);
+
+          const commitRoot = path.join(PROVIDERS_PATH, "en-US", commit);
+          expect(fs.existsSync(path.join(commitRoot, "source-manifest.json"))).toBe(true);
+          expect(fs.existsSync(path.join(commitRoot, "expanded-forms.txt"))).toBe(true);
+          expect(fs.existsSync(path.join(commitRoot, "guess-pool.txt"))).toBe(true);
+          expect(fs.existsSync(path.join(commitRoot, "answer-pool.txt"))).toBe(true);
+          expect(fs.existsSync(path.join(commitRoot, "answer-pool-active.txt"))).toBe(true);
+
+          const enableResponse = await request(app)
+            .post("/api/admin/providers/en-US/enable")
+            .set("x-admin-key", "secret")
+            .send({ commit });
+          expect(enableResponse.status).toBe(200);
+          expect(enableResponse.body.action).toBe("enabled");
+          expect(enableResponse.body.language.enabled).toBe(true);
+          expect(enableResponse.body.language.provider.commit).toBe(commit);
+        });
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("rejects provider import when required checksums are missing", async () => {
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/import")
+        .set("x-admin-key", "secret")
+        .send({
+          variant: "en-US",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          expectedChecksums: {
+            dic: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/expectedChecksums\.aff/i);
+    });
   });
 
   test("returns 404 when enabling provider variant without imported artifacts", async () => {

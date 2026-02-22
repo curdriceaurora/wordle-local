@@ -1,6 +1,40 @@
 const { test, expect } = require("./fixtures");
 const AxeBuilder = require("@axe-core/playwright");
 
+function createProviderRows(state) {
+  const variants = [
+    ["en-GB", "English (UK)"],
+    ["en-US", "English (US)"],
+    ["en-CA", "English (Canada)"],
+    ["en-AU", "English (Australia)"],
+    ["en-ZA", "English (South Africa)"]
+  ];
+  return variants.map(([variant, label]) => {
+    const isTarget = variant === "en-US";
+    const imported = isTarget ? Boolean(state.imported) : false;
+    const enabled = isTarget ? Boolean(state.enabled) : false;
+    const importedCommits = imported && state.commit ? [state.commit] : [];
+    let status = "not-imported";
+    if (enabled) {
+      status = "enabled";
+    } else if (imported) {
+      status = "imported";
+    }
+    return {
+      variant,
+      label,
+      imported,
+      enabled,
+      status,
+      activeCommit: enabled && state.commit ? state.commit : null,
+      importedCommits,
+      incompleteCommits: [],
+      warning: null,
+      error: null
+    };
+  });
+}
+
 test("admin shell unlocks with session-only key and loads provider status", async ({ page }) => {
   await page.goto("/admin", { waitUntil: "commit" });
 
@@ -37,6 +71,132 @@ test("admin shell unlocks with session-only key and loads provider status", asyn
   await page.reload({ waitUntil: "commit" });
   await expect(page.locator("#unlockPanel")).toBeVisible();
   await expect(page.locator("#shellPanel")).toBeHidden();
+});
+
+test("admin shell supports import and enable workflows without CLI usage", async ({ page }) => {
+  const state = {
+    imported: false,
+    enabled: false,
+    commit: ""
+  };
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.route("**/api/admin/providers/import", async (route) => {
+    const payload = JSON.parse(route.request().postData() || "{}");
+    state.imported = true;
+    state.enabled = false;
+    state.commit = payload.commit;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        action: "imported",
+        variant: "en-US",
+        commit: state.commit,
+        filterMode: payload.filterMode,
+        counts: { filteredAnswers: 123 },
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.route("**/api/admin/providers/en-US/enable", async (route) => {
+    state.enabled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        action: "enabled",
+        variant: "en-US",
+        commit: state.commit,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click("#admin-tab-imports");
+  await page.selectOption("#importVariant", "en-US");
+  await page.fill("#importCommit", "0123456789abcdef0123456789abcdef01234567");
+  await page.fill(
+    "#importChecksumDic",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  );
+  await page.fill(
+    "#importChecksumAff",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  );
+  await page.click("#importSubmitBtn");
+  await expect(page.locator("#importStatus")).toContainText("Import complete");
+
+  await page.once("dialog", (dialog) => dialog.accept());
+  await page.click("#admin-tab-providers");
+  await page.click('button[data-action="enable"][data-variant="en-US"]');
+  await expect(
+    page.locator("#providersBody tr", { has: page.locator("td", { hasText: "en-US" }) }).first()
+  ).toContainText("enabled");
+  await expect(page.locator('button[data-action="disable"][data-variant="en-US"]')).toBeVisible();
+});
+
+test("admin shell surfaces provider warning and error details", async ({ page }) => {
+  await page.route("**/api/admin/providers", async (route) => {
+    const providers = createProviderRows({ imported: false, enabled: false, commit: "" });
+    const errorRow = providers.find((provider) => provider.variant === "en-US");
+    const warningRow = providers.find((provider) => provider.variant === "en-GB");
+    if (errorRow) {
+      errorRow.status = "error";
+      errorRow.error = "Incomplete artifacts found for commits: deadbeef.";
+      errorRow.incompleteCommits = ["deadbeef"];
+    }
+    if (warningRow) {
+      warningRow.status = "enabled";
+      warningRow.enabled = true;
+      warningRow.warning = "Incomplete artifacts found for commits: cafe.";
+      warningRow.incompleteCommits = ["cafe"];
+      warningRow.imported = true;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  const usRow = page
+    .locator("#providersBody tr", { has: page.locator("td", { hasText: "en-US" }) })
+    .first();
+  await expect(usRow).toContainText("error");
+  await expect(usRow).toContainText("Incomplete artifacts found for commits: deadbeef.");
+
+  const gbRow = page
+    .locator("#providersBody tr", { has: page.locator("td", { hasText: "en-GB" }) })
+    .first();
+  await expect(gbRow).toContainText("enabled");
+  await expect(gbRow).toContainText("Incomplete artifacts found for commits: cafe.");
 });
 
 test("admin shell lock button clears unlocked session", async ({ page }) => {
