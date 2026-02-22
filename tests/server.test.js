@@ -1264,6 +1264,180 @@ describe("Admin auth", () => {
     });
   });
 
+  test("reports update-available for manual provider update checks", async () => {
+    const installedCommit = "0123456789abcdef0123456789abcdef01234567";
+    const upstreamLatest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (url) => {
+      const rawUrl = String(url || "");
+      if (rawUrl.includes("api.github.com/repos/LibreOffice/dictionaries/commits")) {
+        if (rawUrl.includes("path=en%2Fen_US.dic")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              {
+                sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                commit: { committer: { date: "2026-02-20T00:00:00.000Z" } }
+              }
+            ]
+          };
+        }
+        if (rawUrl.includes("path=en%2Fen_US.aff")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              {
+                sha: upstreamLatest,
+                commit: { committer: { date: "2026-02-21T00:00:00.000Z" } }
+              }
+            ]
+          };
+        }
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    try {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/check-update")
+        .set("x-admin-key", "secret")
+        .send({ commit: installedCommit });
+
+      expect(response.status).toBe(200);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.status).toBe("update-available");
+      expect(response.body.currentCommit).toBe(installedCommit);
+      expect(response.body.latestCommit).toBe(upstreamLatest);
+      expect(Array.isArray(response.body.providers)).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("reports unknown status for update checks when no installed commit is selected", async () => {
+    const upstreamLatest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (url) => {
+      const rawUrl = String(url || "");
+      if (rawUrl.includes("api.github.com/repos/LibreOffice/dictionaries/commits")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              sha: upstreamLatest,
+              commit: { committer: { date: "2026-02-21T00:00:00.000Z" } }
+            }
+          ]
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    try {
+      await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+        await withIsolatedProviderVariant("en-US", async () => {
+          const app = loadApp({ adminKey: "secret" });
+          const response = await request(app)
+            .post("/api/admin/providers/en-US/check-update")
+            .set("x-admin-key", "secret")
+            .send({});
+
+          expect(response.status).toBe(200);
+          expect(response.body.ok).toBe(true);
+          expect(response.body.status).toBe("unknown");
+          expect(response.body.currentCommit).toBeNull();
+          expect(response.body.latestCommit).toBe(upstreamLatest);
+        });
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("does not infer current commit from importable artifacts during update checks", async () => {
+    const importedCommit = "0123456789abcdef0123456789abcdef01234567";
+    const upstreamLatest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (url) => {
+      const rawUrl = String(url || "");
+      if (rawUrl.includes("api.github.com/repos/LibreOffice/dictionaries/commits")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              sha: upstreamLatest,
+              commit: { committer: { date: "2026-02-21T00:00:00.000Z" } }
+            }
+          ]
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    try {
+      await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+        await withTempProviderArtifacts("en-US", importedCommit, async () => {
+          const app = loadApp({ adminKey: "secret" });
+          const response = await request(app)
+            .post("/api/admin/providers/en-US/check-update")
+            .set("x-admin-key", "secret")
+            .send({});
+
+          expect(response.status).toBe(200);
+          expect(response.body.ok).toBe(true);
+          expect(response.body.status).toBe("unknown");
+          expect(response.body.currentCommit).toBeNull();
+          expect(response.body.latestCommit).toBe(upstreamLatest);
+        });
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("reports error status when upstream update checks are rate-limited", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: "rate limit" })
+    }));
+
+    try {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/check-update")
+        .set("x-admin-key", "secret")
+        .send({
+          commit: "0123456789abcdef0123456789abcdef01234567"
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.status).toBe("error");
+      expect(response.body.message).toMatch(/rate-limited/i);
+      expect(response.body.latestCommit).toBeNull();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("validates commit format for provider update checks", async () => {
+    const app = loadApp({ adminKey: "secret" });
+    const response = await request(app)
+      .post("/api/admin/providers/en-US/check-update")
+      .set("x-admin-key", "secret")
+      .send({ commit: "not-a-sha" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/40-character lowercase hexadecimal/i);
+  });
+
   test("returns 404 when enabling provider variant without imported artifacts", async () => {
     await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
       const app = loadApp({ adminKey: "secret" });

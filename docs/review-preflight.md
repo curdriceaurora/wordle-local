@@ -49,9 +49,11 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 43. Provider diagnostics contract: backend status payloads must keep `error` exclusive to hard-error states and use a separate `warning` field for usable-but-degraded states.
 44. Provider diagnostics visibility: admin UI must render provider warning/error detail text (not status text alone) so operators can debug import issues without server logs.
 45. Provider CI gate coverage: PR CI must run a targeted provider admin UI regression test whenever provider/admin workflow files change.
+46. Update-check commit semantics: manual provider update checks must not infer “current commit” from arbitrary imported commit folders; only explicit request or active commit may drive comparison.
+47. UI state minimization: do not persist full API payloads in per-row UI state maps when only a subset is needed for rendering.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

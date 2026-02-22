@@ -26,6 +26,7 @@ const state = {
   loading: false,
   importing: false,
   providers: [],
+  providerUpdates: Object.create(null),
   activeTab: "providers"
 };
 
@@ -41,6 +42,53 @@ function setStatus(element, message, tone = "") {
 function setHidden(element, hidden) {
   if (!element) return;
   element.classList.toggle("hidden", hidden);
+}
+
+function applyProvidersPayload(payload) {
+  state.providers = Array.isArray(payload?.providers) ? payload.providers : [];
+  const visibleVariants = new Set(state.providers.map((provider) => String(provider.variant || "").trim()));
+  Object.keys(state.providerUpdates).forEach((variant) => {
+    if (!visibleVariants.has(variant)) {
+      delete state.providerUpdates[variant];
+    }
+  });
+}
+
+function formatCommitShort(commit) {
+  const value = String(commit || "").trim();
+  if (!value) return "none";
+  return value.slice(0, 10);
+}
+
+function summarizeProviderUpdateStatus(update) {
+  if (!update || typeof update !== "object") {
+    return "";
+  }
+  const status = String(update.status || "").trim();
+  if (status === "up-to-date") {
+    return `Upstream check: up-to-date (${formatCommitShort(update.currentCommit)}).`;
+  }
+  if (status === "update-available") {
+    return `Upstream check: update available (${formatCommitShort(update.currentCommit)} -> ${formatCommitShort(update.latestCommit)}).`;
+  }
+  if (status === "unknown") {
+    const latest = String(update.latestCommit || "").trim();
+    if (latest) {
+      return `Upstream check: latest available is ${formatCommitShort(latest)} (no installed commit selected).`;
+    }
+    return `Upstream check: ${String(update.message || "Unknown state.")}`;
+  }
+  return `Upstream check failed: ${String(update.message || "Try again later.")}`;
+}
+
+function toProviderUpdateInfo(payload) {
+  return {
+    status: String(payload?.status || "").trim(),
+    currentCommit: payload?.currentCommit || null,
+    latestCommit: payload?.latestCommit || null,
+    message: String(payload?.message || "").trim(),
+    checkedAt: payload?.checkedAt || null
+  };
 }
 
 function renderTabs() {
@@ -127,6 +175,14 @@ function renderProviders() {
       statusCell.appendChild(details);
       statusCell.title = detailText;
     }
+
+    const updateSummary = summarizeProviderUpdateStatus(state.providerUpdates[provider.variant]);
+    if (updateSummary) {
+      const updateDetails = document.createElement("small");
+      updateDetails.className = "admin-provider-update-detail";
+      updateDetails.textContent = updateSummary;
+      statusCell.appendChild(updateDetails);
+    }
     row.appendChild(statusCell);
 
     const commitCell = document.createElement("td");
@@ -157,6 +213,15 @@ function renderProviders() {
     importButton.textContent = provider.imported ? "Re-import" : "Import";
     importButton.disabled = state.loading || state.importing;
     actionsWrap.appendChild(importButton);
+
+    const updateButton = document.createElement("button");
+    updateButton.type = "button";
+    updateButton.className = "ghost";
+    updateButton.dataset.variant = provider.variant;
+    updateButton.dataset.action = "check-update";
+    updateButton.textContent = "Check update";
+    updateButton.disabled = state.loading || state.importing;
+    actionsWrap.appendChild(updateButton);
 
     actionsCell.appendChild(actionsWrap);
     row.appendChild(actionsCell);
@@ -210,7 +275,7 @@ async function loadProviders() {
   renderWorkspace();
   try {
     const payload = await requestAdminJson("/api/admin/providers");
-    state.providers = Array.isArray(payload.providers) ? payload.providers : [];
+    applyProvidersPayload(payload);
     state.unlocked = true;
     setStatus(workspaceStatusEl, "Provider status loaded.", "admin-status-ok");
     setStatus(unlockStatusEl, "");
@@ -234,6 +299,40 @@ async function loadProviders() {
 function findProviderByVariant(variant) {
   const key = String(variant || "").trim().toLowerCase();
   return state.providers.find((provider) => String(provider.variant || "").toLowerCase() === key) || null;
+}
+
+async function checkProviderUpdateStatus(variant) {
+  const provider = findProviderByVariant(variant);
+  if (!provider) {
+    throw new Error("Provider variant could not be found in current status list.");
+  }
+
+  const fallbackCommit = provider.activeCommit || provider.importedCommits?.[0] || "";
+  state.loading = true;
+  renderWorkspace();
+  try {
+    const response = await requestAdminJson(
+      `/api/admin/providers/${encodeURIComponent(provider.variant)}/check-update`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: fallbackCommit ? JSON.stringify({ commit: fallbackCommit }) : JSON.stringify({})
+      }
+    );
+    const updateInfo = toProviderUpdateInfo(response);
+    state.providerUpdates[provider.variant] = updateInfo;
+    applyProvidersPayload(response);
+    const summary = summarizeProviderUpdateStatus(updateInfo);
+    const tone = updateInfo.status === "error"
+      ? "admin-status-missing"
+      : updateInfo.status === "update-available"
+        ? "admin-status-off"
+        : "admin-status-ok";
+    setStatus(workspaceStatusEl, summary || "Upstream update check complete.", tone);
+  } finally {
+    state.loading = false;
+    renderWorkspace();
+  }
 }
 
 function parseImportPayloadFromForm() {
@@ -357,6 +456,7 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.adminKey = "";
   state.unlocked = false;
   state.providers = [];
+  state.providerUpdates = Object.create(null);
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
   renderWorkspace();
@@ -399,6 +499,15 @@ providersBodyEl.addEventListener("click", async (event) => {
       "admin-status-off"
     );
     activateTab("imports", true);
+    return;
+  }
+
+  if (action === "check-update") {
+    try {
+      await checkProviderUpdateStatus(variant);
+    } catch (err) {
+      setStatus(workspaceStatusEl, `Update check failed: ${err.message}`, "admin-status-missing");
+    }
     return;
   }
 

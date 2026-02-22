@@ -115,6 +115,28 @@ function checkProviderWorkflowCiGate(errors) {
   });
 }
 
+function checkProviderUpdateCheckSemantics(errors) {
+  const serverSource = readFile("server.js");
+  const resolverStart = serverSource.indexOf("function resolveCurrentProviderCommitForUpdateCheck");
+  if (resolverStart < 0) {
+    errors.push("server.js must define resolveCurrentProviderCommitForUpdateCheck.");
+  } else {
+    const resolverBody = serverSource.slice(resolverStart, resolverStart + 700);
+    if (resolverBody.includes("listImportableProviderCommits(")) {
+      errors.push(
+        "resolveCurrentProviderCommitForUpdateCheck must not infer current commit from importable commit lists."
+      );
+    }
+  }
+
+  const adminAppSource = readFile("public/admin/app.js");
+  if (adminAppSource.includes("state.providerUpdates[provider.variant] = response")) {
+    errors.push(
+      "public/admin/app.js must not store full update-check response payload in providerUpdates state."
+    );
+  }
+}
+
 function run() {
   const errors = [];
 
@@ -175,6 +197,7 @@ function run() {
   checkLanguageSchemaDictionaryCoupling(errors);
   checkProviderDiagnosticsContract(errors);
   checkProviderWorkflowCiGate(errors);
+  checkProviderUpdateCheckSemantics(errors);
 
   if (errors.length > 0) {
     console.error("[nit:guardrails] Failed:");

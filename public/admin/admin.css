@@ -79,6 +79,14 @@
   line-height: 1.2;
 }
 
+.admin-provider-update-detail {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
 @media (max-width: 680px) {
   .admin-workspace .leaderboard-table {
     min-width: 34rem;

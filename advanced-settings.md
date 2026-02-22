@@ -14,10 +14,16 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - `PATCH /api/admin/stats/profile/:id`
   - `GET /api/admin/providers`
   - `POST /api/admin/providers/import`
+  - `POST /api/admin/providers/:variant/check-update`
   - `POST /api/admin/providers/:variant/enable`
   - `POST /api/admin/providers/:variant/disable`
 - Import request body example:
   - `{"variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
+- Manual update-check outcomes:
+  - `up-to-date` (installed commit matches latest upstream)
+  - `update-available` (newer upstream commit found)
+  - `unknown` (no installed commit selected for comparison)
+  - `error` (upstream check failed; no dictionary changes are applied automatically)
 
 ## Network/Proxy
 - `TRUST_PROXY` — set to `true` if running behind a reverse proxy or Tailscale (default `true` in production).

@@ -154,6 +154,53 @@ test("admin shell supports import and enable workflows without CLI usage", async
   await expect(page.locator('button[data-action="disable"][data-variant="en-US"]')).toBeVisible();
 });
 
+test("admin shell supports manual provider update checks", async ({ page }) => {
+  const state = {
+    imported: true,
+    enabled: true,
+    commit: "0123456789abcdef0123456789abcdef01234567"
+  };
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.route("**/api/admin/providers/en-US/check-update", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        variant: "en-US",
+        status: "update-available",
+        currentCommit: "0123456789abcdef0123456789abcdef01234567",
+        latestCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        message: "A newer upstream commit is available for this variant.",
+        providers: createProviderRows(state)
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click('button[data-action="check-update"][data-variant="en-US"]');
+  await expect(page.locator("#workspaceStatus")).toContainText("update available");
+  const usRow = page
+    .locator("#providersBody tr", { has: page.locator("td", { hasText: "en-US" }) })
+    .first();
+  await expect(usRow).toContainText("Upstream check: update available");
+});
+
 test("admin shell surfaces provider warning and error details", async ({ page }) => {
   await page.route("**/api/admin/providers", async (route) => {
     const providers = createProviderRows({ imported: false, enabled: false, commit: "" });
