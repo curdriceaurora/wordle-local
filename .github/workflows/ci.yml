@@ -32,11 +32,13 @@ jobs:
           filters: |
             provider_workflow:
               - 'server.js'
+              - 'lib/admin-auth.js'
               - 'lib/provider-*.js'
               - 'lib/language-registry.js'
               - 'public/admin/**'
               - 'playwright.config.js'
               - 'tests/ui/admin-shell.spec.js'
+              - 'tests/ui/fixtures.js'
               - 'tests/server.test.js'
               - 'data/providers/**'
               - 'data/languages.json'

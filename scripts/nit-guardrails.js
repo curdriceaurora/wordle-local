@@ -98,6 +98,21 @@ function checkProviderWorkflowCiGate(errors) {
   if (!ciWorkflow.includes("npm run test:provider:ui")) {
     errors.push("ci.yml provider workflow gate must execute npm run test:provider:ui.");
   }
+  const requiredProviderFilterPaths = [
+    "'server.js'",
+    "'lib/admin-auth.js'",
+    "'lib/provider-*.js'",
+    "'public/admin/**'",
+    "'tests/ui/admin-shell.spec.js'",
+    "'tests/ui/fixtures.js'"
+  ];
+  requiredProviderFilterPaths.forEach((pattern) => {
+    if (!ciWorkflow.includes(pattern)) {
+      errors.push(
+        `ci.yml provider_workflow path filter must include ${pattern} to avoid skipping provider UI gates.`
+      );
+    }
+  });
 }
 
 function run() {
