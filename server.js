@@ -1161,6 +1161,26 @@ const requireAdminAccess = requireAdmin({
   requireAdminKey: REQUIRE_ADMIN_KEY
 });
 app.use("/api/admin", requireAdminAccess);
+
+function resolveAdminShellPath() {
+  const candidates = [
+    path.join(PUBLIC_PATH, "admin", "index.html"),
+    path.join(PUBLIC_ROOT, "admin", "index.html")
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
+app.get("/admin", (req, res) => {
+  // Treat the admin shell like app HTML entrypoints: never cache to avoid stale JS/CSS.
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(resolveAdminShellPath());
+});
+
 const STATIC_MAX_AGE = NODE_ENV === "production" ? 60 * 60 * 1000 : 0;
 app.use(
   express.static(PUBLIC_PATH, {

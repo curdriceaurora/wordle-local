@@ -42,8 +42,13 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 - Share links are encoded for convenience, not security.
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 
-## Daily Word (API-only)
-There is no admin UI. Use the API endpoints below.
+## Admin Console
+- Visit `/admin` for the provider admin shell.
+- Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
+- Current shell scope is provider workflow hosting (status and container slots for upcoming import/enable flows).
+
+## Daily Word (API)
+Daily word endpoints remain available:
 
 - `GET /api/word` — read current daily word config
 - `POST /api/word` — set daily word
@@ -54,7 +59,6 @@ There is no admin UI. Use the API endpoints below.
 - English dictionary is baked in (`en`).
 - English meanings are baked in locally (`data/dictionaries/en-definitions.json`).
 - Language registry state is persisted in `data/languages.json`; missing/invalid registry data auto-recovers to baked defaults.
-- `none` disables dictionary checks for fully custom words and guesses (A–Z only, length rules still apply).
 - Minimum word length is 3.
 - Dictionaries accept A–Z only (no accents).
 - If a dictionary file is missing or empty, that language is not shown in the UI.

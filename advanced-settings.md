@@ -4,6 +4,7 @@ Use these settings if you want admin controls or are hosting behind a VPN/proxy.
 
 ## Admin Auth
 Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <value>` on admin requests.
+- Admin shell is available at `/admin` and uses a session-scoped unlock key in the browser.
 
 - `ADMIN_KEY` — secret key required for admin endpoints.
 - `REQUIRE_ADMIN_KEY` — set to `true` to force admin auth (default `true` in production).
@@ -11,7 +12,9 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - `GET /api/word`
   - `POST /api/word`
   - `PATCH /api/admin/stats/profile/:id`
-  - `GET /api/admin/providers` (scaffold endpoint, currently returns `501`)
+  - `GET /api/admin/providers`
+  - `POST /api/admin/providers/:variant/enable`
+  - `POST /api/admin/providers/:variant/disable`
 
 ## Network/Proxy
 - `TRUST_PROXY` — set to `true` if running behind a reverse proxy or Tailscale (default `true` in production).
