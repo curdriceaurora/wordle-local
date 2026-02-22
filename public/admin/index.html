@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Admin · local-hosted-wordle</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="topbar">
+      <div>
+        <h1>local-hosted-wordle</h1>
+        <p id="subtitle">Admin console for provider workflows.</p>
+      </div>
+      <div class="top-actions">
+        <a class="admin-link" href="/">Create</a>
+        <a class="admin-link" href="/daily">Daily Word</a>
+      </div>
+    </header>
+
+    <main id="main" class="layout">
+      <section class="panel admin-shell">
+        <section id="unlockPanel" class="admin-unlock" aria-live="polite">
+          <h2>Admin Console</h2>
+          <p class="note">
+            Enter your admin key to unlock provider tools. The key is session-scoped and never saved
+            in browser storage.
+          </p>
+          <form id="unlockForm" class="create-form" autocomplete="off">
+            <label>
+              Admin key
+              <input id="adminKeyInput" name="adminKey" type="password" autocomplete="off" />
+            </label>
+            <button type="submit">Unlock</button>
+          </form>
+          <div id="unlockStatus" class="message" role="status" aria-live="polite"></div>
+        </section>
+
+        <section id="shellPanel" class="admin-workspace hidden" aria-live="polite">
+          <div class="admin-shell-head">
+            <div>
+              <h2>Provider Workspace</h2>
+              <p class="note">Session unlocked for this tab only.</p>
+            </div>
+            <div class="admin-shell-actions">
+              <button id="refreshProvidersBtn" type="button" class="ghost">Refresh status</button>
+              <button id="lockSessionBtn" type="button" class="ghost">Lock session</button>
+            </div>
+          </div>
+
+          <nav class="admin-tabs" aria-label="Admin sections" role="tablist">
+            <button
+              id="admin-tab-providers"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="providers"
+              role="tab"
+              aria-controls="admin-panel-providers"
+              aria-selected="true"
+              tabindex="0"
+            >
+              Providers
+            </button>
+            <button
+              id="admin-tab-imports"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="imports"
+              role="tab"
+              aria-controls="admin-panel-imports"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Import Queue
+            </button>
+            <button
+              id="admin-tab-runtime"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="runtime"
+              role="tab"
+              aria-controls="admin-panel-runtime"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Runtime Notes
+            </button>
+          </nav>
+
+          <section
+            id="admin-panel-providers"
+            class="admin-slot"
+            data-panel="providers"
+            role="tabpanel"
+            aria-labelledby="admin-tab-providers"
+            tabindex="0"
+          >
+            <h3>Provider Status</h3>
+            <p class="note">Readiness snapshot for supported LibreOffice English variants.</p>
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Provider status table">
+                <thead>
+                  <tr>
+                    <th>Variant</th>
+                    <th>Label</th>
+                    <th>Imported</th>
+                    <th>Enabled</th>
+                    <th>Active commit</th>
+                  </tr>
+                </thead>
+                <tbody id="providersBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section
+            id="admin-panel-imports"
+            class="admin-slot hidden"
+            data-panel="imports"
+            role="tabpanel"
+            aria-labelledby="admin-tab-imports"
+            tabindex="0"
+            hidden
+          >
+            <h3>Import Queue Slot</h3>
+            <p class="note">
+              Placeholder container for provider import/check workflows planned in issue #24.
+            </p>
+          </section>
+
+          <section
+            id="admin-panel-runtime"
+            class="admin-slot hidden"
+            data-panel="runtime"
+            role="tabpanel"
+            aria-labelledby="admin-tab-runtime"
+            tabindex="0"
+            hidden
+          >
+            <h3>Runtime Slot</h3>
+            <p class="note">
+              Placeholder container for runtime status and diagnostics attached to provider workflows.
+            </p>
+          </section>
+
+          <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Admin shell · provider workflow host</span>
+      <span id="adminUpdated">Session locked</span>
+    </footer>
+
+    <script src="/admin/app.js"></script>
+  </body>
+</html>

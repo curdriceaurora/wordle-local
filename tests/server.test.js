@@ -984,6 +984,22 @@ describe("Wordle API", () => {
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toMatch(/max-age=3600/);
   });
+
+  test("serves admin shell page", async () => {
+    const app = loadApp();
+    const response = await request(app).get("/admin");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toMatch(/no-store/);
+    expect(response.text).toContain("Admin Console");
+    expect(response.text).toContain("/admin/app.js");
+  });
+
+  test("serves admin shell assets with no-store cache headers", async () => {
+    const app = loadApp({ nodeEnv: "production" });
+    const response = await request(app).get("/admin/app.js");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toMatch(/no-store/);
+  });
 });
 
 describe("Admin auth", () => {
