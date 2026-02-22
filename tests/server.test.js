@@ -1099,6 +1099,19 @@ describe("Admin auth", () => {
     });
   });
 
+  test("returns 404 when disabling provider variant that is not in registry", async () => {
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/disable")
+        .set("x-admin-key", "secret")
+        .send({});
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/is not in the registry/i);
+    });
+  });
+
   test("enables and disables provider variant with valid imported artifacts", async () => {
     const commit = "0123456789abcdef0123456789abcdef01234567";
     await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {

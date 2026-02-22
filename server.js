@@ -625,7 +625,11 @@ function listImportableProviderCommits(variant) {
       const hasManifest = fs.existsSync(path.join(DATA_ROOT, paths.sourceManifest));
       return hasGuessPool && hasAnswerPool && hasManifest;
     })
-    .sort((left, right) => right.localeCompare(left));
+    // Commits are lowercase hex strings; code-point sort keeps ordering deterministic across locales.
+    .sort((left, right) => {
+      if (left === right) return 0;
+      return left > right ? -1 : 1;
+    });
   return commits;
 }
 
@@ -1298,7 +1302,7 @@ app.get("/api/stats/leaderboard", async (req, res) => {
       rows
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1334,7 +1338,7 @@ app.get("/api/stats/profile/:id", async (req, res) => {
       }
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1374,7 +1378,7 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
 
     return res.json({ ok: true, profile: persistedProfile });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1434,7 +1438,7 @@ app.post("/api/admin/providers/:variant/enable", (req, res) => {
       providers: buildProviderStatusRows()
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1459,7 +1463,7 @@ app.post("/api/admin/providers/:variant/disable", (req, res) => {
       providers: buildProviderStatusRows()
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
