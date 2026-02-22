@@ -64,6 +64,8 @@ const LEADERBOARD_RANGE = Object.freeze({
   overall: "overall"
 });
 const STATS_UNAVAILABLE_ERROR = "Stats service unavailable right now. Try again soon.";
+const PROVIDER_ADMIN_UNAVAILABLE_ERROR =
+  "Provider admin request failed right now. Try again soon.";
 const PROVIDER_ID = "libreoffice-dictionaries";
 const PROVIDER_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const PROVIDER_MIN_LENGTH = 3;
@@ -637,7 +639,7 @@ function resolvePreferredProviderCommit(variant, requestedCommit) {
   if (requestedCommit) {
     const normalized = String(requestedCommit || "").trim();
     if (!PROVIDER_COMMIT_PATTERN.test(normalized)) {
-      throw new StatsApiError(400, "commit must be a 40-character hexadecimal git SHA.");
+      throw new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.");
     }
     const available = listImportableProviderCommits(variant);
     if (!available.includes(normalized)) {
@@ -1069,6 +1071,14 @@ function statsServiceError(res, err) {
   return res.status(503).json({ error: STATS_UNAVAILABLE_ERROR });
 }
 
+function providerAdminError(res, err) {
+  if (err instanceof StatsApiError) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  console.error("Provider admin request failed.", err);
+  return res.status(503).json({ error: PROVIDER_ADMIN_UNAVAILABLE_ERROR });
+}
+
 function mapRegistryErrorToStats(err) {
   if (!(err instanceof LanguageRegistryError)) {
     return err;
@@ -1394,14 +1404,14 @@ app.post("/api/admin/providers/:variant/enable", (req, res) => {
   try {
     variant = parseProviderVariant(req.params.variant);
   } catch (err) {
-    return statsServiceError(res, err);
+    return providerAdminError(res, err);
   }
 
   let commit;
   try {
     commit = resolvePreferredProviderCommit(variant, req.body?.commit);
   } catch (err) {
-    return statsServiceError(res, err);
+    return providerAdminError(res, err);
   }
 
   try {
@@ -1438,7 +1448,7 @@ app.post("/api/admin/providers/:variant/enable", (req, res) => {
       providers: buildProviderStatusRows()
     });
   } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
+    return providerAdminError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1447,7 +1457,7 @@ app.post("/api/admin/providers/:variant/disable", (req, res) => {
   try {
     variant = parseProviderVariant(req.params.variant);
   } catch (err) {
-    return statsServiceError(res, err);
+    return providerAdminError(res, err);
   }
 
   try {
@@ -1463,7 +1473,7 @@ app.post("/api/admin/providers/:variant/disable", (req, res) => {
       providers: buildProviderStatusRows()
     });
   } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
+    return providerAdminError(res, mapRegistryErrorToStats(err));
   }
 });
 

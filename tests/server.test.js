@@ -1152,6 +1152,27 @@ describe("Admin auth", () => {
       });
     });
   });
+
+  test("returns provider-specific 503 envelope for unexpected admin provider failures", async () => {
+    const app = loadApp({ adminKey: "secret" });
+    const spy = jest
+      .spyOn(app.locals.languageRegistryStore, "setLanguageEnabledSync")
+      .mockImplementation(() => {
+        throw new Error("simulated failure");
+      });
+
+    try {
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/disable")
+        .set("x-admin-key", "secret")
+        .send({});
+
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe("Provider admin request failed right now. Try again soon.");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe("Stats API", () => {

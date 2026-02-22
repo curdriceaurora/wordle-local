@@ -245,6 +245,40 @@ describe("language-registry", () => {
     }
   });
 
+  test("upsertProviderLanguageSync rejects non-boolean enabled values", () => {
+    const dir = createTempDir();
+    const filePath = path.join(dir, "languages.json");
+    const store = createRegistryStore(filePath);
+
+    try {
+      store.loadSync();
+      expect(() =>
+        store.upsertProviderLanguageSync({
+          variant: "en-US",
+          commit: SAMPLE_COMMIT,
+          providerId: "libreoffice-dictionaries",
+          dictionaryFile: "providers/en-US/0123456789abcdef0123456789abcdef01234567/guess-pool.txt",
+          label: "English (US)",
+          minLength: 3,
+          enabled: "true"
+        })
+      ).toThrow(LanguageRegistryError);
+      expect(() =>
+        store.upsertProviderLanguageSync({
+          variant: "en-US",
+          commit: SAMPLE_COMMIT,
+          providerId: "libreoffice-dictionaries",
+          dictionaryFile: "providers/en-US/0123456789abcdef0123456789abcdef01234567/guess-pool.txt",
+          label: "English (US)",
+          minLength: 3,
+          enabled: "true"
+        })
+      ).toThrow("enabled must be a boolean");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("setLanguageEnabledSync rejects disabling baked English", () => {
     const dir = createTempDir();
     const filePath = path.join(dir, "languages.json");
