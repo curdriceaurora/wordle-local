@@ -1358,6 +1358,48 @@ describe("Admin auth", () => {
     }
   });
 
+  test("does not infer current commit from importable artifacts during update checks", async () => {
+    const importedCommit = "0123456789abcdef0123456789abcdef01234567";
+    const upstreamLatest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (url) => {
+      const rawUrl = String(url || "");
+      if (rawUrl.includes("api.github.com/repos/LibreOffice/dictionaries/commits")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              sha: upstreamLatest,
+              commit: { committer: { date: "2026-02-21T00:00:00.000Z" } }
+            }
+          ]
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    try {
+      await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+        await withTempProviderArtifacts("en-US", importedCommit, async () => {
+          const app = loadApp({ adminKey: "secret" });
+          const response = await request(app)
+            .post("/api/admin/providers/en-US/check-update")
+            .set("x-admin-key", "secret")
+            .send({});
+
+          expect(response.status).toBe(200);
+          expect(response.body.ok).toBe(true);
+          expect(response.body.status).toBe("unknown");
+          expect(response.body.currentCommit).toBeNull();
+          expect(response.body.latestCommit).toBe(upstreamLatest);
+        });
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   test("reports error status when upstream update checks are rate-limited", async () => {
     const originalFetch = global.fetch;
     global.fetch = jest.fn(async () => ({

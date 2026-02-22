@@ -767,8 +767,9 @@ function resolveCurrentProviderCommitForUpdateCheck(variant, requestedCommit) {
     return activeCommit;
   }
 
-  const importedCommits = listImportableProviderCommits(variant);
-  return importedCommits[0] || null;
+  // Without an explicit or active commit selection, keep update checks in "unknown" mode.
+  // Imported artifacts alone do not imply which commit is currently intended for comparison.
+  return null;
 }
 
 function mapProviderUpdateCheckErrorToMessage(err) {

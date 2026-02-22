@@ -81,6 +81,16 @@ function summarizeProviderUpdateStatus(update) {
   return `Upstream check failed: ${String(update.message || "Try again later.")}`;
 }
 
+function toProviderUpdateInfo(payload) {
+  return {
+    status: String(payload?.status || "").trim(),
+    currentCommit: payload?.currentCommit || null,
+    latestCommit: payload?.latestCommit || null,
+    message: String(payload?.message || "").trim(),
+    checkedAt: payload?.checkedAt || null
+  };
+}
+
 function renderTabs() {
   tabButtons.forEach((button) => {
     const isActive = button.dataset.tab === state.activeTab;
@@ -309,12 +319,13 @@ async function checkProviderUpdateStatus(variant) {
         body: fallbackCommit ? JSON.stringify({ commit: fallbackCommit }) : JSON.stringify({})
       }
     );
-    state.providerUpdates[provider.variant] = response;
+    const updateInfo = toProviderUpdateInfo(response);
+    state.providerUpdates[provider.variant] = updateInfo;
     applyProvidersPayload(response);
-    const summary = summarizeProviderUpdateStatus(response);
-    const tone = response.status === "error"
+    const summary = summarizeProviderUpdateStatus(updateInfo);
+    const tone = updateInfo.status === "error"
       ? "admin-status-missing"
-      : response.status === "update-available"
+      : updateInfo.status === "update-available"
         ? "admin-status-off"
         : "admin-status-ok";
     setStatus(workspaceStatusEl, summary || "Upstream update check complete.", tone);
