@@ -8,7 +8,8 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
 const { requireAdmin } = require("./lib/admin-auth");
-const { LanguageRegistryStore } = require("./lib/language-registry");
+const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
+const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,10 +37,12 @@ const DEFINITION_SHARD_CACHE_SIZE = parsePositiveInteger(
 );
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
+const DATA_ROOT = path.join(__dirname, "data");
 const PUBLIC_ROOT = path.join(__dirname, "public");
 const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
 const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
-const DICT_PATH = path.join(__dirname, "data", "dictionaries");
+const DICT_PATH = path.join(DATA_ROOT, "dictionaries");
+const PROVIDERS_ROOT = path.join(DATA_ROOT, "providers");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
 const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(EN_DEFINITIONS_INDEX_DIR, "manifest.json");
@@ -61,9 +64,21 @@ const LEADERBOARD_RANGE = Object.freeze({
   overall: "overall"
 });
 const STATS_UNAVAILABLE_ERROR = "Stats service unavailable right now. Try again soon.";
+const PROVIDER_ADMIN_UNAVAILABLE_ERROR =
+  "Provider admin request failed right now. Try again soon.";
+const PROVIDER_ID = "libreoffice-dictionaries";
+const PROVIDER_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const PROVIDER_MIN_LENGTH = 3;
+const PROVIDER_VARIANT_LABELS = Object.freeze({
+  "en-GB": "English (UK)",
+  "en-US": "English (US)",
+  "en-CA": "English (Canada)",
+  "en-AU": "English (Australia)",
+  "en-ZA": "English (South Africa)"
+});
+const SUPPORTED_PROVIDER_VARIANTS = new Set(SUPPORTED_VARIANT_IDS);
 const BAKED_LANGUAGES = Object.freeze({
-  en: Object.freeze({ label: "English", file: "en.txt" }),
-  none: Object.freeze({ label: "No dictionary", file: null })
+  en: Object.freeze({ label: "English", file: "en.txt" })
 });
 let wordDataCache = null;
 const definitionCache = new Map();
@@ -209,9 +224,6 @@ function ensureWordData() {
 function canonicalizeLanguageId(raw) {
   const value = String(raw || "").trim();
   if (!value) return "";
-  if (value.toLowerCase() === "none") {
-    return "none";
-  }
   const match = /^([a-zA-Z]{2})(?:-([a-zA-Z]{2}))?$/.exec(value);
   if (!match) {
     return value;
@@ -268,9 +280,26 @@ function decodeWord(code) {
   return output;
 }
 
+function resolveDictionaryPath(file) {
+  const normalized = String(file || "").trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return "";
+  }
+  const candidates = [
+    path.join(DICT_PATH, normalized),
+    path.join(DATA_ROOT, normalized)
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
 function loadDictionary(file, minLength) {
   const timer = createPerfTimer(`dictionary.load.${file}`);
-  const fullPath = path.join(DICT_PATH, file);
+  const fullPath = resolveDictionaryPath(file);
   if (!fs.existsSync(fullPath)) {
     endPerfTimer(timer, "missing");
     return null;
@@ -538,34 +567,134 @@ function lookupEnglishDefinition(word) {
   return value;
 }
 
-const dictionaries = {};
+const dictionaries = Object.create(null);
+const answerDictionaries = Object.create(null);
 const languageRegistryStore = new LanguageRegistryStore({
   filePath: LANGUAGE_REGISTRY_PATH,
   bakedLanguages: BAKED_LANGUAGES,
   getMinLengthForLang,
   logger: console
 });
-const languageRegistrySnapshot = languageRegistryStore.loadSync();
-const registeredLanguageCatalog = new Map(
-  languageRegistrySnapshot.languages.map((language) => [language.id, language])
-);
-const availableLanguages = new Map();
-for (const language of languageRegistryStore.getEnabledLanguagesSync()) {
-  const key = language.id;
-  if (!language.hasDictionary || !language.dictionaryFile) {
-    dictionaries[key] = null;
-    availableLanguages.set(key, {
-      id: key,
-      label: language.label,
-      minLength: getMinLengthForLang(key),
-      hasDictionary: false
-    });
-    continue;
+let registeredLanguageCatalog = new Map();
+let availableLanguages = new Map();
+
+function clearObjectValues(target) {
+  for (const key of Object.keys(target)) {
+    delete target[key];
   }
-  const minLength = getMinLengthForLang(key);
-  const dict = loadDictionary(language.dictionaryFile, minLength);
-  dictionaries[key] = dict;
-  if (dict) {
+}
+
+function getProviderVariantLabel(variant) {
+  return PROVIDER_VARIANT_LABELS[variant] || `English (${variant})`;
+}
+
+function buildProviderRelativePath(variant, commit, fileName) {
+  return path.posix.join("providers", variant, commit, fileName);
+}
+
+function buildProviderArtifactPaths(variant, commit) {
+  return {
+    guessPool: buildProviderRelativePath(variant, commit, "guess-pool.txt"),
+    answerPoolActive: buildProviderRelativePath(variant, commit, "answer-pool-active.txt"),
+    answerPoolFallback: buildProviderRelativePath(variant, commit, "answer-pool.txt"),
+    sourceManifest: buildProviderRelativePath(variant, commit, "source-manifest.json")
+  };
+}
+
+function listImportableProviderCommits(variant) {
+  if (!SUPPORTED_PROVIDER_VARIANTS.has(variant)) {
+    return [];
+  }
+  const variantRoot = path.join(PROVIDERS_ROOT, variant);
+  if (!fs.existsSync(variantRoot)) {
+    return [];
+  }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(variantRoot, { withFileTypes: true });
+  } catch (err) {
+    return [];
+  }
+  const commits = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((commit) => PROVIDER_COMMIT_PATTERN.test(commit))
+    .filter((commit) => {
+      const paths = buildProviderArtifactPaths(variant, commit);
+      const hasGuessPool = fs.existsSync(path.join(DATA_ROOT, paths.guessPool));
+      const hasAnswerPool = fs.existsSync(path.join(DATA_ROOT, paths.answerPoolActive))
+        || fs.existsSync(path.join(DATA_ROOT, paths.answerPoolFallback));
+      const hasManifest = fs.existsSync(path.join(DATA_ROOT, paths.sourceManifest));
+      return hasGuessPool && hasAnswerPool && hasManifest;
+    })
+    // Commits are lowercase hex strings; code-point sort keeps ordering deterministic across locales.
+    .sort((left, right) => {
+      if (left === right) return 0;
+      return left > right ? -1 : 1;
+    });
+  return commits;
+}
+
+function resolvePreferredProviderCommit(variant, requestedCommit) {
+  if (requestedCommit) {
+    const normalized = String(requestedCommit || "").trim();
+    if (!PROVIDER_COMMIT_PATTERN.test(normalized)) {
+      throw new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.");
+    }
+    const available = listImportableProviderCommits(variant);
+    if (!available.includes(normalized)) {
+      throw new StatsApiError(
+        404,
+        "Imported provider artifacts were not found for that variant and commit."
+      );
+    }
+    return normalized;
+  }
+  const available = listImportableProviderCommits(variant);
+  if (!available.length) {
+    throw new StatsApiError(404, "No imported provider artifacts found for that variant.");
+  }
+  return available[0];
+}
+
+function rebuildLanguageRuntimeCatalog() {
+  clearObjectValues(dictionaries);
+  clearObjectValues(answerDictionaries);
+  availableLanguages = new Map();
+
+  const snapshot = languageRegistryStore.reloadSync();
+  registeredLanguageCatalog = new Map(
+    snapshot.languages.map((language) => [language.id, language])
+  );
+
+  for (const language of snapshot.languages) {
+    if (!language.enabled) {
+      continue;
+    }
+    if (!language.hasDictionary || !language.dictionaryFile) {
+      continue;
+    }
+    const key = language.id;
+    const minLength = Number.isInteger(language.minLength) && language.minLength > 0
+      ? language.minLength
+      : getMinLengthForLang(key);
+    const guessDictionary = loadDictionary(language.dictionaryFile, minLength);
+    if (!guessDictionary) {
+      continue;
+    }
+
+    let answerDictionary = guessDictionary;
+    if (language.source === "provider" && language.provider) {
+      const paths = buildProviderArtifactPaths(language.provider.variant, language.provider.commit);
+      answerDictionary = loadDictionary(paths.answerPoolActive, minLength)
+        || loadDictionary(paths.answerPoolFallback, minLength);
+      if (!answerDictionary) {
+        continue;
+      }
+    }
+
+    dictionaries[key] = guessDictionary;
+    answerDictionaries[key] = answerDictionary;
     availableLanguages.set(key, {
       id: key,
       label: language.label,
@@ -573,18 +702,23 @@ for (const language of languageRegistryStore.getEnabledLanguagesSync()) {
       hasDictionary: true
     });
   }
+
+  app.locals.availableLanguages = availableLanguages;
+  app.locals.languageRegistryStore = languageRegistryStore;
 }
+
+rebuildLanguageRuntimeCatalog();
 
 if (DEFINITIONS_MODE === "memory") {
   getOrLoadFullDefinitionsMap();
 }
 
-app.locals.availableLanguages = availableLanguages;
-app.locals.languageRegistryStore = languageRegistryStore;
-
 function getDictionary(lang) {
-  if (lang === "none") return null;
   return dictionaries[lang] || null;
+}
+
+function getAnswerDictionary(lang) {
+  return answerDictionaries[lang] || null;
 }
 
 function isLanguageAvailable(lang) {
@@ -595,7 +729,6 @@ function resolveLang(raw) {
   const normalized = normalizeLang(raw);
   if (!normalized) return null;
   if (isLanguageAvailable(normalized)) return normalized;
-  if (normalized === DEFAULT_LANG && isLanguageAvailable("none")) return "none";
   return null;
 }
 
@@ -616,7 +749,7 @@ function dictionaryRandomWord(dict, length) {
 
 function lookupAnswerMeaning(lang, word) {
   if (lang !== "en") return null;
-  const dict = getDictionary(lang);
+  const dict = getAnswerDictionary(lang);
   if (!dict || !dictionaryHasWord(dict, word)) return null;
   return lookupEnglishDefinition(word);
 }
@@ -938,6 +1071,71 @@ function statsServiceError(res, err) {
   return res.status(503).json({ error: STATS_UNAVAILABLE_ERROR });
 }
 
+function providerAdminError(res, err) {
+  if (err instanceof StatsApiError) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  console.error("Provider admin request failed.", err);
+  return res.status(503).json({ error: PROVIDER_ADMIN_UNAVAILABLE_ERROR });
+}
+
+function mapRegistryErrorToStats(err) {
+  if (!(err instanceof LanguageRegistryError)) {
+    return err;
+  }
+  if (
+    err.code === "INVALID_VARIANT" ||
+    err.code === "INVALID_COMMIT" ||
+    err.code === "INVALID_PROVIDER" ||
+    err.code === "INVALID_DICTIONARY_FILE" ||
+    err.code === "INVALID_LABEL" ||
+    err.code === "INVALID_MIN_LENGTH" ||
+    err.code === "INVALID_ENABLED" ||
+    err.code === "INVALID_LANGUAGE" ||
+    err.code === "INVALID_MUTATOR"
+  ) {
+    return new StatsApiError(400, err.message);
+  }
+  if (err.code === "LANGUAGE_NOT_FOUND") {
+    return new StatsApiError(404, err.message);
+  }
+  if (err.code === "BAKED_LANGUAGE_IMMUTABLE") {
+    return new StatsApiError(409, err.message);
+  }
+  if (err.code === "INVALID_REGISTRY_UPDATE") {
+    return new StatsApiError(409, err.message);
+  }
+  return err;
+}
+
+function parseProviderVariant(value) {
+  const variant = canonicalizeLanguageId(value);
+  if (!SUPPORTED_PROVIDER_VARIANTS.has(variant)) {
+    throw new StatsApiError(
+      400,
+      `variant must be one of ${Array.from(SUPPORTED_PROVIDER_VARIANTS).join(", ")}.`
+    );
+  }
+  return variant;
+}
+
+function buildProviderStatusRows() {
+  const rows = [];
+  for (const variant of SUPPORTED_VARIANT_IDS) {
+    const importedCommits = listImportableProviderCommits(variant);
+    const entry = registeredLanguageCatalog.get(variant) || null;
+    rows.push({
+      variant,
+      label: getProviderVariantLabel(variant),
+      imported: importedCommits.length > 0,
+      enabled: Boolean(entry?.enabled),
+      activeCommit: entry?.provider?.commit || null,
+      importedCommits
+    });
+  }
+  return rows;
+}
+
 app.disable("x-powered-by");
 if (TRUST_PROXY) {
   app.set("trust proxy", TRUST_PROXY_HOPS);
@@ -990,7 +1188,7 @@ app.get("/api/meta", (req, res) => {
   const languages = Array.from(availableLanguages.values());
   const defaultLang = isLanguageAvailable(DEFAULT_LANG)
     ? DEFAULT_LANG
-    : languages[0]?.id || "none";
+    : languages[0]?.id || DEFAULT_LANG;
 
   res.json({
     minLength: MIN_LEN,
@@ -1049,7 +1247,7 @@ app.post("/api/stats/profile", async (req, res) => {
       profile: responseProfile
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1089,7 +1287,7 @@ app.post("/api/stats/result", async (req, res) => {
       result: persistedEntry
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1114,7 +1312,7 @@ app.get("/api/stats/leaderboard", async (req, res) => {
       rows
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1150,7 +1348,7 @@ app.get("/api/stats/profile/:id", async (req, res) => {
       }
     });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
@@ -1190,14 +1388,93 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
 
     return res.json({ ok: true, profile: persistedProfile });
   } catch (err) {
-    return statsServiceError(res, err);
+    return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
 
 app.get("/api/admin/providers", (req, res) => {
-  res.status(501).json({
-    error: "Provider admin endpoints are not implemented yet."
+  return res.json({
+    ok: true,
+    providers: buildProviderStatusRows()
   });
+});
+
+app.post("/api/admin/providers/:variant/enable", (req, res) => {
+  let variant;
+  try {
+    variant = parseProviderVariant(req.params.variant);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  let commit;
+  try {
+    commit = resolvePreferredProviderCommit(variant, req.body?.commit);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  try {
+    const paths = buildProviderArtifactPaths(variant, commit);
+    const minLength = PROVIDER_MIN_LENGTH;
+    const guessDictionary = loadDictionary(paths.guessPool, minLength);
+    const answerDictionary = loadDictionary(paths.answerPoolActive, minLength)
+      || loadDictionary(paths.answerPoolFallback, minLength);
+    if (!guessDictionary || !answerDictionary) {
+      throw new StatsApiError(
+        409,
+        "Provider artifacts are incomplete. Expected guess and answer pools for that variant."
+      );
+    }
+
+    const snapshot = languageRegistryStore.upsertProviderLanguageSync({
+      variant,
+      commit,
+      providerId: PROVIDER_ID,
+      dictionaryFile: paths.guessPool,
+      label: getProviderVariantLabel(variant),
+      minLength,
+      enabled: true
+    });
+    rebuildLanguageRuntimeCatalog();
+
+    const entry = snapshot.languages.find((language) => language.id === variant) || null;
+    return res.json({
+      ok: true,
+      action: "enabled",
+      variant,
+      commit,
+      language: entry,
+      providers: buildProviderStatusRows()
+    });
+  } catch (err) {
+    return providerAdminError(res, mapRegistryErrorToStats(err));
+  }
+});
+
+app.post("/api/admin/providers/:variant/disable", (req, res) => {
+  let variant;
+  try {
+    variant = parseProviderVariant(req.params.variant);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  try {
+    const snapshot = languageRegistryStore.setLanguageEnabledSync(variant, false);
+    rebuildLanguageRuntimeCatalog();
+
+    const entry = snapshot.languages.find((language) => language.id === variant) || null;
+    return res.json({
+      ok: true,
+      action: "disabled",
+      variant,
+      language: entry,
+      providers: buildProviderStatusRows()
+    });
+  } catch (err) {
+    return providerAdminError(res, mapRegistryErrorToStats(err));
+  }
 });
 
 app.post("/api/encode", (req, res) => {
@@ -1213,7 +1490,7 @@ app.post("/api/encode", (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  const dict = getDictionary(lang);
+  const dict = getAnswerDictionary(lang);
   if (dict && !dictionaryHasWord(dict, word)) {
     return res.status(400).json({ error: "Word not found in dictionary for that language." });
   }
@@ -1240,7 +1517,7 @@ app.post("/api/random", (req, res) => {
       .json({ error: `Length must be ${minLength}-${MAX_LEN}.` });
   }
 
-  const dict = getDictionary(lang);
+  const dict = getAnswerDictionary(lang);
   if (!dict) {
     return res.status(400).json({ error: "No dictionary available for that language." });
   }

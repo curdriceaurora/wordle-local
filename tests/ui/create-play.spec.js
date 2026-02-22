@@ -1,5 +1,7 @@
 const { test, expect } = require("./fixtures");
 const gotoOptions = { waitUntil: "commit" };
+const RUN_TOKEN =
+  Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 6).toUpperCase() || "RUNNER";
 
 function todayLocalDate() {
   const now = new Date();
@@ -16,11 +18,11 @@ async function waitForLanguages(page) {
 test("create page generates encoded link", async ({ page }) => {
   await page.goto("/", gotoOptions);
   await waitForLanguages(page);
-  await page.selectOption("#langSelect", "none");
-  await page.fill("#wordInput", "JACKS");
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
   await page.fill("#guessInput", "4");
   await page.click("form#createForm button[type=submit]");
-  await expect(page.locator("#shareLink")).toHaveValue(/word=fotnd/i);
+  await expect(page.locator("#shareLink")).toHaveValue(/word=yfrqp/i);
   await expect(page.locator("#shareLink")).toHaveValue(/g=4/);
   await expect(page.locator("#playMeta")).toContainText("4 tries");
 });
@@ -35,9 +37,9 @@ test("random word generates link", async ({ page }) => {
 });
 
 test("play puzzle from encoded link", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none", gotoOptions);
+  await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#board");
-  await page.keyboard.type("JACKS");
+  await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6");
 });
@@ -79,20 +81,21 @@ test("reveals a local meaning after final failed guess", async ({ page }) => {
 });
 
 test("daily mode requires a player name and updates leaderboard stats", async ({ page }) => {
-  await page.goto(`/?word=fotnd&lang=none&daily=1&day=${todayLocalDate()}`, gotoOptions);
+  const playerName = `Ava ${RUN_TOKEN}`;
+  await page.goto(`/?word=yfrqp&lang=en&daily=1&day=${todayLocalDate()}`, gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)");
   await expect(page.locator("#profilePanel")).toBeVisible();
 
-  await page.keyboard.type("JACKS");
+  await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Pick a player name");
 
   await expect(page.locator("#profileNameInput")).toBeEnabled();
-  await page.fill("#profileNameInput", "Ava");
+  await page.fill("#profileNameInput", playerName);
   await page.click("#profileForm button[type=submit]");
-  await expect(page.locator("#activePlayerWrap")).toContainText("Ava");
+  await expect(page.locator("#activePlayerWrap")).toContainText(playerName);
 
-  await page.keyboard.type("JACKS");
+  await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6!");
 
@@ -100,25 +103,25 @@ test("daily mode requires a player name and updates leaderboard stats", async ({
   await expect(page.locator("#statWinRate")).toHaveText("100%");
   await expect(page.locator("#statStreak")).toHaveText("1");
   await expect(page.locator("#statBest")).toHaveText("1");
-  await expect(page.locator("#leaderboardBody")).toContainText("Ava");
+  await expect(page.locator("#leaderboardBody")).toContainText(playerName);
 
   await page.selectOption("#leaderboardRange", "overall");
   await expect(page.locator("#leaderboardMeta")).toContainText("All recorded daily games");
 });
 
 test("strict mode enforces revealed hints", async ({ page }) => {
-  await page.goto("/?word=fotnd&lang=none", gotoOptions);
+  await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)");
   await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
-  await page.keyboard.type("JELLO");
+  await page.keyboard.type("CRATE");
   await page.keyboard.press("Enter");
   await expect(
     page.locator(
       "#board .row:nth-child(1) .tile.absent, #board .row:nth-child(1) .tile.present, #board .row:nth-child(1) .tile.correct"
     )
   ).toHaveCount(5);
-  await page.keyboard.type("APPLE");
+  await page.keyboard.type("BLOOM");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Strict mode");
 });
@@ -126,7 +129,7 @@ test("strict mode enforces revealed hints", async ({ page }) => {
 test("strict mode requires repeated letters when revealed", async ({ page }) => {
   await page.goto("/", gotoOptions);
   await waitForLanguages(page);
-  await page.selectOption("#langSelect", "none");
+  await page.selectOption("#langSelect", "en");
   await page.fill("#wordInput", "LEVEL");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
@@ -157,8 +160,8 @@ test("language selection updates minimum length", async ({ page }) => {
 test("share link info modal opens and closes", async ({ page, browserName }) => {
   await page.goto("/", gotoOptions);
   await waitForLanguages(page);
-  await page.selectOption("#langSelect", "none");
-  await page.fill("#wordInput", "JACKS");
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
   const modal = page.locator("#shareModal");
@@ -196,7 +199,7 @@ test("invalid share link shows interstitial and redirects", async ({ page }) => 
 
 test("share link copy shows confirmation", async ({ page }) => {
   test.setTimeout(60000);
-  await page.goto("/?word=fotnd&lang=none", gotoOptions);
+  await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)", { timeout: 10000 });
   await page.click("#shareCopyBtn");
   await expect(page.locator("#message")).toContainText("Share link copied.");

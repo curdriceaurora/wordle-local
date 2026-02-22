@@ -6,6 +6,7 @@ const request = require("supertest");
 const DATA_PATH = path.join(__dirname, "..", "data", "word.json");
 const LANGUAGE_REGISTRY_PATH = path.join(__dirname, "..", "data", "languages.json");
 const DICT_PATH = path.join(__dirname, "..", "data", "dictionaries");
+const PROVIDERS_PATH = path.join(__dirname, "..", "data", "providers");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
 const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(
@@ -190,6 +191,34 @@ async function withTempLanguageRegistryContent(content, fn) {
   }
 }
 
+async function withTempProviderArtifacts(variant, commit, fn) {
+  const variantRoot = path.join(PROVIDERS_PATH, variant);
+  const backupPath = `${variantRoot}.bak-test-${Date.now()}`;
+  const hadOriginal = fs.existsSync(variantRoot);
+  if (hadOriginal) {
+    fs.renameSync(variantRoot, backupPath);
+  }
+
+  const commitRoot = path.join(variantRoot, commit);
+  fs.mkdirSync(commitRoot, { recursive: true });
+  fs.writeFileSync(path.join(commitRoot, "guess-pool.txt"), "CRANE\nSLATE\n", "utf8");
+  fs.writeFileSync(path.join(commitRoot, "answer-pool-active.txt"), "CRANE\n", "utf8");
+  fs.writeFileSync(
+    path.join(commitRoot, "source-manifest.json"),
+    `${JSON.stringify({ variant, commit }, null, 2)}\n`,
+    "utf8"
+  );
+
+  try {
+    return await fn();
+  } finally {
+    fs.rmSync(variantRoot, { recursive: true, force: true });
+    if (hadOriginal && fs.existsSync(backupPath)) {
+      fs.renameSync(backupPath, variantRoot);
+    }
+  }
+}
+
 function buildIndexPayload(definitions) {
   const shards = {};
   const entries = Object.entries(definitions).sort((a, b) => a[0].localeCompare(b[0]));
@@ -275,7 +304,7 @@ describe("Wordle API", () => {
     const app = loadApp();
     const response = await request(app)
       .post("/api/encode")
-      .send({ word: "JACKS", lang: "none" });
+      .send({ word: "JACKS", lang: "en" });
 
     expect(response.status).toBe(200);
     expect(response.body.code).toBe("FOTND");
@@ -313,7 +342,7 @@ describe("Wordle API", () => {
     const app = loadApp();
     const response = await request(app)
       .post("/api/encode")
-      .send({ word: "AB12", lang: "none" });
+      .send({ word: "AB12", lang: "en" });
 
     expect(response.status).toBe(400);
   });
@@ -332,7 +361,7 @@ describe("Wordle API", () => {
     const app = loadApp();
     const response = await request(app)
       .post("/api/puzzle")
-      .send({ code: "FOTND", lang: "none", guesses: 7 });
+      .send({ code: "FOTND", lang: "en", guesses: 7 });
 
     expect(response.status).toBe(200);
     expect(response.body.length).toBe(5);
@@ -343,12 +372,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const invalidGuess = await request(app)
       .post("/api/puzzle")
-      .send({ code: "FOTND", lang: "none", guesses: 2 });
+      .send({ code: "FOTND", lang: "en", guesses: 2 });
     expect(invalidGuess.status).toBe(400);
 
     const invalidCode = await request(app)
       .post("/api/puzzle")
-      .send({ code: "F0TND", lang: "none", guesses: 6 });
+      .send({ code: "F0TND", lang: "en", guesses: 6 });
     expect(invalidCode.status).toBe(400);
 
     const invalidLen = await request(app)
@@ -366,12 +395,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "CRANE", lang: "none" });
+      .send({ word: "CRANE", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "CRANE", lang: "none" });
+      .send({ code, guess: "CRANE", lang: "en" });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.isCorrect).toBe(true);
@@ -388,12 +417,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "CRANE", lang: "none" });
+      .send({ word: "CRANE", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "REACT", lang: "none" });
+      .send({ code, guess: "REACT", lang: "en" });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.result).toEqual([
@@ -409,12 +438,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "APPLE", lang: "none" });
+      .send({ word: "APPLE", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "PUPPY", lang: "none" });
+      .send({ code, guess: "PUPPY", lang: "en" });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.result).toEqual([
@@ -430,12 +459,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "BEEFY", lang: "none" });
+      .send({ word: "BEEFY", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "ELATE", lang: "none" });
+      .send({ code, guess: "ELATE", lang: "en" });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.result).toEqual([
@@ -451,12 +480,12 @@ describe("Wordle API", () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "LEVEL", lang: "none" });
+      .send({ word: "LEVEL", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "LEECH", lang: "none" });
+      .send({ code, guess: "LEECH", lang: "en" });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.result).toEqual([
@@ -468,21 +497,22 @@ describe("Wordle API", () => {
     ]);
   });
 
-  test("returns answer when reveal is true and guess is incorrect", async () => {
+  test("returns answer and meaning when reveal is true and guess is incorrect", async () => {
     const app = loadApp();
     const encodeResponse = await request(app)
       .post("/api/encode")
-      .send({ word: "CRANE", lang: "none" });
+      .send({ word: "CRANE", lang: "en" });
 
     const code = encodeResponse.body.code;
     const guessResponse = await request(app)
       .post("/api/guess")
-      .send({ code, guess: "SLATE", lang: "none", reveal: true });
+      .send({ code, guess: "SLATE", lang: "en", reveal: true });
 
     expect(guessResponse.status).toBe(200);
     expect(guessResponse.body.isCorrect).toBe(false);
     expect(guessResponse.body.answer).toBe("CRANE");
-    expect(guessResponse.body.answerMeaning).toBeUndefined();
+    expect(typeof guessResponse.body.answerMeaning).toBe("string");
+    expect(guessResponse.body.answerMeaning.length).toBeGreaterThan(0);
   });
 
   test("returns local answer meaning when reveal is true for english puzzles", async () => {
@@ -837,11 +867,17 @@ describe("Wordle API", () => {
       .post("/api/random")
       .send({ lang: "xx", length: 5 });
     expect(unknownLang.status).toBe(400);
+  });
 
-    const noDict = await request(app)
-      .post("/api/random")
-      .send({ lang: "none", length: 5 });
-    expect(noDict.status).toBe(400);
+  test("random rejects languages that are unavailable at runtime", async () => {
+    await withMissingDictionary("en.txt", async () => {
+      const app = loadApp();
+      const noDict = await request(app)
+        .post("/api/random")
+        .send({ lang: "en", length: 5 });
+      expect(noDict.status).toBe(400);
+      expect(noDict.body.error).toMatch(/Unknown language/i);
+    });
   });
 
   test("random handles no words available for requested length", async () => {
@@ -871,7 +907,7 @@ describe("Wordle API", () => {
       expect(response.status).toBe(200);
       const ids = response.body.languages.map((lang) => lang.id);
       expect(ids).not.toContain("en");
-      expect(ids).toContain("none");
+      expect(ids).toHaveLength(0);
     });
 
     await withTempDictionary("en.txt", "", async () => {
@@ -914,14 +950,14 @@ describe("Wordle API", () => {
     }
   });
 
-  test("falls back to no-dictionary language when default language is missing", async () => {
+  test("returns unknown language when default language dictionary is missing", async () => {
     await withMissingDictionary("en.txt", async () => {
       const app = loadApp();
       const response = await request(app)
         .post("/api/encode")
         .send({ word: "CRANE", lang: "en" });
-      expect(response.status).toBe(200);
-      expect(response.body.lang).toBe("none");
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/Unknown language/i);
     });
   });
 
@@ -1005,7 +1041,7 @@ describe("Admin auth", () => {
     expect(response.body.word).toBe("CRANE");
   });
 
-  test("protects /api/admin provider scaffold when key is configured", async () => {
+  test("protects /api/admin/providers when key is configured", async () => {
     const app = loadApp("secret");
     const unauthorized = await request(app).get("/api/admin/providers");
     expect(unauthorized.status).toBe(401);
@@ -1014,19 +1050,128 @@ describe("Admin auth", () => {
     const authorized = await request(app)
       .get("/api/admin/providers")
       .set("x-admin-key", "secret");
-    expect(authorized.status).toBe(501);
-    expect(authorized.body.error).toBe("Provider admin endpoints are not implemented yet.");
+    expect(authorized.status).toBe(200);
+    expect(authorized.body.ok).toBe(true);
+    expect(Array.isArray(authorized.body.providers)).toBe(true);
   });
 
-  test("keeps /api/admin provider scaffold open only when admin key is optional", async () => {
+  test("keeps /api/admin/providers open only when admin key is optional", async () => {
     const optionalAdmin = loadApp({ requireAdminKey: false });
     const optionalResponse = await request(optionalAdmin).get("/api/admin/providers");
-    expect(optionalResponse.status).toBe(501);
+    expect(optionalResponse.status).toBe(200);
+    expect(optionalResponse.body.ok).toBe(true);
 
     const requiredAdmin = loadApp({ nodeEnv: "production" });
     const requiredResponse = await request(requiredAdmin).get("/api/admin/providers");
     expect(requiredResponse.status).toBe(401);
     expect(requiredResponse.body.error).toBe("Admin key required.");
+  });
+
+  test("returns provider status rows for all supported variants", async () => {
+    const app = loadApp({ adminKey: "secret" });
+    const response = await request(app)
+      .get("/api/admin/providers")
+      .set("x-admin-key", "secret");
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(Array.isArray(response.body.providers)).toBe(true);
+    expect(response.body.providers).toHaveLength(5);
+    expect(response.body.providers.map((row) => row.variant)).toEqual([
+      "en-GB",
+      "en-US",
+      "en-CA",
+      "en-AU",
+      "en-ZA"
+    ]);
+  });
+
+  test("returns 404 when enabling provider variant without imported artifacts", async () => {
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/enable")
+        .set("x-admin-key", "secret")
+        .send({});
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/No imported provider artifacts/i);
+    });
+  });
+
+  test("returns 404 when disabling provider variant that is not in registry", async () => {
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      const app = loadApp({ adminKey: "secret" });
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/disable")
+        .set("x-admin-key", "secret")
+        .send({});
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toMatch(/is not in the registry/i);
+    });
+  });
+
+  test("enables and disables provider variant with valid imported artifacts", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+      await withTempProviderArtifacts("en-US", commit, async () => {
+        const app = loadApp({ adminKey: "secret" });
+
+        const enableResponse = await request(app)
+          .post("/api/admin/providers/en-us/enable")
+          .set("x-admin-key", "secret")
+          .send({});
+        expect(enableResponse.status).toBe(200);
+        expect(enableResponse.body.action).toBe("enabled");
+        expect(enableResponse.body.variant).toBe("en-US");
+        expect(enableResponse.body.language.enabled).toBe(true);
+        expect(enableResponse.body.language.provider.commit).toBe(commit);
+
+        const metaEnabled = await request(app).get("/api/meta");
+        expect(metaEnabled.status).toBe(200);
+        expect(metaEnabled.body.languages.map((language) => language.id)).toContain("en-US");
+
+        const encodeResponse = await request(app)
+          .post("/api/encode")
+          .send({ word: "CRANE", lang: "en-us" });
+        expect(encodeResponse.status).toBe(200);
+        expect(encodeResponse.body.lang).toBe("en-US");
+
+        const disableResponse = await request(app)
+          .post("/api/admin/providers/en-US/disable")
+          .set("x-admin-key", "secret")
+          .send({});
+        expect(disableResponse.status).toBe(200);
+        expect(disableResponse.body.action).toBe("disabled");
+        expect(disableResponse.body.language.enabled).toBe(false);
+
+        const metaDisabled = await request(app).get("/api/meta");
+        expect(metaDisabled.status).toBe(200);
+        expect(metaDisabled.body.languages.map((language) => language.id)).not.toContain("en-US");
+      });
+    });
+  });
+
+  test("returns provider-specific 503 envelope for unexpected admin provider failures", async () => {
+    const app = loadApp({ adminKey: "secret" });
+    const spy = jest
+      .spyOn(app.locals.languageRegistryStore, "setLanguageEnabledSync")
+      .mockImplementation(() => {
+        throw new Error("simulated failure");
+      });
+
+    try {
+      const response = await request(app)
+        .post("/api/admin/providers/en-US/disable")
+        .set("x-admin-key", "secret")
+        .send({});
+
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe("Provider admin request failed right now. Try again soon.");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -1130,10 +1275,10 @@ describe("Stats API", () => {
       const oldDay = formatLocalDateOffset(-40);
 
       const entries = [
-        { date: today, key: `${today}|none|aaaaa`, won: true, attempts: 3 },
-        { date: yesterday, key: `${yesterday}|none|bbbbb`, won: true, attempts: 2 },
-        { date: twoDaysAgo, key: `${twoDaysAgo}|none|ccccc`, won: false, attempts: null },
-        { date: oldDay, key: `${oldDay}|none|ddddd`, won: true, attempts: 1 }
+        { date: today, key: `${today}|en|aaaaa`, won: true, attempts: 3 },
+        { date: yesterday, key: `${yesterday}|en|bbbbb`, won: true, attempts: 2 },
+        { date: twoDaysAgo, key: `${twoDaysAgo}|en|ccccc`, won: false, attempts: null },
+        { date: oldDay, key: `${oldDay}|en|ddddd`, won: true, attempts: 1 }
       ];
 
       for (const entry of entries) {
@@ -1207,7 +1352,7 @@ describe("Stats API", () => {
       async function submit(profileId, date, code, won, attempts) {
         const response = await request(app).post("/api/stats/result").send({
           profileId,
-          dailyKey: `${date}|none|${code}`,
+          dailyKey: `${date}|en|${code}`,
           won,
           attempts,
           maxGuesses: 6
@@ -1395,10 +1540,10 @@ describe("Stats API", () => {
     });
     try {
       const app = loadApp({ statsStorePath: tempStore.filePath });
-      const puzzle = await request(app).post("/api/puzzle").send({ code: "FOTND", lang: "none", guesses: 6 });
+      const puzzle = await request(app).post("/api/puzzle").send({ code: "FOTND", lang: "en", guesses: 6 });
       expect(puzzle.status).toBe(200);
 
-      const guess = await request(app).post("/api/guess").send({ code: "FOTND", guess: "JACKS", lang: "none" });
+      const guess = await request(app).post("/api/guess").send({ code: "FOTND", guess: "JACKS", lang: "en" });
       expect(guess.status).toBe(200);
       expect(Array.isArray(guess.body.result)).toBe(true);
       expect(guess.body.result).toEqual(["correct", "correct", "correct", "correct", "correct"]);
@@ -1456,12 +1601,12 @@ describe("Daily word data recovery and daily route", () => {
     const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
       today.getDate()
     ).padStart(2, "0")}`;
-    writeWordData({ word: "TIGER", lang: "none", date, updatedAt: new Date().toISOString() });
+    writeWordData({ word: "TIGER", lang: "en", date, updatedAt: new Date().toISOString() });
     const app = loadApp();
     const response = await request(app).get("/daily");
     expect(response.status).toBe(302);
     expect(response.headers.location).toMatch(/word=/);
-    expect(response.headers.location).toMatch(/lang=none/);
+    expect(response.headers.location).not.toMatch(/lang=/);
     expect(response.headers.location).toMatch(/daily=1/);
     expect(response.headers.location).toMatch(/day=\d{4}-\d{2}-\d{2}/);
   });
@@ -1490,7 +1635,7 @@ describe("Language registry recovery", () => {
       expect(Array.isArray(repaired.languages)).toBe(true);
       const ids = repaired.languages.map((language) => language.id);
       expect(ids).toContain("en");
-      expect(ids).toContain("none");
+      expect(ids).not.toContain("none");
     });
   });
 
@@ -1507,15 +1652,6 @@ describe("Language registry recovery", () => {
           minLength: 3,
           hasDictionary: true,
           dictionaryFile: "en.txt"
-        },
-        {
-          id: "none",
-          label: "No dictionary",
-          enabled: true,
-          source: "baked",
-          minLength: 3,
-          hasDictionary: false,
-          dictionaryFile: null
         }
       ]
     });
@@ -1525,55 +1661,51 @@ describe("Language registry recovery", () => {
     expect(response.status).toBe(200);
     const ids = response.body.languages.map((language) => language.id);
     expect(ids).toContain("en");
-    expect(ids).toContain("none");
+    expect(ids).not.toContain("none");
   });
 
   test("accepts canonicalized BCP47 language IDs from requests", async () => {
-    writeLanguageRegistry({
-      version: 1,
-      updatedAt: "2026-02-20T00:00:00.000Z",
-      languages: [
-        {
-          id: "en",
-          label: "English",
-          enabled: true,
-          source: "baked",
-          minLength: 3,
-          hasDictionary: true,
-          dictionaryFile: "en.txt"
-        },
-        {
-          id: "none",
-          label: "No dictionary",
-          enabled: true,
-          source: "baked",
-          minLength: 3,
-          hasDictionary: false,
-          dictionaryFile: null
-        },
-        {
-          id: "en-US",
-          label: "English (US)",
-          enabled: true,
-          source: "provider",
-          minLength: 3,
-          hasDictionary: false,
-          dictionaryFile: null,
-          provider: {
-            providerId: "libreoffice-dictionaries",
-            variant: "en-US"
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    await withTempProviderArtifacts("en-US", commit, async () => {
+      writeLanguageRegistry({
+        version: 1,
+        updatedAt: "2026-02-20T00:00:00.000Z",
+        languages: [
+          {
+            id: "en",
+            label: "English",
+            enabled: true,
+            source: "baked",
+            minLength: 3,
+            hasDictionary: true,
+            dictionaryFile: "en.txt"
+          },
+          {
+            id: "en-US",
+            label: "English (US)",
+            enabled: true,
+            source: "provider",
+            minLength: 3,
+            hasDictionary: true,
+            dictionaryFile: `providers/en-US/${commit}/guess-pool.txt`,
+            provider: {
+              providerId: "libreoffice-dictionaries",
+              variant: "en-US",
+              commit
+            }
           }
-        }
-      ]
+        ]
+      });
+
+      const app = loadApp();
+      const encodeResponse = await request(app)
+        .post("/api/encode")
+        .send({ word: "CRANE", lang: "en-us" });
+
+      expect(encodeResponse.status).toBe(200);
+      expect(typeof encodeResponse.body.code).toBe("string");
+      expect(encodeResponse.body.lang).toBe("en-US");
     });
-
-    const app = loadApp();
-    const encodeResponse = await request(app)
-      .post("/api/encode")
-      .send({ word: "CRANE", lang: "en-us" });
-
-    expect(encodeResponse.status).toBe(200);
-    expect(typeof encodeResponse.body.code).toBe("string");
   });
 });
 

@@ -10,15 +10,6 @@
       "minLength": 3,
       "hasDictionary": true,
       "dictionaryFile": "en.txt"
-    },
-    {
-      "id": "none",
-      "label": "No dictionary",
-      "enabled": true,
-      "source": "baked",
-      "minLength": 3,
-      "hasDictionary": false,
-      "dictionaryFile": null
     }
   ]
 }

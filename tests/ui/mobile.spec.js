@@ -14,8 +14,8 @@ for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/", { waitUntil: "commit" });
     await waitForLanguages(page);
-    await page.selectOption("#langSelect", "none");
-    await page.fill("#wordInput", "JACKS");
+    await page.selectOption("#langSelect", "en");
+    await page.fill("#wordInput", "CRANE");
     await page.click("form#createForm button[type=submit]");
     await page.waitForSelector("#playPanel:not(.hidden)");
 
