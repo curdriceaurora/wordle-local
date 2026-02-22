@@ -18,6 +18,7 @@
     "check": "npm run lint && npm run schema:check && npm run guardrails:nits && npm test -- --runInBand",
     "pr:nits": "node scripts/pr-nits-report.js",
     "pr:watch-status": "node scripts/pr-watch-status.js",
+    "test:provider:ui": "PLAYWRIGHT_BROWSERS=chromium playwright test tests/ui/admin-shell.spec.js",
     "test": "jest",
     "test:ui": "UI_COVERAGE=1 node scripts/ui-coverage-clean.js && UI_COVERAGE=1 playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
     "test:ui:fast": "UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium node scripts/ui-coverage-clean.js && UI_COVERAGE=1 PLAYWRIGHT_BROWSERS=chromium playwright test && UI_COVERAGE=1 node scripts/ui-coverage-report.js",
