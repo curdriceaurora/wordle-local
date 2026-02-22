@@ -24,8 +24,36 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Detect Provider Workflow Changes
+        if: github.event_name == 'pull_request'
+        id: provider_paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            provider_workflow:
+              - 'server.js'
+              - 'lib/admin-auth.js'
+              - 'lib/provider-*.js'
+              - 'lib/language-registry.js'
+              - 'public/admin/**'
+              - 'playwright.config.js'
+              - 'tests/ui/admin-shell.spec.js'
+              - 'tests/ui/fixtures.js'
+              - 'tests/server.test.js'
+              - 'data/providers/**'
+              - 'data/languages.json'
+              - 'data/languages.schema.json'
+
       - name: Run Local Quality Gates
         run: npm run check
+
+      - name: Install Playwright Chromium (provider gate)
+        if: github.event_name == 'pull_request' && steps.provider_paths.outputs.provider_workflow == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Provider Workflow UI Regression Gate
+        if: github.event_name == 'pull_request' && steps.provider_paths.outputs.provider_workflow == 'true'
+        run: npm run test:provider:ui
 
       - name: Install Playwright Browsers
         if: github.event_name == 'schedule'

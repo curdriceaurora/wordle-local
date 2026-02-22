@@ -118,6 +118,7 @@ Third-party assets (notably the English dictionary) are licensed separately. See
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 Release maintainers should also use `docs/release-checklist.md`.
+Provider/admin release changes should additionally follow `docs/provider-rollout-checklist.md`.
 
 ## Disclaimer
 This project is provided “as is”, without warranty of any kind. See `DISCLAIMER.md`.

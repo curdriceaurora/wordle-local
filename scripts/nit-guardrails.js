@@ -69,6 +69,52 @@ function checkLanguageSchemaDictionaryCoupling(errors) {
   }
 }
 
+function checkProviderDiagnosticsContract(errors) {
+  const serverSource = readFile("server.js");
+  if (!serverSource.includes("warning:")) {
+    errors.push("server.js provider status rows must expose warning diagnostics for usable variants.");
+  }
+  if (!serverSource.includes('error: status === "error" ? incompleteDetails : null')) {
+    errors.push("server.js must keep provider `error` field exclusive to status=\"error\".");
+  }
+  if (!serverSource.includes('status === "enabled" || status === "imported"')) {
+    errors.push("server.js must classify usable provider variants as warning-bearing (not error) when incomplete commits exist.");
+  }
+
+  const adminAppSource = readFile("public/admin/app.js");
+  if (!adminAppSource.includes("provider.error") || !adminAppSource.includes("provider.warning")) {
+    errors.push("public/admin/app.js must render provider error/warning diagnostics from API payload.");
+  }
+  if (!adminAppSource.includes("admin-provider-status-detail")) {
+    errors.push("public/admin/app.js must render provider diagnostics as a visible secondary status detail.");
+  }
+}
+
+function checkProviderWorkflowCiGate(errors) {
+  const ciWorkflow = readFile(".github/workflows/ci.yml");
+  if (!ciWorkflow.includes("Run Provider Workflow UI Regression Gate")) {
+    errors.push("ci.yml must include an explicit provider workflow UI regression gate step.");
+  }
+  if (!ciWorkflow.includes("npm run test:provider:ui")) {
+    errors.push("ci.yml provider workflow gate must execute npm run test:provider:ui.");
+  }
+  const requiredProviderFilterPaths = [
+    "'server.js'",
+    "'lib/admin-auth.js'",
+    "'lib/provider-*.js'",
+    "'public/admin/**'",
+    "'tests/ui/admin-shell.spec.js'",
+    "'tests/ui/fixtures.js'"
+  ];
+  requiredProviderFilterPaths.forEach((pattern) => {
+    if (!ciWorkflow.includes(pattern)) {
+      errors.push(
+        `ci.yml provider_workflow path filter must include ${pattern} to avoid skipping provider UI gates.`
+      );
+    }
+  });
+}
+
 function run() {
   const errors = [];
 
@@ -127,6 +173,8 @@ function run() {
   }
 
   checkLanguageSchemaDictionaryCoupling(errors);
+  checkProviderDiagnosticsContract(errors);
+  checkProviderWorkflowCiGate(errors);
 
   if (errors.length > 0) {
     console.error("[nit:guardrails] Failed:");

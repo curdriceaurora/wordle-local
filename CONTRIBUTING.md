@@ -12,6 +12,7 @@ Thanks for your interest in contributing!
 - Run tests locally:
   - `npm test`
   - `npm run test:ui` (or `npm run test:ui:fast` for a quick check)
+  - For provider/admin workflow changes, also run `npm run test:provider:ui`
 
 ## Pull Requests
 - Describe the user impact and any UI changes.

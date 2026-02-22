@@ -46,9 +46,12 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 40. Startup resolution for static paths: avoid request-path `fs.existsSync` probes for static shell assets; resolve once at startup and reuse.
 41. Cache policy parity: when entry HTML is `no-store` for operational safety, ensure its companion route-specific assets are explicitly covered by matching cache policy (or document intentional differences).
 42. Filesystem-order determinism: any API output derived from `fs.readdir*` must be explicitly sorted before use in responses/error strings/tests.
+43. Provider diagnostics contract: backend status payloads must keep `error` exclusive to hard-error states and use a separate `warning` field for usable-but-degraded states.
+44. Provider diagnostics visibility: admin UI must render provider warning/error detail text (not status text alone) so operators can debug import issues without server logs.
+45. Provider CI gate coverage: PR CI must run a targeted provider admin UI regression test whenever provider/admin workflow files change.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
@@ -75,4 +78,5 @@ If a PR had no substantive review nits, add a row with `Nit observed = none` and
 
 | Date (UTC) | PR | Type | Nit observed | Preventive rule added |
 | --- | --- | --- | --- | --- |
+| 2026-02-22 | #66 | Copilot | Provider status payload mixed `error` with non-error states; admin UI hid provider diagnostics. | Added rules 43, 44, 45 and enforced via `scripts/nit-guardrails.js` + CI provider UI gate. |
 | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
