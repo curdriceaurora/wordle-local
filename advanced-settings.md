@@ -13,8 +13,11 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - `POST /api/word`
   - `PATCH /api/admin/stats/profile/:id`
   - `GET /api/admin/providers`
+  - `POST /api/admin/providers/import`
   - `POST /api/admin/providers/:variant/enable`
   - `POST /api/admin/providers/:variant/disable`
+- Import request body example:
+  - `{"variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
 
 ## Network/Proxy
 - `TRUST_PROXY` — set to `true` if running behind a reverse proxy or Tailscale (default `true` in production).

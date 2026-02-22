@@ -45,6 +45,16 @@
   white-space: nowrap;
 }
 
+.admin-action-stack {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.admin-action-stack .ghost {
+  min-width: 5.6rem;
+}
+
 .admin-status-ok {
   color: var(--correct);
 }
@@ -60,5 +70,10 @@
 @media (max-width: 680px) {
   .admin-workspace .leaderboard-table {
     min-width: 34rem;
+  }
+
+  .admin-action-stack {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

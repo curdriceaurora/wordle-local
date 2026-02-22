@@ -42,9 +42,12 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 36. ARIA tab semantics: any tabbed UI must ship full role/linkage semantics (`tablist` + `tab` + `tabpanel`, `aria-controls`/`aria-labelledby`, `aria-selected`, roving `tabIndex`) and keyboard navigation (`ArrowLeft`/`ArrowRight` + `Home`/`End`).
 37. A11y parity for new pages: every new top-level UI route must have an axe regression test in both default/entry and primary interactive state.
 38. Session key persistence guard: when admin or sensitive keys are expected to be memory-only, UI tests must assert keys are absent from both `localStorage` and `sessionStorage`.
+39. Route asset-root consistency: any HTML route that can be served from multiple roots (`public` vs `public/dist`) must resolve the full asset set (`index.html` + referenced JS/CSS) from one consistent root.
+40. Startup resolution for static paths: avoid request-path `fs.existsSync` probes for static shell assets; resolve once at startup and reuse.
+41. Cache policy parity: when entry HTML is `no-store` for operational safety, ensure its companion route-specific assets are explicitly covered by matching cache policy (or document intentional differences).
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

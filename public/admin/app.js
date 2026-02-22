@@ -8,6 +8,14 @@ const providersBodyEl = document.getElementById("providersBody");
 const refreshProvidersBtnEl = document.getElementById("refreshProvidersBtn");
 const lockSessionBtnEl = document.getElementById("lockSessionBtn");
 const updatedEl = document.getElementById("adminUpdated");
+const importFormEl = document.getElementById("importForm");
+const importVariantEl = document.getElementById("importVariant");
+const importCommitEl = document.getElementById("importCommit");
+const importChecksumDicEl = document.getElementById("importChecksumDic");
+const importChecksumAffEl = document.getElementById("importChecksumAff");
+const importFilterModeEl = document.getElementById("importFilterMode");
+const importSubmitBtnEl = document.getElementById("importSubmitBtn");
+const importStatusEl = document.getElementById("importStatus");
 
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
@@ -16,6 +24,7 @@ const state = {
   adminKey: "",
   unlocked: false,
   loading: false,
+  importing: false,
   providers: [],
   activeTab: "providers"
 };
@@ -91,19 +100,50 @@ function renderProviders() {
     labelCell.textContent = provider.label;
     row.appendChild(labelCell);
 
-    const importedCell = document.createElement("td");
-    importedCell.textContent = provider.imported ? "Yes" : "No";
-    importedCell.className = provider.imported ? "admin-status-ok" : "admin-status-missing";
-    row.appendChild(importedCell);
-
-    const enabledCell = document.createElement("td");
-    enabledCell.textContent = provider.enabled ? "Yes" : "No";
-    enabledCell.className = provider.enabled ? "admin-status-ok" : "admin-status-off";
-    row.appendChild(enabledCell);
+    const statusCell = document.createElement("td");
+    const status = String(provider.status || "").trim() || (provider.enabled ? "enabled" : provider.imported ? "imported" : "not-imported");
+    const statusText = status.replace(/-/g, " ");
+    statusCell.textContent = statusText;
+    if (status === "enabled" || status === "imported") {
+      statusCell.className = "admin-status-ok";
+    } else if (status === "error") {
+      statusCell.className = "admin-status-missing";
+    } else {
+      statusCell.className = "admin-status-off";
+    }
+    row.appendChild(statusCell);
 
     const commitCell = document.createElement("td");
     commitCell.textContent = provider.activeCommit || "-";
     row.appendChild(commitCell);
+
+    const actionsCell = document.createElement("td");
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "admin-action-stack";
+
+    const toggleButton = document.createElement("button");
+    toggleButton.type = "button";
+    toggleButton.className = "ghost";
+    toggleButton.dataset.variant = provider.variant;
+    toggleButton.dataset.action = provider.enabled ? "disable" : "enable";
+    toggleButton.textContent = provider.enabled ? "Disable" : "Enable";
+    toggleButton.disabled = state.loading
+      || state.importing
+      || (!provider.enabled && !Array.isArray(provider.importedCommits))
+      || (!provider.enabled && provider.importedCommits.length === 0);
+    actionsWrap.appendChild(toggleButton);
+
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.className = "ghost";
+    importButton.dataset.variant = provider.variant;
+    importButton.dataset.action = "prefill-import";
+    importButton.textContent = provider.imported ? "Re-import" : "Import";
+    importButton.disabled = state.loading || state.importing;
+    actionsWrap.appendChild(importButton);
+
+    actionsCell.appendChild(actionsWrap);
+    row.appendChild(actionsCell);
 
     fragment.appendChild(row);
   });
@@ -114,8 +154,11 @@ function renderProviders() {
 function renderWorkspace() {
   setHidden(unlockPanelEl, state.unlocked);
   setHidden(shellPanelEl, !state.unlocked);
-  refreshProvidersBtnEl.disabled = !state.unlocked || state.loading;
-  lockSessionBtnEl.disabled = state.loading;
+  refreshProvidersBtnEl.disabled = !state.unlocked || state.loading || state.importing;
+  lockSessionBtnEl.disabled = state.loading || state.importing;
+  if (importSubmitBtnEl) {
+    importSubmitBtnEl.disabled = !state.unlocked || state.loading || state.importing;
+  }
   updatedEl.textContent = state.unlocked ? "Session unlocked" : "Session locked";
   renderTabs();
   renderProviders();
@@ -172,6 +215,116 @@ async function loadProviders() {
   }
 }
 
+function findProviderByVariant(variant) {
+  const key = String(variant || "").trim().toLowerCase();
+  return state.providers.find((provider) => String(provider.variant || "").toLowerCase() === key) || null;
+}
+
+function parseImportPayloadFromForm() {
+  const variant = String(importVariantEl?.value || "").trim();
+  const commit = String(importCommitEl?.value || "").trim();
+  const checksumDic = String(importChecksumDicEl?.value || "").trim().toLowerCase();
+  const checksumAff = String(importChecksumAffEl?.value || "").trim().toLowerCase();
+  const filterMode = String(importFilterModeEl?.value || "denylist-only").trim();
+
+  const commitPattern = /^[a-f0-9]{40}$/;
+  const checksumPattern = /^[a-f0-9]{64}$/;
+  if (!variant) {
+    throw new Error("Select a variant before importing.");
+  }
+  if (!commitPattern.test(commit)) {
+    throw new Error("Commit must be a 40-character lowercase hexadecimal SHA.");
+  }
+  if (!checksumPattern.test(checksumDic) || !checksumPattern.test(checksumAff)) {
+    throw new Error("Checksums must be 64-character lowercase SHA-256 values.");
+  }
+  if (filterMode !== "denylist-only" && filterMode !== "allowlist-required") {
+    throw new Error("Filter mode must be denylist-only or allowlist-required.");
+  }
+
+  return {
+    variant,
+    commit,
+    filterMode,
+    expectedChecksums: {
+      dic: checksumDic,
+      aff: checksumAff
+    }
+  };
+}
+
+async function importProvider() {
+  const payload = parseImportPayloadFromForm();
+  state.importing = true;
+  renderWorkspace();
+  setStatus(importStatusEl, "Import started. Building provider artifacts...", "admin-status-off");
+  try {
+    const response = await requestAdminJson("/api/admin/providers/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const activated = Number(response?.counts?.filteredAnswers || 0);
+    setStatus(
+      importStatusEl,
+      `Import complete for ${payload.variant} @ ${payload.commit.slice(0, 10)}... (${activated} family-safe answers).`,
+      "admin-status-ok"
+    );
+    await loadProviders();
+    setStatus(workspaceStatusEl, `Provider import succeeded for ${payload.variant}.`, "admin-status-ok");
+  } finally {
+    state.importing = false;
+    renderWorkspace();
+  }
+}
+
+async function toggleProviderState(variant, action) {
+  const provider = findProviderByVariant(variant);
+  if (!provider) {
+    throw new Error("Provider variant could not be found in current status list.");
+  }
+
+  const wantsEnable = action === "enable";
+  const endpoint = wantsEnable
+    ? `/api/admin/providers/${encodeURIComponent(provider.variant)}/enable`
+    : `/api/admin/providers/${encodeURIComponent(provider.variant)}/disable`;
+  const commit = provider.activeCommit || provider.importedCommits?.[0] || null;
+
+  if (wantsEnable) {
+    if (!commit) {
+      throw new Error("No imported commit is available to enable.");
+    }
+    const shouldContinue = window.confirm(
+      `Enable ${provider.variant} using commit ${commit}? This will expose the language in Create/Play.`
+    );
+    if (!shouldContinue) {
+      return;
+    }
+  }
+
+  state.loading = true;
+  renderWorkspace();
+  try {
+    const payload = wantsEnable ? { commit } : {};
+    await requestAdminJson(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    setStatus(
+      workspaceStatusEl,
+      wantsEnable
+        ? `${provider.variant} enabled.`
+        : `${provider.variant} disabled.`,
+      "admin-status-ok"
+    );
+    await loadProviders();
+  } finally {
+    state.loading = false;
+    renderWorkspace();
+  }
+}
+
 unlockFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   state.adminKey = String(adminKeyInputEl.value || "").trim();
@@ -192,6 +345,52 @@ lockSessionBtnEl.addEventListener("click", () => {
   setStatus(unlockStatusEl, "");
   renderWorkspace();
   adminKeyInputEl.focus();
+});
+
+if (importFormEl) {
+  importFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await importProvider();
+    } catch (err) {
+      setStatus(importStatusEl, `Import failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+providersBodyEl.addEventListener("click", async (event) => {
+  const target = event.target instanceof Element ? event.target.closest("button[data-action]") : null;
+  if (!target) {
+    return;
+  }
+  const action = String(target.dataset.action || "").trim();
+  const variant = String(target.dataset.variant || "").trim();
+  if (!action || !variant) {
+    return;
+  }
+
+  if (action === "prefill-import") {
+    const provider = findProviderByVariant(variant);
+    if (!provider) return;
+    if (importVariantEl) importVariantEl.value = provider.variant;
+    if (importCommitEl) {
+      importCommitEl.value = provider.activeCommit || provider.importedCommits?.[0] || "";
+      importCommitEl.focus();
+    }
+    setStatus(
+      importStatusEl,
+      `Import form prefilled for ${provider.variant}. Enter checksums and submit.`,
+      "admin-status-off"
+    );
+    activateTab("imports", true);
+    return;
+  }
+
+  try {
+    await toggleProviderState(variant, action);
+  } catch (err) {
+    setStatus(workspaceStatusEl, `Provider update failed: ${err.message}`, "admin-status-missing");
+  }
 });
 
 tabButtons.forEach((button) => {

@@ -105,9 +105,9 @@
                   <tr>
                     <th>Variant</th>
                     <th>Label</th>
-                    <th>Imported</th>
-                    <th>Enabled</th>
+                    <th>Status</th>
                     <th>Active commit</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="providersBody"></tbody>
@@ -124,10 +124,66 @@
             tabindex="0"
             hidden
           >
-            <h3>Import Queue Slot</h3>
+            <h3>Provider Import</h3>
             <p class="note">
-              Placeholder container for provider import/check workflows planned in issue #24.
+              Import pulls `.dic` and `.aff` from LibreOffice at a pinned commit, verifies checksums,
+              and builds provider artifacts.
             </p>
+            <form id="importForm" class="create-form" autocomplete="off">
+              <label for="importVariant">Variant</label>
+              <select id="importVariant" name="variant">
+                <option value="en-GB">English (UK)</option>
+                <option value="en-US">English (US)</option>
+                <option value="en-CA">English (Canada)</option>
+                <option value="en-AU">English (Australia)</option>
+                <option value="en-ZA">English (South Africa)</option>
+              </select>
+
+              <label for="importCommit">Pinned commit (40-char SHA)</label>
+              <input
+                id="importCommit"
+                name="commit"
+                type="text"
+                inputmode="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="0123456789abcdef0123456789abcdef01234567"
+                maxlength="40"
+              />
+
+              <label for="importChecksumDic">Dictionary checksum (SHA-256)</label>
+              <input
+                id="importChecksumDic"
+                name="checksumDic"
+                type="text"
+                inputmode="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="64-char lowercase sha256"
+                maxlength="64"
+              />
+
+              <label for="importChecksumAff">Affix checksum (SHA-256)</label>
+              <input
+                id="importChecksumAff"
+                name="checksumAff"
+                type="text"
+                inputmode="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="64-char lowercase sha256"
+                maxlength="64"
+              />
+
+              <label for="importFilterMode">Family filter mode</label>
+              <select id="importFilterMode" name="filterMode">
+                <option value="denylist-only">Denylist only (default)</option>
+                <option value="allowlist-required">Allowlist required</option>
+              </select>
+
+              <button id="importSubmitBtn" type="submit">Import provider bundle</button>
+            </form>
+            <div id="importStatus" class="message" role="status" aria-live="polite"></div>
           </section>
 
           <section
@@ -139,9 +195,10 @@
             tabindex="0"
             hidden
           >
-            <h3>Runtime Slot</h3>
+            <h3>Runtime Notes</h3>
             <p class="note">
-              Placeholder container for runtime status and diagnostics attached to provider workflows.
+              Enable applies imported dictionaries immediately for create/play flows. Disable removes
+              the variant from active language options without deleting imported artifacts.
             </p>
           </section>
 
