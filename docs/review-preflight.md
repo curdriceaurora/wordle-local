@@ -45,9 +45,10 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 39. Route asset-root consistency: any HTML route that can be served from multiple roots (`public` vs `public/dist`) must resolve the full asset set (`index.html` + referenced JS/CSS) from one consistent root.
 40. Startup resolution for static paths: avoid request-path `fs.existsSync` probes for static shell assets; resolve once at startup and reuse.
 41. Cache policy parity: when entry HTML is `no-store` for operational safety, ensure its companion route-specific assets are explicitly covered by matching cache policy (or document intentional differences).
+42. Filesystem-order determinism: any API output derived from `fs.readdir*` must be explicitly sorted before use in responses/error strings/tests.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

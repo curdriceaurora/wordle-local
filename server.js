@@ -658,7 +658,12 @@ function listProviderCommitDirectories(variant) {
       .readdirSync(variantRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
-      .filter((commit) => PROVIDER_COMMIT_PATTERN.test(commit));
+      .filter((commit) => PROVIDER_COMMIT_PATTERN.test(commit))
+      // Commits are lowercase hex strings; code-point sort keeps ordering deterministic across locales/filesystems.
+      .sort((left, right) => {
+        if (left === right) return 0;
+        return left > right ? -1 : 1;
+      });
   } catch (err) {
     return [];
   }
