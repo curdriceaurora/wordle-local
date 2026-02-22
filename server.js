@@ -11,6 +11,7 @@ const { requireAdmin } = require("./lib/admin-auth");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource } = require("./lib/provider-fetch");
+const { checkProviderUpdate, ProviderUpdateCheckError } = require("./lib/provider-update-check");
 const { buildExpandedFormsArtifacts } = require("./lib/provider-hunspell");
 const { buildProviderPoolsArtifacts } = require("./lib/provider-pool-policy");
 const {
@@ -74,6 +75,7 @@ const STATS_UNAVAILABLE_ERROR = "Stats service unavailable right now. Try again 
 const PROVIDER_ADMIN_UNAVAILABLE_ERROR =
   "Provider admin request failed right now. Try again soon.";
 const PROVIDER_ID = "libreoffice-dictionaries";
+const PROVIDER_REPOSITORY = "https://github.com/LibreOffice/dictionaries";
 const PROVIDER_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const PROVIDER_MIN_LENGTH = 3;
 const PROVIDER_POLICY_VERSION = "v1";
@@ -749,6 +751,44 @@ function mapProviderPipelineError(err) {
     return new StatsApiError(503, PROVIDER_ADMIN_UNAVAILABLE_ERROR);
   }
   return err;
+}
+
+function resolveCurrentProviderCommitForUpdateCheck(variant, requestedCommit) {
+  const normalizedRequested = String(requestedCommit || "").trim();
+  if (normalizedRequested) {
+    if (!PROVIDER_COMMIT_PATTERN.test(normalizedRequested)) {
+      throw new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.");
+    }
+    return normalizedRequested;
+  }
+
+  const activeCommit = String(registeredLanguageCatalog.get(variant)?.provider?.commit || "").trim();
+  if (PROVIDER_COMMIT_PATTERN.test(activeCommit)) {
+    return activeCommit;
+  }
+
+  const importedCommits = listImportableProviderCommits(variant);
+  return importedCommits[0] || null;
+}
+
+function mapProviderUpdateCheckErrorToMessage(err) {
+  if (!(err instanceof ProviderUpdateCheckError)) {
+    return "Could not check upstream updates right now.";
+  }
+  const code = String(err.code || "").toUpperCase();
+  if (code === "UPSTREAM_RATE_LIMITED") {
+    return "Upstream update checks are rate-limited right now. Try again later.";
+  }
+  if (code === "FETCH_TIMEOUT" || code === "FETCH_NETWORK_ERROR") {
+    return "Upstream update check failed due to connectivity problems. Try again later.";
+  }
+  if (code === "UPSTREAM_SERVER_ERROR" || code === "UPSTREAM_REQUEST_FAILED") {
+    return "Upstream update check failed with a remote server error.";
+  }
+  if (code === "UPSTREAM_RESPONSE_INVALID") {
+    return "Upstream update check returned invalid metadata.";
+  }
+  return "Could not check upstream updates right now.";
 }
 
 function rebuildLanguageRuntimeCatalog() {
@@ -1656,6 +1696,56 @@ app.post("/api/admin/providers/import", async (req, res) => {
     if (providerImportInFlight === inFlightToken) {
       providerImportInFlight = null;
     }
+  }
+});
+
+app.post("/api/admin/providers/:variant/check-update", async (req, res) => {
+  let variant;
+  try {
+    variant = parseProviderVariant(req.params.variant);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  let currentCommit;
+  try {
+    currentCommit = resolveCurrentProviderCommitForUpdateCheck(variant, req.body?.commit);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  try {
+    const result = await checkProviderUpdate({
+      variant,
+      currentCommit,
+      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ""
+    });
+    return res.json({
+      ok: true,
+      ...result,
+      providers: buildProviderStatusRows()
+    });
+  } catch (err) {
+    if (
+      err instanceof ProviderUpdateCheckError &&
+      (err.code === "UNSUPPORTED_VARIANT" || err.code === "INVALID_COMMIT")
+    ) {
+      return providerAdminError(res, new StatsApiError(400, err.message));
+    }
+
+    return res.json({
+      ok: true,
+      providerId: PROVIDER_ID,
+      repository: PROVIDER_REPOSITORY,
+      variant,
+      checkedAt: new Date().toISOString(),
+      status: "error",
+      message: mapProviderUpdateCheckErrorToMessage(err),
+      currentCommit,
+      latestCommit: null,
+      latestByPath: null,
+      providers: buildProviderStatusRows()
+    });
   }
 });
 
