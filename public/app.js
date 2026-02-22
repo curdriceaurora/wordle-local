@@ -12,6 +12,7 @@ const hintEl = document.querySelector(".hint");
 const updatedEl = document.getElementById("updated");
 const shareLinkInput = document.getElementById("shareLink");
 const shareCopyBtn = document.getElementById("shareCopyBtn");
+const themeSelect = document.getElementById("themeSelect");
 const contrastToggle = document.getElementById("contrastToggle");
 const strictToggle = document.getElementById("strictToggle");
 const shareInfoBtn = document.getElementById("shareInfoBtn");
@@ -59,6 +60,7 @@ let minLen = 3;
 let maxLen = 12;
 let busy = false;
 let strictMode = false;
+let themePreference = "system";
 let baseMeta = "";
 let fixedPositions = [];
 let bannedPositions = [];
@@ -98,6 +100,17 @@ const LEADERBOARD_RANGE = Object.freeze({
 const STATS_REQUEST_ERROR = "Stats unavailable right now. Try again soon.";
 const STATS_DEGRADED_MESSAGE =
   "Leaderboard and player stats are temporarily unavailable. You can still play this puzzle.";
+const THEME_STORAGE_KEY = "themePreference";
+const THEME_PREFERENCES = Object.freeze({
+  SYSTEM: "system",
+  DARK: "dark",
+  LIGHT: "light"
+});
+const VALID_THEME_PREFERENCES = new Set(Object.values(THEME_PREFERENCES));
+const colorSchemeMediaQuery =
+  typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-color-scheme: light)")
+    : null;
 let leaderboardState = {
   range: LEADERBOARD_RANGE.weekly,
   description: "",
@@ -1145,6 +1158,42 @@ function applyHighContrast(enabled) {
   document.body.classList.toggle("high-contrast", enabled);
 }
 
+function getSystemTheme() {
+  if (!colorSchemeMediaQuery) {
+    return THEME_PREFERENCES.DARK;
+  }
+  return colorSchemeMediaQuery.matches ? THEME_PREFERENCES.LIGHT : THEME_PREFERENCES.DARK;
+}
+
+function resolveThemePreference(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!VALID_THEME_PREFERENCES.has(normalized)) {
+    return THEME_PREFERENCES.SYSTEM;
+  }
+  return normalized;
+}
+
+function applyTheme(preference, options = {}) {
+  const persist = options.persist !== false;
+  const updateControl = options.updateControl !== false;
+  const normalizedPreference = resolveThemePreference(preference);
+  const resolvedTheme =
+    normalizedPreference === THEME_PREFERENCES.SYSTEM
+      ? getSystemTheme()
+      : normalizedPreference;
+
+  document.documentElement.classList.remove("theme-light", "theme-dark");
+  document.documentElement.classList.add(`theme-${resolvedTheme}`);
+  themePreference = normalizedPreference;
+
+  if (persist) {
+    setStoredItem(THEME_STORAGE_KEY, normalizedPreference);
+  }
+  if (updateControl && themeSelect) {
+    themeSelect.value = normalizedPreference;
+  }
+}
+
 async function initPlay(code, lang, guessesCount, options = {}) {
   const initTimer = startPerfMeasure("ui.initPlay");
   showPlay();
@@ -1354,6 +1403,26 @@ langSelect.addEventListener("change", () => {
   updateLanguageConstraints(langSelect.value);
 });
 
+if (themeSelect) {
+  themeSelect.addEventListener("change", () => {
+    applyTheme(themeSelect.value, { persist: true, updateControl: false });
+  });
+}
+
+if (colorSchemeMediaQuery && typeof colorSchemeMediaQuery.addEventListener === "function") {
+  colorSchemeMediaQuery.addEventListener("change", () => {
+    if (themePreference === THEME_PREFERENCES.SYSTEM) {
+      applyTheme(THEME_PREFERENCES.SYSTEM, { persist: false });
+    }
+  });
+} else if (colorSchemeMediaQuery && typeof colorSchemeMediaQuery.addListener === "function") {
+  colorSchemeMediaQuery.addListener(() => {
+    if (themePreference === THEME_PREFERENCES.SYSTEM) {
+      applyTheme(THEME_PREFERENCES.SYSTEM, { persist: false });
+    }
+  });
+}
+
 contrastToggle.addEventListener("change", () => {
   const enabled = contrastToggle.checked;
   applyHighContrast(enabled);
@@ -1388,6 +1457,8 @@ async function init() {
 
   const storedContrast = getStoredItem("highContrast") === "true";
   const storedStrict = getStoredItem("strictMode") === "true";
+  const storedThemePreference = resolveThemePreference(getStoredItem(THEME_STORAGE_KEY));
+  applyTheme(storedThemePreference, { persist: false });
   contrastToggle.checked = storedContrast;
   strictToggle.checked = storedStrict;
   strictMode = storedStrict;

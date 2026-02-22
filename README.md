@@ -41,6 +41,7 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 - Create a puzzle on the Create screen.
 - Share links are encoded for convenience, not security.
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
+- Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
 
 ## Admin Console
 - Visit `/admin` for the provider admin shell.
