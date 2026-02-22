@@ -1162,26 +1162,49 @@ const requireAdminAccess = requireAdmin({
 });
 app.use("/api/admin", requireAdminAccess);
 
-function resolveAdminShellPath() {
-  const candidates = [
-    path.join(PUBLIC_PATH, "admin", "index.html"),
-    path.join(PUBLIC_ROOT, "admin", "index.html")
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
+function resolveAdminShellAssets() {
+  const requiredFiles = ["index.html", "app.js", "admin.css"];
+  const candidates = [path.join(PUBLIC_PATH, "admin"), path.join(PUBLIC_ROOT, "admin")];
+  for (const candidateRoot of candidates) {
+    const hasAllFiles = requiredFiles.every((fileName) =>
+      fs.existsSync(path.join(candidateRoot, fileName))
+    );
+    if (hasAllFiles) {
+      return {
+        root: candidateRoot,
+        indexPath: path.join(candidateRoot, "index.html")
+      };
     }
   }
-  return candidates[0];
+
+  return {
+    root: candidates[0],
+    indexPath: path.join(candidates[0], "index.html")
+  };
+}
+
+const ADMIN_SHELL = resolveAdminShellAssets();
+if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
+  console.warn("Admin shell assets are missing. Build assets before serving /admin.");
 }
 
 app.get("/admin", (req, res) => {
-  // Treat the admin shell like app HTML entrypoints: never cache to avoid stale JS/CSS.
+  // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
   res.setHeader("Cache-Control", "no-store");
-  res.sendFile(resolveAdminShellPath());
+  res.sendFile(ADMIN_SHELL.indexPath);
 });
 
 const STATIC_MAX_AGE = NODE_ENV === "production" ? 60 * 60 * 1000 : 0;
+app.use(
+  "/admin",
+  express.static(ADMIN_SHELL.root, {
+    etag: true,
+    maxAge: 0,
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "no-store");
+    }
+  })
+);
 app.use(
   express.static(PUBLIC_PATH, {
     etag: true,

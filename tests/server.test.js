@@ -993,6 +993,13 @@ describe("Wordle API", () => {
     expect(response.text).toContain("Admin Console");
     expect(response.text).toContain("/admin/app.js");
   });
+
+  test("serves admin shell assets with no-store cache headers", async () => {
+    const app = loadApp({ nodeEnv: "production" });
+    const response = await request(app).get("/admin/app.js");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toMatch(/no-store/);
+  });
 });
 
 describe("Admin auth", () => {
