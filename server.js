@@ -1221,6 +1221,9 @@ function buildProviderStatusRows() {
     const incompleteCommits = discoveredCommits.filter((commit) => !importedCommits.includes(commit));
     const entry = registeredLanguageCatalog.get(variant) || null;
     const enabled = Boolean(entry?.enabled);
+    const incompleteDetails = incompleteCommits.length
+      ? `Incomplete artifacts found for commits: ${incompleteCommits.join(", ")}.`
+      : null;
     let status = "not-imported";
     if (enabled) {
       status = "enabled";
@@ -1238,9 +1241,11 @@ function buildProviderStatusRows() {
       activeCommit: entry?.provider?.commit || null,
       importedCommits,
       incompleteCommits,
-      error: incompleteCommits.length
-        ? `Incomplete artifacts found for commits: ${incompleteCommits.join(", ")}.`
-        : null
+      warning:
+        status === "enabled" || status === "imported"
+          ? incompleteDetails
+          : null,
+      error: status === "error" ? incompleteDetails : null
     });
   }
   return rows;

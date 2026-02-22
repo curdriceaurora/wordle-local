@@ -101,15 +101,31 @@ function renderProviders() {
     row.appendChild(labelCell);
 
     const statusCell = document.createElement("td");
-    const status = String(provider.status || "").trim() || (provider.enabled ? "enabled" : provider.imported ? "imported" : "not-imported");
+    statusCell.classList.add("admin-provider-status");
+    const status = String(provider.status || "").trim()
+      || (provider.enabled ? "enabled" : provider.imported ? "imported" : "not-imported");
     const statusText = status.replace(/-/g, " ");
-    statusCell.textContent = statusText;
+    const statusLabel = document.createElement("span");
+    statusLabel.textContent = statusText;
+    statusCell.appendChild(statusLabel);
     if (status === "enabled" || status === "imported") {
       statusCell.className = "admin-status-ok";
     } else if (status === "error") {
       statusCell.className = "admin-status-missing";
     } else {
       statusCell.className = "admin-status-off";
+    }
+    statusCell.classList.add("admin-provider-status");
+
+    const detailText = status === "error"
+      ? String(provider.error || "").trim()
+      : String(provider.warning || "").trim();
+    if (detailText) {
+      const details = document.createElement("small");
+      details.className = "admin-provider-status-detail";
+      details.textContent = detailText;
+      statusCell.appendChild(details);
+      statusCell.title = detailText;
     }
     row.appendChild(statusCell);
 

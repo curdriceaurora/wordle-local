@@ -29,6 +29,7 @@ function createProviderRows(state) {
       activeCommit: enabled && state.commit ? state.commit : null,
       importedCommits,
       incompleteCommits: [],
+      warning: null,
       error: null
     };
   });
@@ -151,6 +152,51 @@ test("admin shell supports import and enable workflows without CLI usage", async
     page.locator("#providersBody tr", { has: page.locator("td", { hasText: "en-US" }) }).first()
   ).toContainText("enabled");
   await expect(page.locator('button[data-action="disable"][data-variant="en-US"]')).toBeVisible();
+});
+
+test("admin shell surfaces provider warning and error details", async ({ page }) => {
+  await page.route("**/api/admin/providers", async (route) => {
+    const providers = createProviderRows({ imported: false, enabled: false, commit: "" });
+    const errorRow = providers.find((provider) => provider.variant === "en-US");
+    const warningRow = providers.find((provider) => provider.variant === "en-GB");
+    if (errorRow) {
+      errorRow.status = "error";
+      errorRow.error = "Incomplete artifacts found for commits: deadbeef.";
+      errorRow.incompleteCommits = ["deadbeef"];
+    }
+    if (warningRow) {
+      warningRow.status = "enabled";
+      warningRow.enabled = true;
+      warningRow.warning = "Incomplete artifacts found for commits: cafe.";
+      warningRow.incompleteCommits = ["cafe"];
+      warningRow.imported = true;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  const usRow = page
+    .locator("#providersBody tr", { has: page.locator("td", { hasText: "en-US" }) })
+    .first();
+  await expect(usRow).toContainText("error");
+  await expect(usRow).toContainText("Incomplete artifacts found for commits: deadbeef.");
+
+  const gbRow = page
+    .locator("#providersBody tr", { has: page.locator("td", { hasText: "en-GB" }) })
+    .first();
+  await expect(gbRow).toContainText("enabled");
+  await expect(gbRow).toContainText("Incomplete artifacts found for commits: cafe.");
 });
 
 test("admin shell lock button clears unlocked session", async ({ page }) => {

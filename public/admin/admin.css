@@ -67,6 +67,18 @@
   color: var(--present);
 }
 
+.admin-provider-status {
+  white-space: normal;
+}
+
+.admin-provider-status-detail {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
 @media (max-width: 680px) {
   .admin-workspace .leaderboard-table {
     min-width: 34rem;

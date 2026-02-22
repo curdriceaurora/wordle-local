@@ -1126,6 +1126,49 @@ describe("Admin auth", () => {
     ]);
   });
 
+  test("surfaces incomplete artifacts as warning when variant remains usable", async () => {
+    const enabledCommit = "0123456789abcdef0123456789abcdef01234567";
+    const incompleteCommit = "fedcba9876543210fedcba9876543210fedcba98";
+    const registry = JSON.parse(ORIGINAL_LANGUAGE_REGISTRY);
+    registry.updatedAt = "2026-02-22T00:00:00.000Z";
+    registry.languages = [
+      ...registry.languages,
+      {
+        id: "en-US",
+        label: "English (US)",
+        enabled: true,
+        source: "provider",
+        minLength: 3,
+        hasDictionary: true,
+        dictionaryFile: `providers/en-US/${enabledCommit}/guess-pool.txt`,
+        provider: {
+          providerId: "libreoffice",
+          variant: "en-US",
+          commit: enabledCommit
+        }
+      }
+    ];
+
+    await withTempLanguageRegistryContent(`${JSON.stringify(registry, null, 2)}\n`, async () => {
+      await withTempProviderArtifacts("en-US", enabledCommit, async () => {
+        fs.mkdirSync(path.join(PROVIDERS_PATH, "en-US", incompleteCommit), { recursive: true });
+        const app = loadApp({ adminKey: "secret" });
+        const response = await request(app)
+          .get("/api/admin/providers")
+          .set("x-admin-key", "secret");
+
+        expect(response.status).toBe(200);
+        const usRow = response.body.providers.find((row) => row.variant === "en-US");
+        expect(usRow).toBeDefined();
+        expect(usRow.status).toBe("enabled");
+        expect(usRow.error).toBeNull();
+        expect(usRow.warning).toMatch(/Incomplete artifacts found for commits:/);
+        expect(usRow.warning).toContain(incompleteCommit);
+        expect(usRow.incompleteCommits).toEqual([incompleteCommit]);
+      });
+    });
+  });
+
   test("imports provider artifacts through admin endpoint and enables variant", async () => {
     const commit = "0123456789abcdef0123456789abcdef01234567";
     const dicText = "2\nDOG/S\nCAT\n";
