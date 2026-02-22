@@ -52,9 +52,10 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 46. Update-check commit semantics: manual provider update checks must not infer “current commit” from arbitrary imported commit folders; only explicit request or active commit may drive comparison.
 47. UI state minimization: do not persist full API payloads in per-row UI state maps when only a subset is needed for rendering.
 48. Manual-upload integrity parity: provider manual upload fallback must enforce explicit `sourceType`, per-file size limits, and checksum verification parity with remote imports.
+49. Copilot trigger dedupe: automated `/copilot review` triggering must be head-SHA deduplicated so repeated workflow runs do not consume duplicate premium requests.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
@@ -64,13 +65,19 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 
 ## Copilot Review Loop
 1. Enable native GitHub Copilot automatic review with **Review new pushes** in repository settings.
-2. `/.github/workflows/pr-watch.yml` updates a sticky PR status comment (marker: `<!-- pr-watch-status -->`) with CI state and unresolved threads.
-3. Wait ~5 minutes after each push before triage to allow Copilot comments to land.
-4. Run `npm run pr:nits -- --pr <number>` to get a deterministic thread list that still needs owner response.
-5. If no Copilot review appears on the current head SHA, use the manual refresh in GitHub UI (or run the manual fallback `copilot-review.yml` workflow once).
-6. Do not manually refresh repeatedly on the same SHA unless you intentionally want additional premium requests.
-7. For each nit: fix, validate (`npm run check` minimum), reply with commit hash, then re-trigger only when necessary.
-8. Merge target is `0` unresolved actionable nits.
+2. `/.github/workflows/copilot-review.yml` provides fallback auto-trigger on PR updates and dedupes by head SHA marker (`<!-- copilot-auto-review sha:<sha> -->`).
+3. `/.github/workflows/pr-watch.yml` updates a sticky PR status comment (marker: `<!-- pr-watch-status -->`) with CI state and unresolved threads.
+4. PR watch Copilot status semantics:
+   - `not-requested`: no trigger/reviewer signal for current head SHA.
+   - `pending`: trigger/reviewer signal exists but no completed review yet.
+   - `completed`: Copilot review exists on current head SHA.
+   - `outdated`: only older-SHA Copilot reviews exist.
+5. Wait ~5 minutes after each push before triage to allow Copilot comments to land.
+6. Run `npm run pr:nits -- --pr <number>` to get a deterministic thread list that still needs owner response.
+7. If no Copilot review appears on the current head SHA, run the manual fallback `copilot-review.yml` workflow once (`force=false` default) before using UI refresh.
+8. Do not manually refresh repeatedly on the same SHA unless you intentionally want additional premium requests.
+9. For each nit: fix, validate (`npm run check` minimum), reply with commit hash, then re-trigger only when necessary.
+10. Merge target is `0` unresolved actionable nits.
 
 ## Local Gate Requirement
 Run `npm run check` before requesting review. ESLint + Ajv schema checks + `guardrails:nits` are required and must pass locally.
