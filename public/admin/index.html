@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Admin · local-hosted-wordle</title>
+    <script>
+      (() => {
+        const STORAGE_KEY = "themePreference";
+        const VALID = new Set(["system", "light", "dark"]);
+        try {
+          const stored = String(localStorage.getItem(STORAGE_KEY) || "").trim();
+          const preference = VALID.has(stored) ? stored : "system";
+          const prefersLight =
+            typeof window.matchMedia === "function"
+            && window.matchMedia("(prefers-color-scheme: light)").matches;
+          const resolved = preference === "system" ? (prefersLight ? "light" : "dark") : preference;
+          document.documentElement.classList.remove("theme-light", "theme-dark");
+          document.documentElement.classList.add(`theme-${resolved}`);
+        } catch (_err) {
+          document.documentElement.classList.remove("theme-light", "theme-dark");
+          document.documentElement.classList.add("theme-dark");
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
   </head>

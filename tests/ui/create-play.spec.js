@@ -151,6 +151,29 @@ test("high contrast toggle updates theme", async ({ page }) => {
   await expect(page.locator("body")).toHaveClass(/high-contrast/);
 });
 
+test("theme selector persists explicit light and dark preferences", async ({ page }) => {
+  await page.goto("/", gotoOptions);
+  await page.selectOption("#themeSelect", "light");
+  await expect(page.locator("html")).toHaveClass(/theme-light/);
+
+  await page.reload(gotoOptions);
+  await expect(page.locator("#themeSelect")).toHaveValue("light");
+  await expect(page.locator("html")).toHaveClass(/theme-light/);
+
+  await page.selectOption("#themeSelect", "dark");
+  await expect(page.locator("html")).toHaveClass(/theme-dark/);
+});
+
+test("system theme preference follows browser color-scheme changes", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/", gotoOptions);
+  await expect(page.locator("#themeSelect")).toHaveValue("system");
+  await expect(page.locator("html")).toHaveClass(/theme-light/);
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveClass(/theme-dark/);
+});
+
 test("language selection updates minimum length", async ({ page }) => {
   await page.goto("/", gotoOptions);
   await waitForLanguages(page);
