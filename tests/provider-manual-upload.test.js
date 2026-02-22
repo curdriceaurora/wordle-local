@@ -228,7 +228,6 @@ describe("provider-manual-upload", () => {
 
     // Path traversal attempts
     for (const traversal of ["../en_US.dic", "..\\en_US.dic"]) {
-      // eslint-disable-next-line no-await-in-loop
       await expect(
         persistManualProviderSource({
           ...baseOptions,
@@ -243,7 +242,6 @@ describe("provider-manual-upload", () => {
 
     // Special dot-only directory names
     for (const specialName of [".", "..", "..."]) {
-      // eslint-disable-next-line no-await-in-loop
       await expect(
         persistManualProviderSource({
           ...baseOptions,
@@ -270,7 +268,6 @@ describe("provider-manual-upload", () => {
 
     // Empty basename (e.g., "/" or "\\")
     for (const badName of ["/", "\\"]) {
-      // eslint-disable-next-line no-await-in-loop
       await expect(
         persistManualProviderSource({
           ...baseOptions,
