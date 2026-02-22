@@ -32,7 +32,7 @@ function writeProviderSourceBundle(options = {}) {
 
   const sourceManifest = {
     schemaVersion: 1,
-    manifestType: "provider-source-fetch",
+    manifestType: options.manifestType || "provider-source-fetch",
     provider: {
       providerId: PROVIDER_ID,
       variant,
@@ -115,6 +115,23 @@ describe("provider-hunspell", () => {
       expect(rerunWords).toEqual(words);
       const rerunProcessed = fs.readFileSync(rerun.processedPath, "utf8");
       expect(rerunProcessed).toEqual(fs.readFileSync(result.processedPath, "utf8"));
+    } finally {
+      fs.rmSync(setup.providerRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts manual-upload source manifest type", async () => {
+    const setup = writeProviderSourceBundle({
+      manifestType: "provider-source-manual-upload"
+    });
+    try {
+      const result = await buildExpandedFormsArtifacts({
+        variant: setup.variant,
+        commit: setup.commit,
+        providerRoot: setup.providerRoot,
+        policyVersion: "v1"
+      });
+      expect(fs.existsSync(result.expandedFormsPath)).toBe(true);
     } finally {
       fs.rmSync(setup.providerRoot, { recursive: true, force: true });
     }

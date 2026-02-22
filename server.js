@@ -11,6 +11,7 @@ const { requireAdmin } = require("./lib/admin-auth");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource } = require("./lib/provider-fetch");
+const { persistManualProviderSource } = require("./lib/provider-manual-upload");
 const { checkProviderUpdate, ProviderUpdateCheckError } = require("./lib/provider-update-check");
 const { buildExpandedFormsArtifacts } = require("./lib/provider-hunspell");
 const { buildProviderPoolsArtifacts } = require("./lib/provider-pool-policy");
@@ -31,6 +32,7 @@ const TRUST_PROXY = process.env.TRUST_PROXY
 const TRUST_PROXY_HOPS = parsePositiveInteger(process.env.TRUST_PROXY_HOPS, 1);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "12mb";
 const PERF_LOGGING = process.env.PERF_LOGGING === "true";
 const LEGACY_LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
 const DEFINITIONS_MODE = resolveDefinitionsMode();
@@ -79,6 +81,15 @@ const PROVIDER_REPOSITORY = "https://github.com/LibreOffice/dictionaries";
 const PROVIDER_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const PROVIDER_MIN_LENGTH = 3;
 const PROVIDER_POLICY_VERSION = "v1";
+const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
+  REMOTE_FETCH: "remote-fetch",
+  MANUAL_UPLOAD: "manual-upload"
+});
+const SUPPORTED_PROVIDER_IMPORT_SOURCE_TYPES = new Set(Object.values(PROVIDER_IMPORT_SOURCE_TYPES));
+const PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
+  process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
+  8 * 1024 * 1024
+);
 const PROVIDER_VARIANT_LABELS = Object.freeze({
   "en-GB": "English (UK)",
   "en-US": "English (US)",
@@ -704,6 +715,17 @@ function parseProviderFilterMode(value) {
   return normalized;
 }
 
+function parseProviderImportSource(value) {
+  const normalized = String(value || PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH).trim();
+  if (!SUPPORTED_PROVIDER_IMPORT_SOURCE_TYPES.has(normalized)) {
+    throw new StatsApiError(
+      400,
+      `sourceType must be one of ${Array.from(SUPPORTED_PROVIDER_IMPORT_SOURCE_TYPES).join(", ")}.`
+    );
+  }
+  return normalized;
+}
+
 function mapProviderPipelineError(err) {
   if (err instanceof StatsApiError) {
     return err;
@@ -722,8 +744,13 @@ function mapProviderPipelineError(err) {
     || code === "INVALID_PATH"
     || code === "INVALID_MANIFEST"
     || code === "ALLOWLIST_REQUIRED"
+    || code === "INVALID_MANUAL_SOURCE"
+    || code === "MANUAL_FILES_REQUIRED"
   ) {
     return new StatsApiError(400, err.message);
+  }
+  if (code === "MANUAL_FILE_TOO_LARGE") {
+    return new StatsApiError(413, err.message);
   }
   if (code === "SOURCE_NOT_FOUND" || code === "SOURCE_MANIFEST_MISSING") {
     return new StatsApiError(404, err.message);
@@ -1311,7 +1338,19 @@ app.use(
   })
 );
 app.use(compression());
-app.use(express.json());
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use((err, req, res, next) => {
+  if (!err) {
+    return next();
+  }
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request payload is too large." });
+  }
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ error: "Request body must be valid JSON." });
+  }
+  return next(err);
+});
 const requireAdminAccess = requireAdmin({
   adminKey: ADMIN_KEY,
   requireAdminKey: REQUIRE_ADMIN_KEY
@@ -1606,11 +1645,28 @@ app.post("/api/admin/providers/import", async (req, res) => {
     return providerAdminError(res, err);
   }
 
-  const commit = String(req.body?.commit || "").trim();
-  if (!PROVIDER_COMMIT_PATTERN.test(commit)) {
+  let sourceType;
+  try {
+    sourceType = parseProviderImportSource(req.body?.sourceType);
+  } catch (err) {
+    return providerAdminError(res, err);
+  }
+
+  const commitInput = String(req.body?.commit || "").trim();
+  if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH && !PROVIDER_COMMIT_PATTERN.test(commitInput)) {
     return providerAdminError(
       res,
       new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.")
+    );
+  }
+  if (
+    sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
+    && commitInput
+    && !PROVIDER_COMMIT_PATTERN.test(commitInput)
+  ) {
+    return providerAdminError(
+      res,
+      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA when provided.")
     );
   }
 
@@ -1639,18 +1695,28 @@ app.post("/api/admin/providers/import", async (req, res) => {
 
   const inFlightToken = {
     variant,
-    commit,
+    commit: commitInput || "auto",
     startedAt: new Date().toISOString()
   };
   providerImportInFlight = inFlightToken;
 
   try {
-    const sourceResult = await fetchAndPersistProviderSource({
-      variant,
-      commit,
-      expectedChecksums,
-      outputRoot: PROVIDERS_ROOT
-    });
+    const sourceResult = sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
+      ? await persistManualProviderSource({
+        variant,
+        commit: commitInput || null,
+        expectedChecksums,
+        manualFiles: req.body?.manualFiles,
+        maxManualFileBytes: PROVIDER_MANUAL_MAX_FILE_BYTES,
+        outputRoot: PROVIDERS_ROOT
+      })
+      : await fetchAndPersistProviderSource({
+        variant,
+        commit: commitInput,
+        expectedChecksums,
+        outputRoot: PROVIDERS_ROOT
+      });
+    const commit = sourceResult.descriptor.commit;
     const expandedResult = await buildExpandedFormsArtifacts({
       variant,
       commit,
@@ -1678,6 +1744,7 @@ app.post("/api/admin/providers/import", async (req, res) => {
       action: "imported",
       variant,
       commit,
+      sourceType,
       filterMode,
       counts: {
         sourceFiles: {

@@ -130,6 +130,12 @@
               and builds provider artifacts.
             </p>
             <form id="importForm" class="create-form" autocomplete="off">
+              <label for="importSourceType">Source</label>
+              <select id="importSourceType" name="sourceType">
+                <option value="remote-fetch">Remote fetch (default)</option>
+                <option value="manual-upload">Manual upload (.dic + .aff)</option>
+              </select>
+
               <label for="importVariant">Variant</label>
               <select id="importVariant" name="variant">
                 <option value="en-GB">English (UK)</option>
@@ -139,7 +145,7 @@
                 <option value="en-ZA">English (South Africa)</option>
               </select>
 
-              <label for="importCommit">Pinned commit (40-char SHA)</label>
+              <label for="importCommit">Commit (required for remote, optional for manual)</label>
               <input
                 id="importCommit"
                 name="commit"
@@ -151,29 +157,43 @@
                 maxlength="40"
               />
 
-              <label for="importChecksumDic">Dictionary checksum (SHA-256)</label>
-              <input
-                id="importChecksumDic"
-                name="checksumDic"
-                type="text"
-                inputmode="text"
-                spellcheck="false"
-                autocomplete="off"
-                placeholder="64-char lowercase sha256"
-                maxlength="64"
-              />
+              <div id="importRemoteFields" class="admin-import-section">
+                <label for="importChecksumDic">Dictionary checksum (SHA-256)</label>
+                <input
+                  id="importChecksumDic"
+                  name="checksumDic"
+                  type="text"
+                  inputmode="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="64-char lowercase sha256"
+                  maxlength="64"
+                />
 
-              <label for="importChecksumAff">Affix checksum (SHA-256)</label>
-              <input
-                id="importChecksumAff"
-                name="checksumAff"
-                type="text"
-                inputmode="text"
-                spellcheck="false"
-                autocomplete="off"
-                placeholder="64-char lowercase sha256"
-                maxlength="64"
-              />
+                <label for="importChecksumAff">Affix checksum (SHA-256)</label>
+                <input
+                  id="importChecksumAff"
+                  name="checksumAff"
+                  type="text"
+                  inputmode="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="64-char lowercase sha256"
+                  maxlength="64"
+                />
+              </div>
+
+              <div id="importManualFields" class="admin-import-section hidden">
+                <label for="importDicFile">Dictionary file (.dic)</label>
+                <input id="importDicFile" name="dicFile" type="file" accept=".dic,text/plain" />
+
+                <label for="importAffFile">Affix file (.aff)</label>
+                <input id="importAffFile" name="affFile" type="file" accept=".aff,text/plain" />
+
+                <p class="note">
+                  Checksums are generated in-browser from selected files before upload.
+                </p>
+              </div>
 
               <label for="importFilterMode">Family filter mode</label>
               <select id="importFilterMode" name="filterMode">

@@ -46,7 +46,7 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 - Visit `/admin` for the provider admin shell.
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
 - Provider workflows are built in:
-  - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) using pinned commit + required SHA-256 checksums
+  - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback
   - check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`)
   - enable/disable imported variants without CLI usage
 - Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
