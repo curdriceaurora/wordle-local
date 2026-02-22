@@ -38,10 +38,12 @@ function renderTabs() {
   tabButtons.forEach((button) => {
     const isActive = button.dataset.tab === state.activeTab;
     button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.tabIndex = isActive ? 0 : -1;
   });
 
   tabPanels.forEach((panel) => {
     const isActive = panel.dataset.panel === state.activeTab;
+    panel.hidden = !isActive;
     panel.classList.toggle("hidden", !isActive);
   });
 }

@@ -50,19 +50,53 @@
             </div>
           </div>
 
-          <nav class="admin-tabs" aria-label="Admin sections">
-            <button type="button" class="ghost admin-tab" data-tab="providers" aria-selected="true">
+          <nav class="admin-tabs" aria-label="Admin sections" role="tablist">
+            <button
+              id="admin-tab-providers"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="providers"
+              role="tab"
+              aria-controls="admin-panel-providers"
+              aria-selected="true"
+              tabindex="0"
+            >
               Providers
             </button>
-            <button type="button" class="ghost admin-tab" data-tab="imports" aria-selected="false">
+            <button
+              id="admin-tab-imports"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="imports"
+              role="tab"
+              aria-controls="admin-panel-imports"
+              aria-selected="false"
+              tabindex="-1"
+            >
               Import Queue
             </button>
-            <button type="button" class="ghost admin-tab" data-tab="runtime" aria-selected="false">
+            <button
+              id="admin-tab-runtime"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="runtime"
+              role="tab"
+              aria-controls="admin-panel-runtime"
+              aria-selected="false"
+              tabindex="-1"
+            >
               Runtime Notes
             </button>
           </nav>
 
-          <section class="admin-slot" data-panel="providers">
+          <section
+            id="admin-panel-providers"
+            class="admin-slot"
+            data-panel="providers"
+            role="tabpanel"
+            aria-labelledby="admin-tab-providers"
+            tabindex="0"
+          >
             <h3>Provider Status</h3>
             <p class="note">Readiness snapshot for supported LibreOffice English variants.</p>
             <div class="admin-table-wrap">
@@ -81,14 +115,30 @@
             </div>
           </section>
 
-          <section class="admin-slot hidden" data-panel="imports">
+          <section
+            id="admin-panel-imports"
+            class="admin-slot hidden"
+            data-panel="imports"
+            role="tabpanel"
+            aria-labelledby="admin-tab-imports"
+            tabindex="0"
+            hidden
+          >
             <h3>Import Queue Slot</h3>
             <p class="note">
               Placeholder container for provider import/check workflows planned in issue #24.
             </p>
           </section>
 
-          <section class="admin-slot hidden" data-panel="runtime">
+          <section
+            id="admin-panel-runtime"
+            class="admin-slot hidden"
+            data-panel="runtime"
+            role="tabpanel"
+            aria-labelledby="admin-tab-runtime"
+            tabindex="0"
+            hidden
+          >
             <h3>Runtime Slot</h3>
             <p class="note">
               Placeholder container for runtime status and diagnostics attached to provider workflows.

@@ -1,4 +1,5 @@
 const { test, expect } = require("./fixtures");
+const AxeBuilder = require("@axe-core/playwright");
 
 test("admin shell unlocks with session-only key and loads provider status", async ({ page }) => {
   await page.goto("/admin", { waitUntil: "commit" });
@@ -41,4 +42,17 @@ test("admin shell lock button clears unlocked session", async ({ page }) => {
   await expect(page.locator("#unlockPanel")).toBeVisible();
   await expect(page.locator("#shellPanel")).toBeHidden();
   await expect(page.locator("#adminUpdated")).toContainText("Session locked");
+});
+
+test("admin shell passes axe checks in locked and unlocked states", async ({ page }) => {
+  await page.goto("/admin", { waitUntil: "commit" });
+  const lockedResults = await new AxeBuilder({ page }).analyze();
+  expect(lockedResults.violations).toEqual([]);
+
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  const unlockedResults = await new AxeBuilder({ page }).analyze();
+  expect(unlockedResults.violations).toEqual([]);
 });
