@@ -39,11 +39,12 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 33. Coupled field invariants: when one field implies another (for example, `hasDictionary` ↔ `dictionaryFile`), enforce the pair consistently in both schema and runtime normalization.
 34. Shared provider artifacts logic: commit/path normalization, variant allowlist, and atomic file-write behavior must come from shared helpers (not duplicated across provider pipeline modules). Reuse existing boundary helpers instead of reimplementing ad-hoc `path.resolve` checks.
 35. Stateful UI test isolation: any UI flow that persists profile/stats server-side must use unique per-test identities (or isolated storage) to avoid cross-run collisions and flaky assertions.
-36. ARIA tab semantics: any tabbed UI must ship full role/linkage semantics (`tablist` + `tab` + `tabpanel`, `aria-controls`/`aria-labelledby`, `aria-selected`, and keyboard focus order via `tabIndex`).
+36. ARIA tab semantics: any tabbed UI must ship full role/linkage semantics (`tablist` + `tab` + `tabpanel`, `aria-controls`/`aria-labelledby`, `aria-selected`, roving `tabIndex`) and keyboard navigation (`ArrowLeft`/`ArrowRight` + `Home`/`End`).
 37. A11y parity for new pages: every new top-level UI route must have an axe regression test in both default/entry and primary interactive state.
+38. Session key persistence guard: when admin or sensitive keys are expected to be memory-only, UI tests must assert keys are absent from both `localStorage` and `sessionStorage`.
 
 ## Automation Coverage Map
-- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37
+- Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard

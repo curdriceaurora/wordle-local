@@ -48,6 +48,25 @@ function renderTabs() {
   });
 }
 
+function focusActiveTab() {
+  const active = tabButtons.find((button) => button.dataset.tab === state.activeTab);
+  if (active) {
+    active.focus();
+  }
+}
+
+function activateTab(nextTab, focus = false) {
+  const tabId = String(nextTab || "").trim();
+  if (!tabId) return;
+  const exists = tabButtons.some((button) => button.dataset.tab === tabId);
+  if (!exists) return;
+  state.activeTab = tabId;
+  renderTabs();
+  if (focus) {
+    focusActiveTab();
+  }
+}
+
 function renderProviders() {
   providersBodyEl.innerHTML = "";
   if (!state.providers.length) {
@@ -177,8 +196,30 @@ lockSessionBtnEl.addEventListener("click", () => {
 
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    state.activeTab = button.dataset.tab || "providers";
-    renderTabs();
+    activateTab(button.dataset.tab || "providers");
+  });
+
+  button.addEventListener("keydown", (event) => {
+    if (!tabButtons.length) return;
+    const currentIndex = tabButtons.findIndex((entry) => entry === button);
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % tabButtons.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + tabButtons.length) % tabButtons.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = tabButtons.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const nextTab = tabButtons[nextIndex].dataset.tab || "providers";
+    activateTab(nextTab, true);
   });
 });
 
