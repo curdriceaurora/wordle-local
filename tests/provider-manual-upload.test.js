@@ -172,4 +172,45 @@ describe("provider-manual-upload", () => {
       code: "MANUAL_FILE_TOO_LARGE"
     });
   });
+
+  test("rejects unsafe upload file names", async () => {
+    const dicText = "1\nDOG\n";
+    const affText = "SET UTF-8\n";
+
+    await expect(
+      persistManualProviderSource({
+        variant: "en-US",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: computeSha256(Buffer.from(dicText, "utf8")),
+          aff: computeSha256(Buffer.from(affText, "utf8"))
+        },
+        manualFiles: {
+          dicBase64: toBase64(dicText),
+          affBase64: toBase64(affText),
+          dicFileName: "bad file?.dic"
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_UPLOAD_FILENAME"
+    });
+
+    await expect(
+      persistManualProviderSource({
+        variant: "en-US",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        expectedChecksums: {
+          dic: computeSha256(Buffer.from(dicText, "utf8")),
+          aff: computeSha256(Buffer.from(affText, "utf8"))
+        },
+        manualFiles: {
+          dicBase64: toBase64(dicText),
+          affBase64: toBase64(affText),
+          affFileName: "en_US.txt"
+        }
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_UPLOAD_FILENAME"
+    });
+  });
 });

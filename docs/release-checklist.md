@@ -12,6 +12,7 @@ Use this checklist before tagging or publishing a release.
 1. Confirm `.env.example`, `README.md`, and `advanced-settings.md` are consistent.
 2. Confirm Docker image includes `LICENSE` and `THIRD_PARTY_NOTICES.md`.
 3. Confirm rate-limit/proxy guidance is documented for deployment topology (`TRUST_PROXY` behavior).
+4. For admin/provider releases, review `docs/admin-security-checklist.md`.
 
 ## Leaderboard rollout gate
 1. Review `docs/server-leaderboard-rollout.md`.
