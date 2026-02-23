@@ -1109,6 +1109,13 @@ async function loadManualUploadFromStaging(jobRequest) {
   const stagedDicPath = path.join(DATA_ROOT, manualUpload.stagedDicPath);
   const stagedAffPath = path.join(DATA_ROOT, manualUpload.stagedAffPath);
 
+  if (
+    !stagedDicPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep) ||
+    !stagedAffPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep)
+  ) {
+    throw new StatsApiError(400, "Staged file paths are outside the expected staging directory.");
+  }
+
   const [dicBuffer, affBuffer] = await Promise.all([
     fsp.readFile(stagedDicPath),
     fsp.readFile(stagedAffPath)
