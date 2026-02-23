@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "manifestType": "provider-source-manual-upload",
+  "provider": {
+    "providerId": "libreoffice-dictionaries",
+    "variant": "en-US",
+    "repository": "https://github.com/LibreOffice/dictionaries",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "dicPath": "en/en_US.dic",
+    "affPath": "en/en_US.aff"
+  },
+  "sourceFiles": {
+    "dic": {
+      "sourcePath": "en/en_US.dic",
+      "localPath": "en-US/0123456789abcdef0123456789abcdef01234567/en_US.dic",
+      "uploadFileName": "en_US.dic",
+      "sha256": "98a56a39a17c261af73f36ce67a1b9e804bb97b60f540dd8b10f535c32f602ff",
+      "byteSize": 6
+    },
+    "aff": {
+      "sourcePath": "en/en_US.aff",
+      "localPath": "en-US/0123456789abcdef0123456789abcdef01234567/en_US.aff",
+      "uploadFileName": "en_US.aff",
+      "sha256": "7f6d7c55043d4b09d0a4380720847457b7954048bf1dac70512593006bae8c37",
+      "byteSize": 10
+    }
+  },
+  "manualUpload": {
+    "sourceType": "manual-upload",
+    "commitProvided": true
+  },
+  "retrievedAt": "2026-02-22T23:36:33.567Z"
+}

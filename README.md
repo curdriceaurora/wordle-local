@@ -97,6 +97,7 @@ Daily word endpoints remain available:
 - Rate limiting is enabled by default.
 - `TRUST_PROXY=true` is recommended behind proxies or Tailscale (`TRUST_PROXY_HOPS` defaults to `1`).
 - Container runs as a non-root user and includes `/api/health`.
+- For provider/admin releases, use `docs/admin-security-checklist.md` in addition to release gates.
 
 ## Troubleshooting
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.

@@ -8,6 +8,7 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 
 - `ADMIN_KEY` — secret key required for admin endpoints.
 - `REQUIRE_ADMIN_KEY` — set to `true` to force admin auth (default `true` in production).
+- Pitfall: keep `ADMIN_KEY` long and random; short keys are easier to brute-force even with rate limiting.
 - Current admin API endpoints:
   - `GET /api/word`
   - `POST /api/word`
@@ -21,6 +22,7 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - Remote fetch: `{"sourceType":"remote-fetch","variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
   - Manual upload fallback: `{"sourceType":"manual-upload","variant":"en-US","commit":"<optional-40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"},"manualFiles":{"dicBase64":"<base64>","affBase64":"<base64>","dicFileName":"en_US.dic","affFileName":"en_US.aff"}}`
     - If `commit` is omitted for manual uploads, the server derives a deterministic synthetic commit from file checksums.
+    - `dicFileName`/`affFileName` are optional metadata and must be safe filenames (`[A-Za-z0-9._-]`) with `.dic` / `.aff` extensions.
 - Manual update-check outcomes:
   - `up-to-date` (installed commit matches latest upstream)
   - `update-available` (newer upstream commit found)
@@ -34,6 +36,10 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 ## Rate Limiting
 - `RATE_LIMIT_MAX` — default 300 requests per 15 minutes.
 - `RATE_LIMIT_WINDOW_MS` — default 900000.
+- `ADMIN_RATE_LIMIT_MAX` — default 90 admin requests per window (`/api/admin/*`).
+- `ADMIN_RATE_LIMIT_WINDOW_MS` — default mirrors `RATE_LIMIT_WINDOW_MS`.
+- `ADMIN_WRITE_RATE_LIMIT_MAX` — default 30 admin write requests per window (`POST`/`PATCH`/`PUT`/`DELETE` under `/api/admin/*`).
+- `ADMIN_WRITE_RATE_LIMIT_WINDOW_MS` — default mirrors `ADMIN_RATE_LIMIT_WINDOW_MS`.
 
 ## Definitions Memory Mode
 - `DEFINITIONS_MODE` — `memory` (eager full-map load), `lazy` (load full-map on first reveal), or `indexed` (load per-letter shards from `data/dictionaries/en-definitions-index`).

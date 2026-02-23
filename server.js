@@ -32,6 +32,19 @@ const TRUST_PROXY = process.env.TRUST_PROXY
 const TRUST_PROXY_HOPS = parsePositiveInteger(process.env.TRUST_PROXY_HOPS, 1);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 300;
+const ADMIN_RATE_LIMIT_WINDOW_MS = parsePositiveInteger(
+  process.env.ADMIN_RATE_LIMIT_WINDOW_MS,
+  RATE_LIMIT_WINDOW_MS
+);
+const ADMIN_RATE_LIMIT_MAX = parsePositiveInteger(process.env.ADMIN_RATE_LIMIT_MAX, 90);
+const ADMIN_WRITE_RATE_LIMIT_WINDOW_MS = parsePositiveInteger(
+  process.env.ADMIN_WRITE_RATE_LIMIT_WINDOW_MS,
+  ADMIN_RATE_LIMIT_WINDOW_MS
+);
+const ADMIN_WRITE_RATE_LIMIT_MAX = parsePositiveInteger(
+  process.env.ADMIN_WRITE_RATE_LIMIT_MAX,
+  30
+);
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "12mb";
 const PERF_LOGGING = process.env.PERF_LOGGING === "true";
 const LEGACY_LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
@@ -746,6 +759,7 @@ function mapProviderPipelineError(err) {
     || code === "ALLOWLIST_REQUIRED"
     || code === "INVALID_MANUAL_SOURCE"
     || code === "MANUAL_FILES_REQUIRED"
+    || code === "INVALID_UPLOAD_FILENAME"
   ) {
     return new StatsApiError(400, err.message);
   }
@@ -1355,7 +1369,28 @@ const requireAdminAccess = requireAdmin({
   adminKey: ADMIN_KEY,
   requireAdminKey: REQUIRE_ADMIN_KEY
 });
-app.use("/api/admin", requireAdminAccess);
+const adminRateLimiter = rateLimit({
+  windowMs: ADMIN_RATE_LIMIT_WINDOW_MS,
+  max: ADMIN_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many admin requests. Try again later." }
+});
+const adminWriteRateLimiter = rateLimit({
+  windowMs: ADMIN_WRITE_RATE_LIMIT_WINDOW_MS,
+  max: ADMIN_WRITE_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many admin write requests. Try again later." }
+});
+function limitAdminWrites(req, res, next) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    next();
+    return;
+  }
+  adminWriteRateLimiter(req, res, next);
+}
+app.use("/api/admin", adminRateLimiter, requireAdminAccess, limitAdminWrites);
 
 function resolveAdminShellAssets() {
   const requiredFiles = ["index.html", "app.js", "admin.css"];

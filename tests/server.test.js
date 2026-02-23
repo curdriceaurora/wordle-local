@@ -41,6 +41,10 @@ function loadApp(options = {}) {
           trustProxyHops: options.trustProxyHops,
           rateLimitMax: options.rateLimitMax,
           rateLimitWindowMs: options.rateLimitWindowMs,
+          adminRateLimitMax: options.adminRateLimitMax,
+          adminRateLimitWindowMs: options.adminRateLimitWindowMs,
+          adminWriteRateLimitMax: options.adminWriteRateLimitMax,
+          adminWriteRateLimitWindowMs: options.adminWriteRateLimitWindowMs,
           lowMemoryDefinitions: options.lowMemoryDefinitions,
           definitionsMode: options.definitionsMode,
           perfLogging: options.perfLogging,
@@ -74,6 +78,18 @@ function loadApp(options = {}) {
   }
   if (opts.rateLimitWindowMs !== undefined) {
     process.env.RATE_LIMIT_WINDOW_MS = String(opts.rateLimitWindowMs);
+  }
+  if (opts.adminRateLimitMax !== undefined) {
+    process.env.ADMIN_RATE_LIMIT_MAX = String(opts.adminRateLimitMax);
+  }
+  if (opts.adminRateLimitWindowMs !== undefined) {
+    process.env.ADMIN_RATE_LIMIT_WINDOW_MS = String(opts.adminRateLimitWindowMs);
+  }
+  if (opts.adminWriteRateLimitMax !== undefined) {
+    process.env.ADMIN_WRITE_RATE_LIMIT_MAX = String(opts.adminWriteRateLimitMax);
+  }
+  if (opts.adminWriteRateLimitWindowMs !== undefined) {
+    process.env.ADMIN_WRITE_RATE_LIMIT_WINDOW_MS = String(opts.adminWriteRateLimitWindowMs);
   }
   if (opts.lowMemoryDefinitions !== undefined) {
     process.env.LOW_MEMORY_DEFINITIONS = opts.lowMemoryDefinitions ? "true" : "false";
@@ -1093,6 +1109,88 @@ describe("Admin auth", () => {
     expect(authorized.status).toBe(200);
     expect(authorized.body.ok).toBe(true);
     expect(Array.isArray(authorized.body.providers)).toBe(true);
+  });
+
+  test("applies dedicated rate limiting to admin reads", async () => {
+    const app = loadApp({
+      adminKey: "secret",
+      rateLimitMax: 100,
+      rateLimitWindowMs: 60 * 1000,
+      adminRateLimitMax: 2,
+      adminRateLimitWindowMs: 60 * 1000
+    });
+    const first = await request(app)
+      .get("/api/admin/providers")
+      .set("x-admin-key", "secret");
+    const second = await request(app)
+      .get("/api/admin/providers")
+      .set("x-admin-key", "secret");
+    const third = await request(app)
+      .get("/api/admin/providers")
+      .set("x-admin-key", "secret");
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+    expect(third.body.error).toMatch(/too many admin requests/i);
+  });
+
+  test("applies stricter rate limiting to admin write routes", async () => {
+    const app = loadApp({
+      adminKey: "secret",
+      rateLimitMax: 100,
+      rateLimitWindowMs: 60 * 1000,
+      adminRateLimitMax: 100,
+      adminRateLimitWindowMs: 60 * 1000,
+      adminWriteRateLimitMax: 1,
+      adminWriteRateLimitWindowMs: 60 * 1000
+    });
+
+    const first = await request(app)
+      .post("/api/admin/providers/import")
+      .set("x-admin-key", "secret")
+      .send({
+        variant: "en-US",
+        sourceType: "remote-fetch",
+        commit: "invalid-sha"
+      });
+    const second = await request(app)
+      .post("/api/admin/providers/import")
+      .set("x-admin-key", "secret")
+      .send({
+        variant: "en-US",
+        sourceType: "remote-fetch",
+        commit: "invalid-sha"
+      });
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toMatch(/too many admin write requests/i);
+  });
+
+  test("applies write rate limiting to PATCH admin routes", async () => {
+    const app = loadApp({
+      adminKey: "secret",
+      rateLimitMax: 100,
+      rateLimitWindowMs: 60 * 1000,
+      adminRateLimitMax: 100,
+      adminRateLimitWindowMs: 60 * 1000,
+      adminWriteRateLimitMax: 1,
+      adminWriteRateLimitWindowMs: 60 * 1000
+    });
+
+    const first = await request(app)
+      .patch("/api/admin/stats/profile/nonexistent-id")
+      .set("x-admin-key", "secret")
+      .send({ name: "test" });
+    const second = await request(app)
+      .patch("/api/admin/stats/profile/nonexistent-id")
+      .set("x-admin-key", "secret")
+      .send({ name: "test" });
+
+    expect(first.status).toBe(404);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toMatch(/too many admin write requests/i);
   });
 
   test("keeps /api/admin/providers open only when admin key is optional", async () => {
