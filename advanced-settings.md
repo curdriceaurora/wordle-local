@@ -13,14 +13,20 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
   - `GET /api/word`
   - `POST /api/word`
   - `PATCH /api/admin/stats/profile/:id`
+  - `GET /api/admin/runtime-config`
+  - `PUT /api/admin/runtime-config`
+  - `GET /api/admin/jobs`
+  - `GET /api/admin/jobs/:id`
   - `GET /api/admin/providers`
   - `POST /api/admin/providers/import`
   - `POST /api/admin/providers/:variant/check-update`
   - `POST /api/admin/providers/:variant/enable`
   - `POST /api/admin/providers/:variant/disable`
 - Import request body example:
-  - Remote fetch: `{"sourceType":"remote-fetch","variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
-  - Manual upload fallback: `{"sourceType":"manual-upload","variant":"en-US","commit":"<optional-40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"},"manualFiles":{"dicBase64":"<base64>","affBase64":"<base64>","dicFileName":"en_US.dic","affFileName":"en_US.aff"}}`
+  - Remote fetch: `{"async":true,"sourceType":"remote-fetch","variant":"en-US","commit":"<40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"}}`
+  - Manual upload fallback: `{"async":true,"sourceType":"manual-upload","variant":"en-US","commit":"<optional-40-char-sha>","filterMode":"denylist-only","expectedChecksums":{"dic":"<sha256>","aff":"<sha256>"},"manualFiles":{"dicBase64":"<base64>","affBase64":"<base64>","dicFileName":"en_US.dic","affFileName":"en_US.aff"}}`
+    - `async=true` queues imports and returns a job ID for progress polling.
+    - `async=false` preserves direct synchronous import behavior for legacy tooling.
     - If `commit` is omitted for manual uploads, the server derives a deterministic synthetic commit from file checksums.
     - `dicFileName`/`affFileName` are optional metadata and must be safe filenames (`[A-Za-z0-9._-]`) with `.dic` / `.aff` extensions.
 - Manual update-check outcomes:
@@ -58,4 +64,6 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 - `NODE_ENV` — `development` or `production`.
 - `JSON_BODY_LIMIT` — max JSON payload size for API requests (default `12mb`).
 - `PROVIDER_MANUAL_MAX_FILE_BYTES` — max bytes per manual upload file (default `8388608` / 8 MiB).
+- `APP_CONFIG_PATH` — optional override path for persisted runtime overrides (`data/app-config.json` by default).
+- `ADMIN_JOBS_STORE_PATH` — optional override path for persisted admin queue jobs (`data/admin-jobs.json` by default).
 - Language registry file: `data/languages.json` (auto-recovers to baked defaults if missing/invalid).

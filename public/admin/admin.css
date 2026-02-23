@@ -37,6 +37,18 @@
   gap: 0.6rem;
 }
 
+.admin-checkbox {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.admin-inline-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .admin-table-wrap {
   overflow-x: auto;
 }
@@ -48,6 +60,10 @@
 .admin-workspace .leaderboard-table th,
 .admin-workspace .leaderboard-table td {
   white-space: nowrap;
+}
+
+.admin-workspace .leaderboard-table td:last-child {
+  white-space: normal;
 }
 
 .admin-action-stack {

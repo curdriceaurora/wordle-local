@@ -21,6 +21,9 @@
         "writeWindowMs": 900000,
         "writeMax": 30
       }
+    },
+    "diagnostics": {
+      "perfLogging": false
     }
   }
 }

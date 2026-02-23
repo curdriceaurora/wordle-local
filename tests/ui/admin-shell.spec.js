@@ -277,6 +277,274 @@ test("admin shell supports manual provider update checks", async ({ page }) => {
   await expect(usRow).toContainText("Upstream check: update available");
 });
 
+test("admin shell saves runtime overrides and renders source metadata", async ({ page }) => {
+  const state = {
+    imported: false,
+    enabled: false,
+    commit: ""
+  };
+  let runtimeConfig = {
+    ok: true,
+    effective: {
+      definitions: {
+        mode: "memory",
+        cacheSize: 512,
+        cacheTtlMs: 1800000,
+        shardCacheSize: 6
+      },
+      limits: {
+        providerManualMaxFileBytes: 8388608
+      },
+      diagnostics: {
+        perfLogging: false
+      }
+    },
+    overrides: {},
+    sources: {
+      definitions: {
+        mode: "default",
+        cacheSize: "default",
+        cacheTtlMs: "default",
+        shardCacheSize: "default"
+      },
+      limits: {
+        providerManualMaxFileBytes: "default"
+      },
+      diagnostics: {
+        perfLogging: "default"
+      }
+    }
+  };
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+  await page.route("**/api/admin/jobs?limit=30", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        queue: {
+          active: false,
+          queued: 0,
+          running: 0,
+          succeeded: 0,
+          failed: 0,
+          canceled: 0
+        },
+        jobs: []
+      })
+    });
+  });
+  await page.route("**/api/admin/runtime-config", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(runtimeConfig)
+      });
+      return;
+    }
+
+    const payload = JSON.parse(route.request().postData() || "{}");
+    runtimeConfig = {
+      ...runtimeConfig,
+      overrides: payload.overrides,
+      effective: {
+        ...runtimeConfig.effective,
+        definitions: payload.overrides.definitions,
+        limits: payload.overrides.limits,
+        diagnostics: payload.overrides.diagnostics
+      },
+      sources: {
+        definitions: {
+          mode: "override",
+          cacheSize: "override",
+          cacheTtlMs: "override",
+          shardCacheSize: "override"
+        },
+        limits: {
+          providerManualMaxFileBytes: "override"
+        },
+        diagnostics: {
+          perfLogging: "override"
+        }
+      }
+    };
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(runtimeConfig)
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click("#admin-tab-runtime");
+  await page.selectOption("#runtimeDefinitionsMode", "lazy");
+  await page.fill("#runtimeDefinitionCacheSize", "700");
+  await page.fill("#runtimeDefinitionCacheTtlMs", "2400000");
+  await page.fill("#runtimeDefinitionShardCacheSize", "9");
+  await page.fill("#runtimeManualMaxBytes", "6291456");
+  await page.check("#runtimePerfLogging");
+  await page.click("#saveRuntimeBtn");
+
+  await expect(page.locator("#runtimeStatus")).toContainText("saved");
+  await expect(page.locator("#runtimeSourcesBody")).toContainText("definitions.mode");
+  await expect(page.locator("#runtimeSourcesBody")).toContainText("override");
+});
+
+test("admin shell shows queued imports in import queue panel", async ({ page }) => {
+  const state = {
+    imported: false,
+    enabled: false,
+    commit: ""
+  };
+  let jobsCallCount = 0;
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        providers: createProviderRows(state)
+      })
+    });
+  });
+  await page.route("**/api/admin/runtime-config", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        effective: {
+          definitions: {
+            mode: "memory",
+            cacheSize: 512,
+            cacheTtlMs: 1800000,
+            shardCacheSize: 6
+          },
+          limits: {
+            providerManualMaxFileBytes: 8388608
+          },
+          diagnostics: {
+            perfLogging: false
+          }
+        },
+        overrides: {},
+        sources: {
+          definitions: {
+            mode: "default",
+            cacheSize: "default",
+            cacheTtlMs: "default",
+            shardCacheSize: "default"
+          },
+          limits: {
+            providerManualMaxFileBytes: "default"
+          },
+          diagnostics: {
+            perfLogging: "default"
+          }
+        }
+      })
+    });
+  });
+  await page.route("**/api/admin/providers/import", async (route) => {
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        action: "queued",
+        job: {
+          id: "job-1234567890ab",
+          status: "queued",
+          request: {
+            variant: "en-US",
+            sourceType: "remote-fetch",
+            commit: "0123456789abcdef0123456789abcdef01234567"
+          },
+          updatedAt: "2026-02-23T12:00:00.000Z"
+        },
+        providers: createProviderRows(state),
+        queue: {
+          active: true,
+          queued: 1,
+          running: 0,
+          succeeded: 0,
+          failed: 0,
+          canceled: 0
+        }
+      })
+    });
+  });
+  await page.route("**/api/admin/jobs?limit=30", async (route) => {
+    jobsCallCount += 1;
+    const status = jobsCallCount > 1 ? "succeeded" : "queued";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        queue: {
+          active: status === "queued",
+          queued: status === "queued" ? 1 : 0,
+          running: 0,
+          succeeded: status === "succeeded" ? 1 : 0,
+          failed: 0,
+          canceled: 0
+        },
+        jobs: [
+          {
+            id: "job-1234567890ab",
+            status,
+            request: {
+              variant: "en-US",
+              sourceType: "remote-fetch",
+              commit: "0123456789abcdef0123456789abcdef01234567"
+            },
+            updatedAt: "2026-02-23T12:00:00.000Z",
+            artifacts: status === "succeeded"
+              ? { commit: "0123456789abcdef0123456789abcdef01234567" }
+              : null,
+            error: null
+          }
+        ]
+      })
+    });
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await page.click("#admin-tab-imports");
+
+  await page.selectOption("#importVariant", "en-US");
+  await page.fill("#importCommit", "0123456789abcdef0123456789abcdef01234567");
+  await page.fill("#importChecksumDic", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  await page.fill("#importChecksumAff", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  await page.click("#importSubmitBtn");
+
+  await expect(page.locator("#importStatus")).toContainText("queued");
+  await expect(page.locator("#jobsBody")).toContainText("job-1234567890ab");
+
+  await page.click("#refreshJobsBtn");
+  await expect(page.locator("#jobsBody")).toContainText("succeeded");
+});
+
 test("admin shell surfaces provider warning and error details", async ({ page }) => {
   await page.route("**/api/admin/providers", async (route) => {
     const providers = createProviderRows({ imported: false, enabled: false, commit: "" });

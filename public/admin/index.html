@@ -220,9 +220,35 @@
                 <option value="allowlist-required">Allowlist required</option>
               </select>
 
+              <label class="admin-checkbox">
+                <input id="importAsyncMode" name="asyncMode" type="checkbox" checked />
+                Queue in background (recommended)
+              </label>
+
               <button id="importSubmitBtn" type="submit">Import provider bundle</button>
             </form>
             <div id="importStatus" class="message" role="status" aria-live="polite"></div>
+            <div class="admin-shell-head">
+              <h4>Import Queue</h4>
+              <button id="refreshJobsBtn" type="button" class="ghost">Refresh queue</button>
+            </div>
+            <div id="jobsStatus" class="message" role="status" aria-live="polite"></div>
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Import queue table">
+                <thead>
+                  <tr>
+                    <th>Job</th>
+                    <th>Status</th>
+                    <th>Variant</th>
+                    <th>Source</th>
+                    <th>Commit</th>
+                    <th>Updated</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody id="jobsBody"></tbody>
+              </table>
+            </div>
           </section>
 
           <section
@@ -234,11 +260,54 @@
             tabindex="0"
             hidden
           >
-            <h3>Runtime Notes</h3>
+            <h3>Runtime Settings</h3>
             <p class="note">
-              Enable applies imported dictionaries immediately for create/play flows. Disable removes
-              the variant from active language options without deleting imported artifacts.
+              This section only edits runtime-safe settings. Security and infrastructure values remain
+              environment-controlled and read-only here.
             </p>
+            <form id="runtimeForm" class="create-form" autocomplete="off">
+              <label for="runtimeDefinitionsMode">Definitions mode</label>
+              <select id="runtimeDefinitionsMode" name="definitionsMode">
+                <option value="memory">memory</option>
+                <option value="lazy">lazy</option>
+                <option value="indexed">indexed</option>
+              </select>
+
+              <label for="runtimeDefinitionCacheSize">Definition cache size</label>
+              <input id="runtimeDefinitionCacheSize" name="definitionCacheSize" type="number" min="1" max="4096" />
+
+              <label for="runtimeDefinitionCacheTtlMs">Definition cache TTL (ms)</label>
+              <input id="runtimeDefinitionCacheTtlMs" name="definitionCacheTtlMs" type="number" min="1000" max="86400000" />
+
+              <label for="runtimeDefinitionShardCacheSize">Definition shard cache size</label>
+              <input id="runtimeDefinitionShardCacheSize" name="definitionShardCacheSize" type="number" min="1" max="26" />
+
+              <label for="runtimeManualMaxBytes">Manual upload max bytes</label>
+              <input id="runtimeManualMaxBytes" name="providerManualMaxFileBytes" type="number" min="1048576" max="33554432" />
+
+              <label class="admin-checkbox">
+                <input id="runtimePerfLogging" name="perfLogging" type="checkbox" />
+                Enable perf logging
+              </label>
+
+              <div class="admin-inline-actions">
+                <button id="saveRuntimeBtn" type="submit">Save runtime overrides</button>
+                <button id="resetRuntimeBtn" type="button" class="ghost">Reset overrides</button>
+              </div>
+            </form>
+            <div id="runtimeStatus" class="message" role="status" aria-live="polite"></div>
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Runtime settings source table">
+                <thead>
+                  <tr>
+                    <th>Setting</th>
+                    <th>Effective value</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody id="runtimeSourcesBody"></tbody>
+              </table>
+            </div>
           </section>
 
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>

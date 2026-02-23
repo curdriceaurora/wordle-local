@@ -48,10 +48,12 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
 - Provider workflows are built in:
   - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback
+  - async import queue with persisted job history under `data/admin-jobs.json`
   - check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`)
   - enable/disable imported variants without CLI usage
 - Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
 - Admin platform architecture contracts (schemas, config precedence, queue semantics): `docs/admin-platform-architecture-contract.md`.
+- Runtime settings tab edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
 
 ## Daily Word (API)
 Daily word endpoints remain available:
