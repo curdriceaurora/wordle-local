@@ -22,3 +22,5 @@ yarn-error.log
 .turbo/
 .next/
 public/dist/
+data/admin-jobs.json
+data/app-config.json
