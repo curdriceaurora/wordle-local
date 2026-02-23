@@ -34,3 +34,7 @@ public/dist/
 .worktrees/
 .security-key
 logs/security/
+
+# Runtime-generated admin state files
+data/admin-jobs.json
+data/app-config.json
