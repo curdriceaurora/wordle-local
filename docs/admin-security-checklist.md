@@ -33,8 +33,8 @@ Use this checklist for any release that touches `/api/admin/*`, provider imports
 1. Run `npm run check`.
 2. Run `npm run test:provider:ui` if admin/provider UI changed.
 3. Verify docs parity:
-- `/Users/rahul/Projects/Noventa/wordle-local/README.md`
-- `/Users/rahul/Projects/Noventa/wordle-local/advanced-settings.md`
+- `README.md`
+- `docs/advanced-settings.md`
 4. Confirm deployment config includes:
 - `ADMIN_KEY`
 - `TRUST_PROXY` and `TRUST_PROXY_HOPS` appropriate for topology

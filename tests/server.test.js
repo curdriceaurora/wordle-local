@@ -1168,6 +1168,31 @@ describe("Admin auth", () => {
     expect(second.body.error).toMatch(/too many admin write requests/i);
   });
 
+  test("applies write rate limiting to PATCH admin routes", async () => {
+    const app = loadApp({
+      adminKey: "secret",
+      rateLimitMax: 100,
+      rateLimitWindowMs: 60 * 1000,
+      adminRateLimitMax: 100,
+      adminRateLimitWindowMs: 60 * 1000,
+      adminWriteRateLimitMax: 1,
+      adminWriteRateLimitWindowMs: 60 * 1000
+    });
+
+    const first = await request(app)
+      .patch("/api/admin/stats/profile/nonexistent-id")
+      .set("x-admin-key", "secret")
+      .send({ name: "test" });
+    const second = await request(app)
+      .patch("/api/admin/stats/profile/nonexistent-id")
+      .set("x-admin-key", "secret")
+      .send({ name: "test" });
+
+    expect(first.status).toBe(404);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toMatch(/too many admin write requests/i);
+  });
+
   test("keeps /api/admin/providers open only when admin key is optional", async () => {
     const optionalAdmin = loadApp({ requireAdminKey: false });
     const optionalResponse = await request(optionalAdmin).get("/api/admin/providers");
