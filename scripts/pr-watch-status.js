@@ -522,7 +522,7 @@ async function main() {
     }
 
     const pr = await fetchPullRequest(owner, repo, prNumber);
-    const headSha = String(pr?.head?.sha || "").trim();
+    const headSha = String(pr?.head?.sha || "").trim().toLowerCase();
     if (!headSha) {
       throw new Error(`PR #${prNumber} has no head SHA.`);
     }
