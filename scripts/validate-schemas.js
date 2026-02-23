@@ -23,6 +23,10 @@ const providerManifestExamplePath = path.join(
 );
 const languageRegistrySchemaPath = path.join(projectRoot, "data", "languages.schema.json");
 const languageRegistryDataPath = path.join(projectRoot, "data", "languages.json");
+const adminJobsSchemaPath = path.join(projectRoot, "data", "admin-jobs.schema.json");
+const adminJobsExamplePath = path.join(projectRoot, "data", "admin-jobs.example.json");
+const appConfigSchemaPath = path.join(projectRoot, "data", "app-config.schema.json");
+const appConfigExamplePath = path.join(projectRoot, "data", "app-config.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -75,6 +79,16 @@ function runSchemaChecks() {
       schemaPath: languageRegistrySchemaPath,
       dataPath: languageRegistryDataPath,
       schemaLabel: "language registry schema"
+    },
+    {
+      schemaPath: adminJobsSchemaPath,
+      dataPath: adminJobsExamplePath,
+      schemaLabel: "admin jobs schema"
+    },
+    {
+      schemaPath: appConfigSchemaPath,
+      dataPath: appConfigExamplePath,
+      schemaLabel: "app config schema"
     }
   ];
 

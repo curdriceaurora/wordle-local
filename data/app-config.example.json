@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "updatedAt": "1970-01-01T00:00:00.000Z",
+  "overrides": {
+    "definitions": {
+      "mode": "memory",
+      "cacheSize": 512,
+      "cacheTtlMs": 1800000,
+      "shardCacheSize": 6
+    },
+    "limits": {
+      "jsonBodyLimit": "12mb",
+      "providerManualMaxFileBytes": 8388608
+    },
+    "security": {
+      "trustProxy": null,
+      "trustProxyHops": null,
+      "adminRateLimit": {
+        "windowMs": 900000,
+        "max": 90,
+        "writeWindowMs": 900000,
+        "writeMax": 30
+      }
+    }
+  }
+}
