@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/app-config.schema.json",
+  "title": "Admin App Config Overrides",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "updatedAt",
+    "overrides"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "definitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "memory",
+                "lazy",
+                "indexed"
+              ]
+            },
+            "cacheSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4096
+            },
+            "cacheTtlMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            },
+            "shardCacheSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 26
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "jsonBodyLimit": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 16,
+              "pattern": "^[0-9]+(?:kb|mb|gb)$"
+            },
+            "providerManualMaxFileBytes": {
+              "type": "integer",
+              "minimum": 1048576,
+              "maximum": 33554432
+            }
+          }
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trustProxy": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "trustProxyHops": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 10
+            },
+            "adminRateLimit": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "windowMs": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 86400000
+                },
+                "max": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5000
+                },
+                "writeWindowMs": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 86400000
+                },
+                "writeMax": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5000
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

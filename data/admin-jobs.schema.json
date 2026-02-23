@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/admin-jobs.schema.json",
+  "title": "Admin Job Queue",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "updatedAt",
+    "jobs"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/job"
+      }
+    }
+  },
+  "$defs": {
+    "jobId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{7,63}$"
+    },
+    "languageId": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"
+    },
+    "commitSha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._/-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "sourceType": {
+      "type": "string",
+      "enum": [
+        "remote-fetch",
+        "manual-upload"
+      ]
+    },
+    "filterMode": {
+      "type": "string",
+      "enum": [
+        "denylist-only",
+        "allowlist-required"
+      ]
+    },
+    "jobStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "canceled"
+      ]
+    },
+    "checksumPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dic",
+        "aff"
+      ],
+      "properties": {
+        "dic": {
+          "$ref": "#/$defs/sha256"
+        },
+        "aff": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "variant",
+        "sourceType",
+        "filterMode",
+        "expectedChecksums"
+      ],
+      "properties": {
+        "variant": {
+          "$ref": "#/$defs/languageId"
+        },
+        "sourceType": {
+          "$ref": "#/$defs/sourceType"
+        },
+        "filterMode": {
+          "$ref": "#/$defs/filterMode"
+        },
+        "commit": {
+          "$ref": "#/$defs/commitSha"
+        },
+        "expectedChecksums": {
+          "$ref": "#/$defs/checksumPair"
+        },
+        "manualUpload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dicFileName",
+            "affFileName",
+            "contentChecksums"
+          ],
+          "properties": {
+            "dicFileName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9._-]+\\.dic$"
+            },
+            "affFileName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^[A-Za-z0-9._-]+\\.aff$"
+            },
+            "contentChecksums": {
+              "$ref": "#/$defs/checksumPair"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sourceType": {
+                "const": "remote-fetch"
+              }
+            },
+            "required": [
+              "sourceType"
+            ]
+          },
+          "then": {
+            "required": [
+              "commit"
+            ],
+            "properties": {
+              "commit": {
+                "$ref": "#/$defs/commitSha"
+              },
+              "manualUpload": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceType": {
+                "const": "manual-upload"
+              }
+            },
+            "required": [
+              "sourceType"
+            ]
+          },
+          "then": {
+            "required": [
+              "manualUpload"
+            ],
+            "properties": {
+              "manualUpload": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dicFileName",
+                  "affFileName",
+                  "contentChecksums"
+                ],
+                "properties": {
+                  "dicFileName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[A-Za-z0-9._-]+\\.dic$"
+                  },
+                  "affFileName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[A-Za-z0-9._-]+\\.aff$"
+                  },
+                  "contentChecksums": {
+                    "$ref": "#/$defs/checksumPair"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "sourceManifestPath",
+        "expandedFormsPath",
+        "guessPoolPath",
+        "answerPoolPath"
+      ],
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/commitSha"
+        },
+        "sourceManifestPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "expandedFormsPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "guessPoolPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "answerPoolPath": {
+          "$ref": "#/$defs/relativePath"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "status",
+        "attempts",
+        "maxAttempts",
+        "requestedBy",
+        "createdAt",
+        "updatedAt",
+        "request"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "type": {
+          "type": "string",
+          "const": "provider-import"
+        },
+        "status": {
+          "$ref": "#/$defs/jobStatus"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "requestedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/artifacts"
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[A-Z0-9_]+$"
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "artifacts",
+              "finishedAt"
+            ],
+            "properties": {
+              "artifacts": {
+                "$ref": "#/$defs/artifacts"
+              },
+              "finishedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "error": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "failed",
+                  "canceled"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "finishedAt",
+              "error"
+            ],
+            "properties": {
+              "finishedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "error": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^[A-Z0-9_]+$"
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "queued",
+                  "running"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "finishedAt": {
+                "const": null
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
