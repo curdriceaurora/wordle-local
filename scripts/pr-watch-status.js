@@ -11,6 +11,7 @@ const COPILOT_LOGIN_PREFIXES = Object.freeze([
   "copilot-pull-request-reviewer",
   "copilot"
 ]);
+const COPILOT_REVIEW_COMMAND_REGEX = /^\/copilot review\b/im;
 const COPILOT_TRIGGER_MARKER_REGEX = /<!--\s*copilot-auto-review sha:([a-f0-9]{40})\s*-->/i;
 const COPILOT_HEAD_SHA_LINE_REGEX = /head sha:\s*([a-f0-9]{40})/i;
 const MAX_THREADS_TO_SHOW = 10;
@@ -68,9 +69,13 @@ function isCopilotAuthor(login) {
   ));
 }
 
+function hasCopilotReviewCommand(commentBody) {
+  return COPILOT_REVIEW_COMMAND_REGEX.test(String(commentBody || ""));
+}
+
 function extractCopilotTriggerSha(commentBody) {
   const body = String(commentBody || "");
-  if (!body.includes("/copilot review")) {
+  if (!hasCopilotReviewCommand(body)) {
     return null;
   }
   const markerMatch = body.match(COPILOT_TRIGGER_MARKER_REGEX);
@@ -89,9 +94,18 @@ function hasCopilotTriggerForHeadSha(issueComments, headSha) {
   if (!/^[a-f0-9]{40}$/.test(normalizedHeadSha)) {
     return false;
   }
-  return issueComments.some((comment) => (
-    extractCopilotTriggerSha(comment?.body) === normalizedHeadSha
-  ));
+  return issueComments.some((comment) => {
+    const body = String(comment?.body || "");
+    if (!hasCopilotReviewCommand(body)) {
+      return false;
+    }
+    const triggerSha = extractCopilotTriggerSha(body);
+    if (!triggerSha) {
+      // Manual `/copilot review` comments can omit explicit SHA markers.
+      return true;
+    }
+    return triggerSha === normalizedHeadSha;
+  });
 }
 
 function hasCopilotRequestedReviewer(pr) {
