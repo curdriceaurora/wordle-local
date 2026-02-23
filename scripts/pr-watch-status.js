@@ -101,11 +101,15 @@ function hasCopilotTriggerForHeadSha(issueComments, headSha) {
     }
     const triggerSha = extractCopilotTriggerSha(body);
     if (!triggerSha) {
-      // Manual `/copilot review` comments can omit explicit SHA markers.
-      return true;
+      // SHA-less manual trigger comments are not treated as a trigger for a specific head SHA.
+      return false;
     }
     return triggerSha === normalizedHeadSha;
   });
+}
+
+function hasAnyCopilotTriggerComment(issueComments) {
+  return issueComments.some((comment) => hasCopilotReviewCommand(comment?.body || ""));
 }
 
 function hasCopilotRequestedReviewer(pr) {
@@ -365,7 +369,7 @@ function summarizeCopilotReview(reviews, headSha, options = {}) {
   const copilotReviews = reviews.filter((review) => isCopilotAuthor(review?.author?.login || ""));
   const hasCurrent = copilotReviews.some(
     (review) =>
-      String(review?.commit?.oid || "") === headSha &&
+      String(review?.commit?.oid || "").trim().toLowerCase() === headSha &&
       ["COMMENTED", "APPROVED", "CHANGES_REQUESTED"].includes(String(review?.state || ""))
   );
   if (hasCurrent) {
@@ -392,6 +396,9 @@ function summarizeCopilotTriggerSignal(options = {}) {
   }
   if (options.hasRequestedReviewer) {
     return "reviewer";
+  }
+  if (options.hasAnyTriggerComment) {
+    return "comment";
   }
   return "none";
 }
@@ -548,6 +555,7 @@ async function main() {
     ]);
     const checkSummary = summarizeChecks(checkRuns);
     const hasCurrentTrigger = hasCopilotTriggerForHeadSha(issueComments, headSha);
+    const hasAnyTriggerComment = hasAnyCopilotTriggerComment(issueComments);
     const hasRequestedReviewer = hasCopilotRequestedReviewer(pr);
     const copilotStatus = summarizeCopilotReview(threadData.reviews, headSha, {
       hasCurrentTrigger,
@@ -555,6 +563,7 @@ async function main() {
     });
     const copilotTriggerSignal = summarizeCopilotTriggerSignal({
       hasCurrentTrigger,
+      hasAnyTriggerComment,
       hasRequestedReviewer
     });
 

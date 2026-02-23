@@ -40,7 +40,13 @@ jobs:
   pr-watch:
     if: >
       github.event_name != 'issue_comment' ||
-      !contains(github.event.comment.body, '<!-- pr-watch-status -->')
+      (
+        (
+          contains(github.event.comment.body, '/copilot review') ||
+          contains(github.event.comment.body, 'copilot-auto-review')
+        ) &&
+        !contains(github.event.comment.body, '<!-- pr-watch-status -->')
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
