@@ -48,7 +48,10 @@ function loadApp(options = {}) {
           lowMemoryDefinitions: options.lowMemoryDefinitions,
           definitionsMode: options.definitionsMode,
           perfLogging: options.perfLogging,
-          statsStorePath: options.statsStorePath
+          statsStorePath: options.statsStorePath,
+          adminJobsStorePath: options.adminJobsStorePath,
+          appConfigPath: options.appConfigPath,
+          clearRuntimeEnv: options.clearRuntimeEnv
         };
 
   jest.resetModules();
@@ -105,6 +108,25 @@ function loadApp(options = {}) {
   } else {
     delete process.env.STATS_STORE_PATH;
   }
+  if (opts.adminJobsStorePath !== undefined) {
+    process.env.ADMIN_JOBS_STORE_PATH = opts.adminJobsStorePath;
+  } else {
+    delete process.env.ADMIN_JOBS_STORE_PATH;
+  }
+  if (opts.appConfigPath !== undefined) {
+    process.env.APP_CONFIG_PATH = opts.appConfigPath;
+  } else {
+    delete process.env.APP_CONFIG_PATH;
+  }
+  if (opts.clearRuntimeEnv) {
+    delete process.env.DEFINITIONS_MODE;
+    delete process.env.LOW_MEMORY_DEFINITIONS;
+    delete process.env.DEFINITION_CACHE_SIZE;
+    delete process.env.DEFINITION_CACHE_TTL_MS;
+    delete process.env.DEFINITION_SHARD_CACHE_SIZE;
+    delete process.env.PROVIDER_MANUAL_MAX_FILE_BYTES;
+    delete process.env.PERF_LOGGING;
+  }
 
   return require("../server");
 }
@@ -137,6 +159,27 @@ function createTempStatsStore(initialState = null) {
   };
 }
 
+function createTempAdminState() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-admin-"));
+  const jobsPath = path.join(dir, "admin-jobs.json");
+  const configPath = path.join(dir, "app-config.json");
+  fs.writeFileSync(
+    jobsPath,
+    `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), jobs: [] }, null, 2)}\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), overrides: {} }, null, 2)}\n`,
+    "utf8"
+  );
+  return {
+    jobsPath,
+    configPath,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
+  };
+}
+
 function formatUtcDate(offsetDays) {
   const base = Date.UTC(2024, 0, 1);
   const date = new Date(base + offsetDays * 24 * 60 * 60 * 1000);
@@ -158,6 +201,24 @@ function formatLocalDateOffset(offsetDays) {
 
 function sha256Text(value) {
   return nodeCrypto.createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
+}
+
+async function waitForJobCompletion(app, jobId, adminKey, timeoutMs = 10000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await request(app)
+      .get(`/api/admin/jobs/${jobId}`)
+      .set("x-admin-key", adminKey);
+    if (response.status !== 200) {
+      throw new Error(`Unexpected job polling status ${response.status}`);
+    }
+    const status = String(response.body?.job?.status || "");
+    if (status === "succeeded" || status === "failed" || status === "canceled") {
+      return response.body.job;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for job ${jobId} completion.`);
 }
 
 async function withTempDictionary(file, contents, fn) {
@@ -1696,6 +1757,158 @@ describe("Admin auth", () => {
       expect(response.body.error).toBe("Provider admin request failed right now. Try again soon.");
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  test("supports runtime config overrides for hot-refresh-safe settings", async () => {
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        clearRuntimeEnv: true
+      });
+
+      const initialConfig = await request(app)
+        .get("/api/admin/runtime-config")
+        .set("x-admin-key", "secret");
+      expect(initialConfig.status).toBe(200);
+      expect(initialConfig.body.ok).toBe(true);
+      expect(initialConfig.body.effective.definitions.mode).toBe("memory");
+
+      const updateResponse = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({
+          overrides: {
+            definitions: {
+              mode: "lazy",
+              cacheSize: 640,
+              cacheTtlMs: 1200000,
+              shardCacheSize: 8
+            },
+            limits: {
+              providerManualMaxFileBytes: 4194304
+            },
+            diagnostics: {
+              perfLogging: true
+            }
+          }
+        });
+      expect(updateResponse.status).toBe(200);
+      expect(updateResponse.body.ok).toBe(true);
+      expect(updateResponse.body.effective.definitions.mode).toBe("lazy");
+      expect(updateResponse.body.sources.definitions.mode).toBe("override");
+      expect(updateResponse.body.effective.limits.providerManualMaxFileBytes).toBe(4194304);
+      expect(updateResponse.body.effective.diagnostics.perfLogging).toBe(true);
+
+      const metaResponse = await request(app).get("/api/meta");
+      expect(metaResponse.status).toBe(200);
+      expect(metaResponse.body.definitionsMode).toBe("lazy");
+      expect(metaResponse.body.perfLogging).toBe(true);
+
+      const persistedConfig = JSON.parse(fs.readFileSync(tempAdminState.configPath, "utf8"));
+      expect(persistedConfig.overrides.definitions.mode).toBe("lazy");
+      expect(persistedConfig.overrides.limits.providerManualMaxFileBytes).toBe(4194304);
+    } finally {
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("keeps env-defined runtime values locked over persisted overrides", async () => {
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        definitionsMode: "indexed"
+      });
+
+      const updateResponse = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({
+          overrides: {
+            definitions: {
+              mode: "lazy"
+            }
+          }
+        });
+
+      expect(updateResponse.status).toBe(200);
+      expect(updateResponse.body.effective.definitions.mode).toBe("indexed");
+      expect(updateResponse.body.sources.definitions.mode).toBe("env");
+
+      const metaResponse = await request(app).get("/api/meta");
+      expect(metaResponse.status).toBe(200);
+      expect(metaResponse.body.definitionsMode).toBe("indexed");
+    } finally {
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("queues async provider imports and exposes job progress via admin jobs API", async () => {
+    const tempAdminState = createTempAdminState();
+    const tempLanguageRegistry = ORIGINAL_LANGUAGE_REGISTRY;
+    try {
+      await withTempLanguageRegistryContent(tempLanguageRegistry, async () => {
+        await withIsolatedProviderVariant("en-US", async () => {
+          const app = loadApp({
+            adminKey: "secret",
+            appConfigPath: tempAdminState.configPath,
+            adminJobsStorePath: tempAdminState.jobsPath
+          });
+          const dicContent = "2\nDOGMA/S\nCRANE\n";
+          const affContent = "SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n";
+          const dicChecksum = sha256Text(dicContent);
+          const affChecksum = sha256Text(affContent);
+
+          const enqueueResponse = await request(app)
+            .post("/api/admin/providers/import")
+            .set("x-admin-key", "secret")
+            .send({
+              async: true,
+              sourceType: "manual-upload",
+              variant: "en-US",
+              commit: "",
+              filterMode: "denylist-only",
+              expectedChecksums: {
+                dic: dicChecksum,
+                aff: affChecksum
+              },
+              manualFiles: {
+                dicBase64: Buffer.from(dicContent, "utf8").toString("base64"),
+                affBase64: Buffer.from(affContent, "utf8").toString("base64"),
+                dicFileName: "offline-en_US.dic",
+                affFileName: "offline-en_US.aff"
+              }
+            });
+          expect(enqueueResponse.status).toBe(202);
+          expect(enqueueResponse.body.ok).toBe(true);
+          expect(enqueueResponse.body.action).toBe("queued");
+          expect(typeof enqueueResponse.body.job?.id).toBe("string");
+
+          const completedJob = await waitForJobCompletion(
+            app,
+            enqueueResponse.body.job.id,
+            "secret",
+            12000
+          );
+          expect(completedJob.status).toBe("succeeded");
+          expect(completedJob.artifacts.commit).toMatch(/^[a-f0-9]{40}$/);
+
+          const jobsResponse = await request(app)
+            .get("/api/admin/jobs?status=succeeded")
+            .set("x-admin-key", "secret");
+          expect(jobsResponse.status).toBe(200);
+          expect(Array.isArray(jobsResponse.body.jobs)).toBe(true);
+          expect(jobsResponse.body.jobs.some((job) => job.id === completedJob.id)).toBe(true);
+        });
+      });
+    } finally {
+      tempAdminState.cleanup();
     }
   });
 });

@@ -7,10 +7,12 @@ const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
+const { AdminJobsStore } = require("./lib/admin-jobs-store");
 const { requireAdmin } = require("./lib/admin-auth");
+const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
-const { fetchAndPersistProviderSource } = require("./lib/provider-fetch");
+const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
 const { persistManualProviderSource } = require("./lib/provider-manual-upload");
 const { checkProviderUpdate, ProviderUpdateCheckError } = require("./lib/provider-update-check");
 const { buildExpandedFormsArtifacts } = require("./lib/provider-hunspell");
@@ -46,18 +48,22 @@ const ADMIN_WRITE_RATE_LIMIT_MAX = parsePositiveInteger(
   30
 );
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "12mb";
-const PERF_LOGGING = process.env.PERF_LOGGING === "true";
 const LEGACY_LOW_MEMORY_DEFINITIONS = process.env.LOW_MEMORY_DEFINITIONS === "true";
-const DEFINITIONS_MODE = resolveDefinitionsMode();
-const DEFINITION_CACHE_SIZE = parsePositiveInteger(process.env.DEFINITION_CACHE_SIZE, 512);
-const DEFINITION_CACHE_TTL_MS = parseNonNegativeInteger(
+const ENV_DEFINITIONS_MODE = resolveDefinitionsMode();
+const ENV_DEFINITION_CACHE_SIZE = parsePositiveInteger(process.env.DEFINITION_CACHE_SIZE, 512);
+const ENV_DEFINITION_CACHE_TTL_MS = parseNonNegativeInteger(
   process.env.DEFINITION_CACHE_TTL_MS,
   30 * 60 * 1000
 );
-const DEFINITION_SHARD_CACHE_SIZE = parsePositiveInteger(
+const ENV_DEFINITION_SHARD_CACHE_SIZE = parsePositiveInteger(
   process.env.DEFINITION_SHARD_CACHE_SIZE,
   6
 );
+const ENV_PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
+  process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
+  8 * 1024 * 1024
+);
+const ENV_PERF_LOGGING = process.env.PERF_LOGGING === "true";
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
 const DATA_ROOT = path.join(__dirname, "data");
@@ -73,6 +79,14 @@ const LEADERBOARD_DATA_PATH = process.env.STATS_STORE_PATH
   ? path.resolve(process.env.STATS_STORE_PATH)
   : path.join(__dirname, "data", "leaderboard.json");
 const LANGUAGE_REGISTRY_PATH = path.join(__dirname, "data", "languages.json");
+const ADMIN_JOBS_DATA_PATH = process.env.ADMIN_JOBS_STORE_PATH
+  ? path.resolve(process.env.ADMIN_JOBS_STORE_PATH)
+  : path.join(__dirname, "data", "admin-jobs.json");
+const ADMIN_JOBS_ROOT = path.dirname(ADMIN_JOBS_DATA_PATH);
+const ADMIN_JOBS_STAGING_ROOT = path.join(ADMIN_JOBS_ROOT, "staging");
+const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
+  ? path.resolve(process.env.APP_CONFIG_PATH)
+  : path.join(__dirname, "data", "app-config.json");
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -99,10 +113,8 @@ const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
   MANUAL_UPLOAD: "manual-upload"
 });
 const SUPPORTED_PROVIDER_IMPORT_SOURCE_TYPES = new Set(Object.values(PROVIDER_IMPORT_SOURCE_TYPES));
-const PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
-  process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
-  8 * 1024 * 1024
-);
+const PROVIDER_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
+const SAFE_UPLOAD_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const PROVIDER_VARIANT_LABELS = Object.freeze({
   "en-GB": "English (UK)",
   "en-US": "English (US)",
@@ -165,8 +177,206 @@ function resolveDefinitionsMode() {
   return "memory";
 }
 
+function hasValidPositiveIntegerEnv(name) {
+  if (process.env[name] === undefined) {
+    return false;
+  }
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
+function hasValidNonNegativeIntegerEnv(name) {
+  if (process.env[name] === undefined) {
+    return false;
+  }
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed >= 0;
+}
+
+const ENV_CONFIG = Object.freeze({
+  definitions: Object.freeze({
+    mode: ENV_DEFINITIONS_MODE,
+    cacheSize: ENV_DEFINITION_CACHE_SIZE,
+    cacheTtlMs: ENV_DEFINITION_CACHE_TTL_MS,
+    shardCacheSize: ENV_DEFINITION_SHARD_CACHE_SIZE
+  }),
+  limits: Object.freeze({
+    providerManualMaxFileBytes: ENV_PROVIDER_MANUAL_MAX_FILE_BYTES
+  }),
+  diagnostics: Object.freeze({
+    perfLogging: ENV_PERF_LOGGING
+  })
+});
+
+const ENV_CONFIG_LOCKS = Object.freeze({
+  definitions: Object.freeze({
+    mode: Boolean(normalizeDefinitionsMode(process.env.DEFINITIONS_MODE) || LEGACY_LOW_MEMORY_DEFINITIONS),
+    cacheSize: hasValidPositiveIntegerEnv("DEFINITION_CACHE_SIZE"),
+    cacheTtlMs: hasValidNonNegativeIntegerEnv("DEFINITION_CACHE_TTL_MS"),
+    shardCacheSize: hasValidPositiveIntegerEnv("DEFINITION_SHARD_CACHE_SIZE")
+  }),
+  limits: Object.freeze({
+    providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES")
+  }),
+  diagnostics: Object.freeze({
+    perfLogging: process.env.PERF_LOGGING !== undefined
+  })
+});
+
+const runtimeConfigState = {
+  overrides: {},
+  effective: cloneRuntimeConfigObject(ENV_CONFIG),
+  sources: {
+    definitions: {
+      mode: ENV_CONFIG_LOCKS.definitions.mode ? "env" : "default",
+      cacheSize: ENV_CONFIG_LOCKS.definitions.cacheSize ? "env" : "default",
+      cacheTtlMs: ENV_CONFIG_LOCKS.definitions.cacheTtlMs ? "env" : "default",
+      shardCacheSize: ENV_CONFIG_LOCKS.definitions.shardCacheSize ? "env" : "default"
+    },
+    limits: {
+      providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default"
+    },
+    diagnostics: {
+      perfLogging: ENV_CONFIG_LOCKS.diagnostics.perfLogging ? "env" : "default"
+    }
+  }
+};
+
+function cloneRuntimeConfigObject(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function resolveRuntimeConfigFromOverrides(rawOverrides) {
+  const overrides = rawOverrides && typeof rawOverrides === "object"
+    ? cloneRuntimeConfigObject(rawOverrides)
+    : {};
+
+  const effective = cloneRuntimeConfigObject(ENV_CONFIG);
+  const sources = {
+    definitions: {
+      mode: ENV_CONFIG_LOCKS.definitions.mode ? "env" : "default",
+      cacheSize: ENV_CONFIG_LOCKS.definitions.cacheSize ? "env" : "default",
+      cacheTtlMs: ENV_CONFIG_LOCKS.definitions.cacheTtlMs ? "env" : "default",
+      shardCacheSize: ENV_CONFIG_LOCKS.definitions.shardCacheSize ? "env" : "default"
+    },
+    limits: {
+      providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default"
+    },
+    diagnostics: {
+      perfLogging: ENV_CONFIG_LOCKS.diagnostics.perfLogging ? "env" : "default"
+    }
+  };
+
+  if (!ENV_CONFIG_LOCKS.definitions.mode && overrides.definitions?.mode) {
+    effective.definitions.mode = overrides.definitions.mode;
+    sources.definitions.mode = "override";
+  }
+  if (!ENV_CONFIG_LOCKS.definitions.cacheSize && overrides.definitions?.cacheSize !== undefined) {
+    effective.definitions.cacheSize = Number(overrides.definitions.cacheSize);
+    sources.definitions.cacheSize = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.definitions.cacheTtlMs
+    && overrides.definitions?.cacheTtlMs !== undefined
+  ) {
+    effective.definitions.cacheTtlMs = Number(overrides.definitions.cacheTtlMs);
+    sources.definitions.cacheTtlMs = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.definitions.shardCacheSize
+    && overrides.definitions?.shardCacheSize !== undefined
+  ) {
+    effective.definitions.shardCacheSize = Number(overrides.definitions.shardCacheSize);
+    sources.definitions.shardCacheSize = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+    && overrides.limits?.providerManualMaxFileBytes !== undefined
+  ) {
+    effective.limits.providerManualMaxFileBytes = Number(overrides.limits.providerManualMaxFileBytes);
+    sources.limits.providerManualMaxFileBytes = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.diagnostics.perfLogging
+    && overrides.diagnostics?.perfLogging !== undefined
+  ) {
+    effective.diagnostics.perfLogging = Boolean(overrides.diagnostics.perfLogging);
+    sources.diagnostics.perfLogging = "override";
+  }
+
+  return { overrides, effective, sources };
+}
+
+function applyRuntimeConfig(overrides) {
+  const previousMode = runtimeConfigState.effective.definitions.mode;
+  const previousShardCacheSize = runtimeConfigState.effective.definitions.shardCacheSize;
+  const next = resolveRuntimeConfigFromOverrides(overrides);
+
+  runtimeConfigState.overrides = next.overrides;
+  runtimeConfigState.effective = next.effective;
+  runtimeConfigState.sources = next.sources;
+
+  if (runtimeConfigState.effective.definitions.mode !== previousMode) {
+    definitionCache.clear();
+    definitionShardCache.clear();
+    hasWarnedAboutDefinitionIndex = false;
+    if (runtimeConfigState.effective.definitions.mode === "memory") {
+      getOrLoadFullDefinitionsMap();
+    }
+  }
+
+  if (runtimeConfigState.effective.definitions.shardCacheSize < previousShardCacheSize) {
+    while (
+      definitionShardCache.size > runtimeConfigState.effective.definitions.shardCacheSize
+    ) {
+      const oldestKey = definitionShardCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      definitionShardCache.delete(oldestKey);
+    }
+  }
+}
+
+function getRuntimeConfigSnapshot() {
+  return {
+    effective: cloneRuntimeConfigObject(runtimeConfigState.effective),
+    overrides: cloneRuntimeConfigObject(runtimeConfigState.overrides),
+    sources: cloneRuntimeConfigObject(runtimeConfigState.sources),
+    locks: cloneRuntimeConfigObject(ENV_CONFIG_LOCKS)
+  };
+}
+
+function getDefinitionsMode() {
+  return runtimeConfigState.effective.definitions.mode;
+}
+
+function getDefinitionCacheSize() {
+  return runtimeConfigState.effective.definitions.cacheSize;
+}
+
+function getDefinitionCacheTtlMs() {
+  return runtimeConfigState.effective.definitions.cacheTtlMs;
+}
+
+function getDefinitionShardCacheSize() {
+  return runtimeConfigState.effective.definitions.shardCacheSize;
+}
+
+function getProviderManualMaxFileBytes() {
+  return runtimeConfigState.effective.limits.providerManualMaxFileBytes;
+}
+
+function isPerfLoggingEnabled() {
+  return runtimeConfigState.effective.diagnostics.perfLogging;
+}
+
 function createPerfTimer(label) {
-  if (!PERF_LOGGING) return null;
+  if (!isPerfLoggingEnabled()) return null;
   return {
     label,
     start: process.hrtime.bigint()
@@ -464,13 +674,13 @@ function getOrLoadFullDefinitionsMap() {
 }
 
 function cacheDefinition(word, value) {
-  const expiresAt =
-    DEFINITION_CACHE_TTL_MS > 0 ? Date.now() + DEFINITION_CACHE_TTL_MS : null;
+  const ttlMs = getDefinitionCacheTtlMs();
+  const expiresAt = ttlMs > 0 ? Date.now() + ttlMs : null;
   if (definitionCache.has(word)) {
     definitionCache.delete(word);
   }
   definitionCache.set(word, { value, expiresAt });
-  if (definitionCache.size > DEFINITION_CACHE_SIZE) {
+  if (definitionCache.size > getDefinitionCacheSize()) {
     const oldest = definitionCache.keys().next().value;
     if (oldest) {
       definitionCache.delete(oldest);
@@ -500,7 +710,7 @@ function cacheDefinitionShard(shardId, definitionsMap) {
     definitionShardCache.delete(shardId);
   }
   definitionShardCache.set(shardId, definitionsMap);
-  if (definitionShardCache.size > DEFINITION_SHARD_CACHE_SIZE) {
+  if (definitionShardCache.size > getDefinitionShardCacheSize()) {
     const oldest = definitionShardCache.keys().next().value;
     if (oldest) {
       definitionShardCache.delete(oldest);
@@ -580,11 +790,12 @@ function lookupEnglishDefinition(word) {
 
   const timer = createPerfTimer("definitions.lookup");
   let value = null;
-  let source = DEFINITIONS_MODE;
+  const definitionsMode = getDefinitionsMode();
+  let source = definitionsMode;
 
-  if (DEFINITIONS_MODE === "memory" || DEFINITIONS_MODE === "lazy") {
+  if (definitionsMode === "memory" || definitionsMode === "lazy") {
     value = getOrLoadFullDefinitionsMap().get(word) || null;
-  } else if (DEFINITIONS_MODE === "indexed") {
+  } else if (definitionsMode === "indexed") {
     const indexedValue = lookupDefinitionByIndexedShard(word);
     if (indexedValue === INDEX_LOOKUP_UNAVAILABLE) {
       source = "lazy-fallback";
@@ -610,9 +821,27 @@ const languageRegistryStore = new LanguageRegistryStore({
   getMinLengthForLang,
   logger: console
 });
+const appConfigStore = new AppConfigStore({
+  filePath: APP_CONFIG_PATH,
+  logger: console
+});
+const adminJobsStore = new AdminJobsStore({
+  filePath: ADMIN_JOBS_DATA_PATH,
+  logger: console
+});
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
-let providerImportInFlight = null;
+let providerImportQueueActive = false;
+
+function initializeRuntimeConfig() {
+  try {
+    const snapshot = appConfigStore.loadSync();
+    applyRuntimeConfig(snapshot.overrides || {});
+  } catch (err) {
+    console.error("Failed to load app config overrides. Falling back to environment defaults.", err);
+    applyRuntimeConfig({});
+  }
+}
 
 function clearObjectValues(target) {
   for (const key of Object.keys(target)) {
@@ -737,6 +966,193 @@ function parseProviderImportSource(value) {
     );
   }
   return normalized;
+}
+
+function parseImportAsyncFlag(rawValue) {
+  if (rawValue === undefined || rawValue === null) {
+    return false;
+  }
+  if (typeof rawValue === "boolean") {
+    return rawValue;
+  }
+  if (typeof rawValue === "string") {
+    const normalized = rawValue.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  throw new StatsApiError(400, "async must be true or false when provided.");
+}
+
+function decodeBase64Payload(value, fieldName, maxBytes) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    throw new StatsApiError(400, `${fieldName} is required for manual uploads.`);
+  }
+  const normalized = raw.replace(/\s+/g, "");
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new StatsApiError(400, `${fieldName} must be valid base64 data.`);
+  }
+  let buffer;
+  try {
+    buffer = Buffer.from(normalized, "base64");
+  } catch (err) {
+    throw new StatsApiError(400, `${fieldName} must be valid base64 data.`);
+  }
+  if (!buffer.length) {
+    throw new StatsApiError(400, `${fieldName} resolved to an empty file.`);
+  }
+  if (buffer.length > maxBytes) {
+    throw new StatsApiError(413, `${fieldName} exceeds the ${maxBytes} byte limit.`);
+  }
+  return buffer;
+}
+
+function normalizeManualUploadFileName(rawValue, expectedExt, fieldName) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    throw new StatsApiError(400, `${fieldName} is required for manual uploads.`);
+  }
+  const normalized = path.basename(raw);
+  if (
+    !SAFE_UPLOAD_FILE_NAME_PATTERN.test(normalized)
+    || normalized.startsWith(".")
+    || normalized !== raw
+    || !normalized.toLowerCase().endsWith(expectedExt)
+  ) {
+    throw new StatsApiError(
+      400,
+      `${fieldName} must be a safe filename ending with ${expectedExt}.`
+    );
+  }
+  return normalized;
+}
+
+function normalizeExpectedChecksums(rawChecksums) {
+  const checksums = {
+    dic: String(rawChecksums?.dic || "").trim().toLowerCase(),
+    aff: String(rawChecksums?.aff || "").trim().toLowerCase()
+  };
+  if (!PROVIDER_CHECKSUM_PATTERN.test(checksums.dic)) {
+    throw new StatsApiError(
+      400,
+      "expectedChecksums.dic must be a lowercase 64-character SHA-256 checksum."
+    );
+  }
+  if (!PROVIDER_CHECKSUM_PATTERN.test(checksums.aff)) {
+    throw new StatsApiError(
+      400,
+      "expectedChecksums.aff must be a lowercase 64-character SHA-256 checksum."
+    );
+  }
+  return checksums;
+}
+
+function buildManualStagingPaths(jobId, dicFileName, affFileName) {
+  const stagedRoot = path.join(ADMIN_JOBS_STAGING_ROOT, jobId);
+  const stagedDicPath = path.join(stagedRoot, dicFileName);
+  const stagedAffPath = path.join(stagedRoot, affFileName);
+  return { stagedRoot, stagedDicPath, stagedAffPath };
+}
+
+function toRelativeAdminJobPath(absolutePath) {
+  return path.posix.normalize(
+    path.relative(DATA_ROOT, absolutePath).split(path.sep).join(path.posix.sep)
+  );
+}
+
+async function persistManualUploadStaging(jobId, manualFiles, maxBytes) {
+  const dicFileName = normalizeManualUploadFileName(
+    manualFiles?.dicFileName || "manual-upload.dic",
+    ".dic",
+    "manualFiles.dicFileName"
+  );
+  const affFileName = normalizeManualUploadFileName(
+    manualFiles?.affFileName || "manual-upload.aff",
+    ".aff",
+    "manualFiles.affFileName"
+  );
+  const dicBuffer = decodeBase64Payload(
+    manualFiles?.dicBase64,
+    "manualFiles.dicBase64",
+    maxBytes
+  );
+  const affBuffer = decodeBase64Payload(
+    manualFiles?.affBase64,
+    "manualFiles.affBase64",
+    maxBytes
+  );
+
+  const paths = buildManualStagingPaths(jobId, dicFileName, affFileName);
+  await fsp.mkdir(paths.stagedRoot, { recursive: true });
+  await Promise.all([
+    fsp.writeFile(paths.stagedDicPath, dicBuffer),
+    fsp.writeFile(paths.stagedAffPath, affBuffer)
+  ]);
+
+  return {
+    dicFileName,
+    affFileName,
+    stagedDicPath: toRelativeAdminJobPath(paths.stagedDicPath),
+    stagedAffPath: toRelativeAdminJobPath(paths.stagedAffPath),
+    contentChecksums: {
+      dic: computeSha256(dicBuffer),
+      aff: computeSha256(affBuffer)
+    }
+  };
+}
+
+async function loadManualUploadFromStaging(jobRequest) {
+  const manualUpload = jobRequest?.manualUpload;
+  if (!manualUpload || typeof manualUpload !== "object") {
+    throw new StatsApiError(400, "manualUpload metadata is missing for queued manual import.");
+  }
+  const stagedDicPath = path.join(DATA_ROOT, manualUpload.stagedDicPath);
+  const stagedAffPath = path.join(DATA_ROOT, manualUpload.stagedAffPath);
+
+  if (
+    !stagedDicPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep) ||
+    !stagedAffPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep)
+  ) {
+    throw new StatsApiError(400, "Staged file paths are outside the expected staging directory.");
+  }
+
+  const [dicBuffer, affBuffer] = await Promise.all([
+    fsp.readFile(stagedDicPath),
+    fsp.readFile(stagedAffPath)
+  ]);
+
+  return {
+    dicBase64: dicBuffer.toString("base64"),
+    affBase64: affBuffer.toString("base64"),
+    dicFileName: manualUpload.dicFileName,
+    affFileName: manualUpload.affFileName
+  };
+}
+
+async function cleanupManualUploadStaging(manualUpload) {
+  if (!manualUpload || typeof manualUpload !== "object") {
+    return;
+  }
+  const stagedDicPath = String(manualUpload.stagedDicPath || "").trim();
+  const stagedAffPath = String(manualUpload.stagedAffPath || "").trim();
+  if (!stagedDicPath && !stagedAffPath) {
+    return;
+  }
+  const dirCandidates = [];
+  if (stagedDicPath) {
+    dirCandidates.push(path.dirname(path.join(DATA_ROOT, stagedDicPath)));
+  }
+  if (stagedAffPath) {
+    dirCandidates.push(path.dirname(path.join(DATA_ROOT, stagedAffPath)));
+  }
+  await Promise.all(
+    Array.from(new Set(dirCandidates)).map(async (dirPath) => {
+      if (!dirPath.startsWith(ADMIN_JOBS_STAGING_ROOT)) {
+        return;
+      }
+      await fsp.rm(dirPath, { recursive: true, force: true }).catch(() => {});
+    })
+  );
 }
 
 function mapProviderPipelineError(err) {
@@ -883,9 +1299,10 @@ function rebuildLanguageRuntimeCatalog() {
   app.locals.languageRegistryStore = languageRegistryStore;
 }
 
+initializeRuntimeConfig();
 rebuildLanguageRuntimeCatalog();
 
-if (DEFINITIONS_MODE === "memory") {
+if (getDefinitionsMode() === "memory") {
   getOrLoadFullDefinitionsMap();
 }
 
@@ -1333,6 +1750,227 @@ function buildProviderStatusRows() {
   return rows;
 }
 
+function formatProviderJobError(err) {
+  const mapped = mapProviderPipelineError(err);
+  if (mapped instanceof StatsApiError) {
+    return {
+      code: `HTTP_${mapped.status}`,
+      message: mapped.message
+    };
+  }
+  return {
+    code: String(err?.code || "IMPORT_FAILED").trim() || "IMPORT_FAILED",
+    message: String(err?.message || PROVIDER_ADMIN_UNAVAILABLE_ERROR).trim()
+      || PROVIDER_ADMIN_UNAVAILABLE_ERROR
+  };
+}
+
+async function runProviderImportPipeline(request) {
+  const variant = parseProviderVariant(request?.variant);
+  const sourceType = parseProviderImportSource(request?.sourceType);
+  const filterMode = parseProviderFilterMode(request?.filterMode);
+  const expectedChecksums = normalizeExpectedChecksums(request?.expectedChecksums);
+
+  let sourceResult;
+  if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD) {
+    let manualFiles = request?.manualFiles || null;
+    if (!manualFiles) {
+      if (request?.manualUpload) {
+        manualFiles = await loadManualUploadFromStaging(request);
+      } else {
+        throw new StatsApiError(400, "manualFiles payload is required for manual-upload imports.");
+      }
+    }
+    sourceResult = await persistManualProviderSource({
+      variant,
+      commit: request?.commit || null,
+      expectedChecksums,
+      manualFiles,
+      maxManualFileBytes: getProviderManualMaxFileBytes(),
+      outputRoot: PROVIDERS_ROOT
+    });
+  } else {
+    const commit = String(request?.commit || "").trim();
+    if (!PROVIDER_COMMIT_PATTERN.test(commit)) {
+      throw new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.");
+    }
+    sourceResult = await fetchAndPersistProviderSource({
+      variant,
+      commit,
+      expectedChecksums,
+      outputRoot: PROVIDERS_ROOT
+    });
+  }
+
+  const commit = sourceResult.descriptor.commit;
+  const expandedResult = await buildExpandedFormsArtifacts({
+    variant,
+    commit,
+    providerRoot: PROVIDERS_ROOT,
+    outputRoot: PROVIDERS_ROOT,
+    policyVersion: PROVIDER_POLICY_VERSION
+  });
+  const poolsResult = await buildProviderPoolsArtifacts({
+    variant,
+    commit,
+    providerRoot: PROVIDERS_ROOT,
+    outputRoot: PROVIDERS_ROOT,
+    policyVersion: PROVIDER_POLICY_VERSION
+  });
+  const filteredResult = await buildFilteredAnswerPoolArtifacts({
+    variant,
+    commit,
+    providerRoot: PROVIDERS_ROOT,
+    outputRoot: PROVIDERS_ROOT,
+    filterMode
+  });
+  const paths = buildProviderArtifactPaths(variant, commit);
+
+  return {
+    ok: true,
+    action: "imported",
+    variant,
+    commit,
+    sourceType,
+    filterMode,
+    counts: {
+      sourceFiles: {
+        dicBytes: sourceResult.sourceFiles.dic.byteSize,
+        affBytes: sourceResult.sourceFiles.aff.byteSize
+      },
+      expandedForms: expandedResult.counts.expandedForms,
+      guessPool: poolsResult.counts.expandedForms,
+      answerPool: poolsResult.counts.answerPool,
+      filteredAnswers: filteredResult.counts.activatedAnswers
+    },
+    artifacts: {
+      commit,
+      sourceManifestPath: paths.sourceManifest,
+      expandedFormsPath: buildProviderRelativePath(variant, commit, "expanded-forms.txt"),
+      guessPoolPath: paths.guessPool,
+      answerPoolPath: buildProviderRelativePath(variant, commit, "answer-pool-active.txt")
+    }
+  };
+}
+
+function toAdminJobResponse(job) {
+  if (!job) {
+    return null;
+  }
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    requestedBy: job.requestedBy,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    startedAt: job.startedAt || null,
+    finishedAt: job.finishedAt || null,
+    request: {
+      variant: job.request?.variant || null,
+      sourceType: job.request?.sourceType || null,
+      filterMode: job.request?.filterMode || null,
+      commit: job.request?.commit || null
+    },
+    artifacts: job.artifacts || null,
+    error: job.error || null
+  };
+}
+
+async function startProviderImportQueueIfNeeded() {
+  if (providerImportQueueActive) {
+    return;
+  }
+  providerImportQueueActive = true;
+
+  try {
+    while (true) {
+      const job = await adminJobsStore.claimNextQueuedJob();
+      if (!job) {
+        break;
+      }
+
+      try {
+        const result = await runProviderImportPipeline(job.request);
+        await adminJobsStore.markSucceeded(job.id, {
+          artifacts: result.artifacts
+        });
+      } catch (err) {
+        const failure = formatProviderJobError(err);
+        await adminJobsStore.markFailed(job.id, failure);
+      } finally {
+        await cleanupManualUploadStaging(job.request?.manualUpload).catch(() => {});
+      }
+    }
+  } finally {
+    providerImportQueueActive = false;
+  }
+}
+
+function buildImportQueueSummary(snapshot) {
+  const totals = {
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    canceled: 0
+  };
+  snapshot.jobs.forEach((job) => {
+    if (totals[job.status] !== undefined) {
+      totals[job.status] += 1;
+    }
+  });
+  return {
+    active: providerImportQueueActive,
+    ...totals
+  };
+}
+
+function buildRuntimeConfigResponse() {
+  const snapshot = getRuntimeConfigSnapshot();
+  return {
+    ok: true,
+    effective: {
+      definitions: snapshot.effective.definitions,
+      limits: snapshot.effective.limits,
+      diagnostics: snapshot.effective.diagnostics,
+      security: {
+        trustProxy: TRUST_PROXY,
+        trustProxyHops: TRUST_PROXY_HOPS,
+        requireAdminKey: REQUIRE_ADMIN_KEY
+      },
+      server: {
+        jsonBodyLimit: JSON_BODY_LIMIT,
+        rateLimitWindowMs: RATE_LIMIT_WINDOW_MS,
+        rateLimitMax: RATE_LIMIT_MAX,
+        adminRateLimitWindowMs: ADMIN_RATE_LIMIT_WINDOW_MS,
+        adminRateLimitMax: ADMIN_RATE_LIMIT_MAX,
+        adminWriteRateLimitWindowMs: ADMIN_WRITE_RATE_LIMIT_WINDOW_MS,
+        adminWriteRateLimitMax: ADMIN_WRITE_RATE_LIMIT_MAX
+      }
+    },
+    overrides: snapshot.overrides,
+    sources: snapshot.sources,
+    locks: snapshot.locks,
+    editable: {
+      definitions: {
+        modeOptions: ["memory", "lazy", "indexed"],
+        cacheSize: { min: 1, max: 4096 },
+        cacheTtlMs: { min: 1000, max: 86400000 },
+        shardCacheSize: { min: 1, max: 26 }
+      },
+      limits: {
+        providerManualMaxFileBytes: { min: 1048576, max: 33554432 }
+      },
+      diagnostics: {
+        perfLogging: true
+      }
+    }
+  };
+}
+
 app.disable("x-powered-by");
 if (TRUST_PROXY) {
   app.set("trust proxy", TRUST_PROXY_HOPS);
@@ -1452,6 +2090,17 @@ app.use(
 );
 
 ensureWordData();
+adminJobsStore
+  .recoverRunningJobs()
+  .then((hadRecoveredJobs) => {
+    if (hadRecoveredJobs) {
+      console.warn("Recovered in-flight provider import jobs to queued state after restart.");
+    }
+    return startProviderImportQueueIfNeeded();
+  })
+  .catch((err) => {
+    console.error("Failed to initialize provider import queue.", err);
+  });
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
@@ -1471,8 +2120,8 @@ app.get("/api/meta", (req, res) => {
     defaultGuesses: DEFAULT_GUESSES,
     languages,
     defaultLang,
-    perfLogging: PERF_LOGGING,
-    definitionsMode: DEFINITIONS_MODE
+    perfLogging: isPerfLoggingEnabled(),
+    definitionsMode: getDefinitionsMode()
   });
 });
 
@@ -1665,6 +2314,76 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
   }
 });
 
+app.get("/api/admin/runtime-config", (req, res) => {
+  return res.json(buildRuntimeConfigResponse());
+});
+
+app.put("/api/admin/runtime-config", (req, res) => {
+  try {
+    const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
+    applyRuntimeConfig(nextState.overrides || {});
+    return res.json(buildRuntimeConfigResponse());
+  } catch (err) {
+    if (err instanceof AppConfigStoreError && err.code === "INVALID_OVERRIDES") {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Runtime config update failed.", err);
+    return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });
+  }
+});
+
+app.get("/api/admin/jobs", async (req, res) => {
+  let status = "";
+  const rawStatus = String(req.query.status || "").trim();
+  if (rawStatus) {
+    if (!["queued", "running", "succeeded", "failed", "canceled"].includes(rawStatus)) {
+      return res.status(400).json({ error: "status must be queued, running, succeeded, failed, or canceled." });
+    }
+    status = rawStatus;
+  }
+
+  const limit = parsePositiveInteger(Number(req.query.limit), 50);
+  try {
+    const [jobs, snapshot] = await Promise.all([
+      adminJobsStore.list({ limit, status }),
+      adminJobsStore.getSnapshot()
+    ]);
+    return res.json({
+      ok: true,
+      queue: buildImportQueueSummary(snapshot),
+      jobs: jobs.map((job) => toAdminJobResponse(job))
+    });
+  } catch (err) {
+    console.error("Admin jobs request failed.", err);
+    return res.status(503).json({ error: "Import queue unavailable right now. Try again soon." });
+  }
+});
+
+app.get("/api/admin/jobs/:id", async (req, res) => {
+  const jobId = String(req.params.id || "").trim();
+  if (!jobId) {
+    return res.status(400).json({ error: "Job ID is required." });
+  }
+
+  try {
+    const [job, snapshot] = await Promise.all([
+      adminJobsStore.getById(jobId),
+      adminJobsStore.getSnapshot()
+    ]);
+    if (!job) {
+      return res.status(404).json({ error: "Import job not found." });
+    }
+    return res.json({
+      ok: true,
+      queue: buildImportQueueSummary(snapshot),
+      job: toAdminJobResponse(job)
+    });
+  } catch (err) {
+    console.error("Admin job lookup failed.", err);
+    return res.status(503).json({ error: "Import queue unavailable right now. Try again soon." });
+  }
+});
+
 app.get("/api/admin/providers", (req, res) => {
   return res.json({
     ok: true,
@@ -1673,132 +2392,124 @@ app.get("/api/admin/providers", (req, res) => {
 });
 
 app.post("/api/admin/providers/import", async (req, res) => {
-  let variant;
-  try {
-    variant = parseProviderVariant(req.body?.variant);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
   let sourceType;
+  let variant;
+  let filterMode;
+  let importAsync;
+  let expectedChecksums;
+  let commitInput;
+
   try {
     sourceType = parseProviderImportSource(req.body?.sourceType);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  const commitInput = String(req.body?.commit || "").trim();
-  if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH && !PROVIDER_COMMIT_PATTERN.test(commitInput)) {
-    return providerAdminError(
-      res,
-      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.")
-    );
-  }
-  if (
-    sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
-    && commitInput
-    && !PROVIDER_COMMIT_PATTERN.test(commitInput)
-  ) {
-    return providerAdminError(
-      res,
-      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA when provided.")
-    );
-  }
-
-  const checksums = req.body?.expectedChecksums;
-  const expectedChecksums = {
-    dic: String(checksums?.dic || "").trim().toLowerCase(),
-    aff: String(checksums?.aff || "").trim().toLowerCase()
-  };
-
-  let filterMode;
-  try {
+    variant = parseProviderVariant(req.body?.variant);
     filterMode = parseProviderFilterMode(req.body?.filterMode);
+    importAsync = parseImportAsyncFlag(req.body?.async);
+    expectedChecksums = normalizeExpectedChecksums(req.body?.expectedChecksums);
+    commitInput = String(req.body?.commit || "").trim();
+
+    if (
+      sourceType === PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH
+      && !PROVIDER_COMMIT_PATTERN.test(commitInput)
+    ) {
+      throw new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.");
+    }
+    if (
+      sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
+      && commitInput
+      && !PROVIDER_COMMIT_PATTERN.test(commitInput)
+    ) {
+      throw new StatsApiError(
+        400,
+        "commit must be a 40-character lowercase hexadecimal git SHA when provided."
+      );
+    }
   } catch (err) {
     return providerAdminError(res, err);
   }
 
-  if (providerImportInFlight) {
-    return providerAdminError(
-      res,
-      new StatsApiError(
-        409,
-        `Another import is already running (${providerImportInFlight.variant} @ ${providerImportInFlight.commit}).`
-      )
-    );
-  }
-
-  const inFlightToken = {
-    variant,
-    commit: commitInput || "auto",
-    startedAt: new Date().toISOString()
-  };
-  providerImportInFlight = inFlightToken;
-
-  try {
-    const sourceResult = sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
-      ? await persistManualProviderSource({
+  if (!importAsync) {
+    if (providerImportQueueActive) {
+      return providerAdminError(
+        res,
+        new StatsApiError(
+          409,
+          "Another queued import is currently running. Retry with async=true or wait for completion."
+        )
+      );
+    }
+    try {
+      const result = await runProviderImportPipeline({
+        sourceType,
         variant,
         commit: commitInput || null,
         expectedChecksums,
-        manualFiles: req.body?.manualFiles,
-        maxManualFileBytes: PROVIDER_MANUAL_MAX_FILE_BYTES,
-        outputRoot: PROVIDERS_ROOT
-      })
-      : await fetchAndPersistProviderSource({
-        variant,
-        commit: commitInput,
-        expectedChecksums,
-        outputRoot: PROVIDERS_ROOT
+        filterMode,
+        manualFiles: req.body?.manualFiles
       });
-    const commit = sourceResult.descriptor.commit;
-    const expandedResult = await buildExpandedFormsArtifacts({
+      return res.json({
+        ...result,
+        providers: buildProviderStatusRows()
+      });
+    } catch (err) {
+      return providerAdminError(res, mapProviderPipelineError(err));
+    }
+  }
+
+  let queuedJob = null;
+  let stagedManualUpload = null;
+  try {
+    const requestPayload = {
+      sourceType,
       variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
-      policyVersion: PROVIDER_POLICY_VERSION
-    });
-    const poolsResult = await buildProviderPoolsArtifacts({
-      variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
-      policyVersion: PROVIDER_POLICY_VERSION
-    });
-    const filteredResult = await buildFilteredAnswerPoolArtifacts({
-      variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
+      commit: sourceType === PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH ? commitInput : commitInput || null,
+      expectedChecksums,
       filterMode
+    };
+
+    queuedJob = await adminJobsStore.enqueueProviderImportJob(requestPayload, {
+      requestedBy: "admin"
     });
 
-    return res.json({
+    if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD) {
+      stagedManualUpload = await persistManualUploadStaging(
+        queuedJob.id,
+        req.body?.manualFiles,
+        getProviderManualMaxFileBytes()
+      );
+      queuedJob = await adminJobsStore.updateJobRequest(queuedJob.id, {
+        manualUpload: stagedManualUpload
+      });
+    }
+  } catch (err) {
+    if (queuedJob?.id) {
+      await adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err)).catch(() => {});
+    }
+    await cleanupManualUploadStaging(stagedManualUpload).catch(() => {});
+    return providerAdminError(res, err instanceof StatsApiError ? err : mapProviderPipelineError(err));
+  }
+
+  startProviderImportQueueIfNeeded().catch((err) => {
+    console.error("Provider import queue processing failed.", err);
+  });
+
+  try {
+    const refreshed = await adminJobsStore.getById(queuedJob.id);
+    const snapshot = await adminJobsStore.getSnapshot();
+    return res.status(202).json({
       ok: true,
-      action: "imported",
-      variant,
-      commit,
-      sourceType,
-      filterMode,
-      counts: {
-        sourceFiles: {
-          dicBytes: sourceResult.sourceFiles.dic.byteSize,
-          affBytes: sourceResult.sourceFiles.aff.byteSize
-        },
-        expandedForms: expandedResult.counts.expandedForms,
-        guessPool: poolsResult.counts.expandedForms,
-        answerPool: poolsResult.counts.answerPool,
-        filteredAnswers: filteredResult.counts.activatedAnswers
-      },
+      action: "queued",
+      queue: buildImportQueueSummary(snapshot),
+      job: toAdminJobResponse(refreshed || queuedJob),
       providers: buildProviderStatusRows()
     });
   } catch (err) {
-    return providerAdminError(res, mapProviderPipelineError(err));
-  } finally {
-    if (providerImportInFlight === inFlightToken) {
-      providerImportInFlight = null;
-    }
+    console.error("Failed to fetch queued import job state.", err);
+    return res.status(202).json({
+      ok: true,
+      action: "queued",
+      job: toAdminJobResponse(queuedJob),
+      providers: buildProviderStatusRows()
+    });
   }
 });
 
@@ -2162,10 +2873,10 @@ function renderDailyMissing(message) {
 function startServer(listener = app.listen.bind(app)) {
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
-    console.log(`Definitions mode: ${DEFINITIONS_MODE}`);
-    if (PERF_LOGGING) {
+    console.log(`Definitions mode: ${getDefinitionsMode()}`);
+    if (isPerfLoggingEnabled()) {
       console.log(
-        `Perf logging enabled (definition cache size=${DEFINITION_CACHE_SIZE}, ttlMs=${DEFINITION_CACHE_TTL_MS})`
+        `Perf logging enabled (definition cache size=${getDefinitionCacheSize()}, ttlMs=${getDefinitionCacheTtlMs()})`
       );
     }
     if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {

@@ -119,7 +119,9 @@
           "required": [
             "dicFileName",
             "affFileName",
-            "contentChecksums"
+            "contentChecksums",
+            "stagedDicPath",
+            "stagedAffPath"
           ],
           "properties": {
             "dicFileName": {
@@ -136,6 +138,12 @@
             },
             "contentChecksums": {
               "$ref": "#/$defs/checksumPair"
+            },
+            "stagedDicPath": {
+              "$ref": "#/$defs/relativePath"
+            },
+            "stagedAffPath": {
+              "$ref": "#/$defs/relativePath"
             }
           }
         }
@@ -186,7 +194,9 @@
                 "required": [
                   "dicFileName",
                   "affFileName",
-                  "contentChecksums"
+                  "contentChecksums",
+                  "stagedDicPath",
+                  "stagedAffPath"
                 ],
                 "properties": {
                   "dicFileName": {
@@ -203,6 +213,12 @@
                   },
                   "contentChecksums": {
                     "$ref": "#/$defs/checksumPair"
+                  },
+                  "stagedDicPath": {
+                    "$ref": "#/$defs/relativePath"
+                  },
+                  "stagedAffPath": {
+                    "$ref": "#/$defs/relativePath"
                   }
                 }
               }
