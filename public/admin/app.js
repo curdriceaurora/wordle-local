@@ -8,6 +8,7 @@ const providersBodyEl = document.getElementById("providersBody");
 const refreshProvidersBtnEl = document.getElementById("refreshProvidersBtn");
 const lockSessionBtnEl = document.getElementById("lockSessionBtn");
 const updatedEl = document.getElementById("adminUpdated");
+
 const importFormEl = document.getElementById("importForm");
 const importSourceTypeEl = document.getElementById("importSourceType");
 const importVariantEl = document.getElementById("importVariant");
@@ -19,11 +20,27 @@ const importChecksumAffEl = document.getElementById("importChecksumAff");
 const importDicFileEl = document.getElementById("importDicFile");
 const importAffFileEl = document.getElementById("importAffFile");
 const importFilterModeEl = document.getElementById("importFilterMode");
+const importAsyncModeEl = document.getElementById("importAsyncMode");
 const importSubmitBtnEl = document.getElementById("importSubmitBtn");
 const importStatusEl = document.getElementById("importStatus");
+const refreshJobsBtnEl = document.getElementById("refreshJobsBtn");
+const jobsStatusEl = document.getElementById("jobsStatus");
+const jobsBodyEl = document.getElementById("jobsBody");
+
+const runtimeFormEl = document.getElementById("runtimeForm");
+const runtimeDefinitionsModeEl = document.getElementById("runtimeDefinitionsMode");
+const runtimeDefinitionCacheSizeEl = document.getElementById("runtimeDefinitionCacheSize");
+const runtimeDefinitionCacheTtlMsEl = document.getElementById("runtimeDefinitionCacheTtlMs");
+const runtimeDefinitionShardCacheSizeEl = document.getElementById("runtimeDefinitionShardCacheSize");
+const runtimeManualMaxBytesEl = document.getElementById("runtimeManualMaxBytes");
+const runtimePerfLoggingEl = document.getElementById("runtimePerfLogging");
+const resetRuntimeBtnEl = document.getElementById("resetRuntimeBtn");
+const runtimeStatusEl = document.getElementById("runtimeStatus");
+const runtimeSourcesBodyEl = document.getElementById("runtimeSourcesBody");
 
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
+
 const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
   REMOTE_FETCH: "remote-fetch",
   MANUAL_UPLOAD: "manual-upload"
@@ -31,16 +48,31 @@ const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_MANUAL_FILE_BYTES = 8 * 1024 * 1024;
+const JOB_REFRESH_INTERVAL_MS = 2500;
 
 const state = {
   adminKey: "",
   unlocked: false,
   loading: false,
   importing: false,
+  jobsLoading: false,
+  runtimeLoading: false,
   providers: [],
   providerUpdates: Object.create(null),
+  jobs: [],
+  queue: {
+    active: false,
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    canceled: 0
+  },
+  runtimeConfig: null,
   activeTab: "providers"
 };
+
+let jobsRefreshTimer = null;
 
 function setStatus(element, message, tone = "") {
   if (!element) return;
@@ -54,16 +86,6 @@ function setStatus(element, message, tone = "") {
 function setHidden(element, hidden) {
   if (!element) return;
   element.classList.toggle("hidden", hidden);
-}
-
-function applyProvidersPayload(payload) {
-  state.providers = Array.isArray(payload?.providers) ? payload.providers : [];
-  const visibleVariants = new Set(state.providers.map((provider) => String(provider.variant || "").trim()));
-  Object.keys(state.providerUpdates).forEach((variant) => {
-    if (!visibleVariants.has(variant)) {
-      delete state.providerUpdates[variant];
-    }
-  });
 }
 
 function formatCommitShort(commit) {
@@ -101,6 +123,37 @@ function toProviderUpdateInfo(payload) {
     message: String(payload?.message || "").trim(),
     checkedAt: payload?.checkedAt || null
   };
+}
+
+function applyProvidersPayload(payload) {
+  state.providers = Array.isArray(payload?.providers) ? payload.providers : [];
+  const visibleVariants = new Set(state.providers.map((provider) => String(provider.variant || "").trim()));
+  Object.keys(state.providerUpdates).forEach((variant) => {
+    if (!visibleVariants.has(variant)) {
+      delete state.providerUpdates[variant];
+    }
+  });
+}
+
+function applyJobsPayload(payload) {
+  state.jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+  state.queue = payload?.queue && typeof payload.queue === "object"
+    ? {
+        active: Boolean(payload.queue.active),
+        queued: Number(payload.queue.queued || 0),
+        running: Number(payload.queue.running || 0),
+        succeeded: Number(payload.queue.succeeded || 0),
+        failed: Number(payload.queue.failed || 0),
+        canceled: Number(payload.queue.canceled || 0)
+      }
+    : {
+        active: false,
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        canceled: 0
+      };
 }
 
 function readFileAsArrayBuffer(file) {
@@ -178,6 +231,18 @@ function activateTab(nextTab, focus = false) {
   }
 }
 
+function formatTimestamp(isoValue) {
+  const value = String(isoValue || "").trim();
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+}
+
 function renderProviders() {
   providersBodyEl.innerHTML = "";
   if (!state.providers.length) {
@@ -206,9 +271,8 @@ function renderProviders() {
     statusCell.classList.add("admin-provider-status");
     const status = String(provider.status || "").trim()
       || (provider.enabled ? "enabled" : provider.imported ? "imported" : "not-imported");
-    const statusText = status.replace(/-/g, " ");
     const statusLabel = document.createElement("span");
-    statusLabel.textContent = statusText;
+    statusLabel.textContent = status.replace(/-/g, " ");
     statusCell.appendChild(statusLabel);
     if (status === "enabled" || status === "imported") {
       statusCell.className = "admin-status-ok";
@@ -255,6 +319,7 @@ function renderProviders() {
     toggleButton.textContent = provider.enabled ? "Disable" : "Enable";
     toggleButton.disabled = state.loading
       || state.importing
+      || state.jobsLoading
       || (!provider.enabled && !Array.isArray(provider.importedCommits))
       || (!provider.enabled && provider.importedCommits.length === 0);
     actionsWrap.appendChild(toggleButton);
@@ -265,7 +330,7 @@ function renderProviders() {
     importButton.dataset.variant = provider.variant;
     importButton.dataset.action = "prefill-import";
     importButton.textContent = provider.imported ? "Re-import" : "Import";
-    importButton.disabled = state.loading || state.importing;
+    importButton.disabled = state.loading || state.importing || state.jobsLoading;
     actionsWrap.appendChild(importButton);
 
     const updateButton = document.createElement("button");
@@ -274,7 +339,7 @@ function renderProviders() {
     updateButton.dataset.variant = provider.variant;
     updateButton.dataset.action = "check-update";
     updateButton.textContent = "Check update";
-    updateButton.disabled = state.loading || state.importing;
+    updateButton.disabled = state.loading || state.importing || state.jobsLoading;
     actionsWrap.appendChild(updateButton);
 
     actionsCell.appendChild(actionsWrap);
@@ -286,41 +351,202 @@ function renderProviders() {
   providersBodyEl.appendChild(fragment);
 }
 
+function renderJobs() {
+  if (!jobsBodyEl) {
+    return;
+  }
+  jobsBodyEl.innerHTML = "";
+  if (!state.jobs.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No import jobs yet.";
+    row.appendChild(cell);
+    jobsBodyEl.appendChild(row);
+  } else {
+    const fragment = document.createDocumentFragment();
+    state.jobs.forEach((job) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${job.id}</td>
+        <td>${String(job.status || "-")}</td>
+        <td>${String(job.request?.variant || "-")}</td>
+        <td>${String(job.request?.sourceType || "-")}</td>
+        <td>${String(job.artifacts?.commit || job.request?.commit || "-")}</td>
+        <td>${formatTimestamp(job.updatedAt)}</td>
+        <td>${String(job.error?.message || "-")}</td>
+      `;
+      fragment.appendChild(row);
+    });
+    jobsBodyEl.appendChild(fragment);
+  }
+
+  const queue = state.queue;
+  const statusText = `Queue ${queue.active ? "active" : "idle"} · queued ${queue.queued} · running ${queue.running} · failed ${queue.failed}`;
+  const tone = queue.failed > 0
+    ? "admin-status-missing"
+    : queue.active || queue.queued > 0 || queue.running > 0
+      ? "admin-status-off"
+      : "admin-status-ok";
+  setStatus(jobsStatusEl, statusText, tone);
+}
+
+function setRuntimeFormEnabled(enabled) {
+  if (!runtimeFormEl) {
+    return;
+  }
+  const controls = runtimeFormEl.querySelectorAll("input,select,button");
+  controls.forEach((element) => {
+    element.disabled = !enabled;
+  });
+}
+
+function renderRuntimeSources() {
+  if (!runtimeSourcesBodyEl) {
+    return;
+  }
+  runtimeSourcesBodyEl.innerHTML = "";
+
+  const runtime = state.runtimeConfig;
+  if (!runtime || typeof runtime !== "object") {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 3;
+    cell.textContent = "Runtime config is not loaded yet.";
+    row.appendChild(cell);
+    runtimeSourcesBodyEl.appendChild(row);
+    return;
+  }
+
+  const rows = [
+    {
+      key: "definitions.mode",
+      value: runtime.effective?.definitions?.mode,
+      source: runtime.sources?.definitions?.mode
+    },
+    {
+      key: "definitions.cacheSize",
+      value: runtime.effective?.definitions?.cacheSize,
+      source: runtime.sources?.definitions?.cacheSize
+    },
+    {
+      key: "definitions.cacheTtlMs",
+      value: runtime.effective?.definitions?.cacheTtlMs,
+      source: runtime.sources?.definitions?.cacheTtlMs
+    },
+    {
+      key: "definitions.shardCacheSize",
+      value: runtime.effective?.definitions?.shardCacheSize,
+      source: runtime.sources?.definitions?.shardCacheSize
+    },
+    {
+      key: "limits.providerManualMaxFileBytes",
+      value: runtime.effective?.limits?.providerManualMaxFileBytes,
+      source: runtime.sources?.limits?.providerManualMaxFileBytes
+    },
+    {
+      key: "diagnostics.perfLogging",
+      value: runtime.effective?.diagnostics?.perfLogging,
+      source: runtime.sources?.diagnostics?.perfLogging
+    }
+  ];
+
+  const fragment = document.createDocumentFragment();
+  rows.forEach((entry) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${entry.key}</td>
+      <td>${String(entry.value)}</td>
+      <td>${String(entry.source || "default")}</td>
+    `;
+    fragment.appendChild(row);
+  });
+
+  runtimeSourcesBodyEl.appendChild(fragment);
+}
+
+function populateRuntimeFormFromState() {
+  const runtime = state.runtimeConfig;
+  if (!runtime) {
+    return;
+  }
+  runtimeDefinitionsModeEl.value = String(runtime.overrides?.definitions?.mode || runtime.effective?.definitions?.mode || "memory");
+  runtimeDefinitionCacheSizeEl.value = String(
+    runtime.overrides?.definitions?.cacheSize ?? runtime.effective?.definitions?.cacheSize ?? ""
+  );
+  runtimeDefinitionCacheTtlMsEl.value = String(
+    runtime.overrides?.definitions?.cacheTtlMs ?? runtime.effective?.definitions?.cacheTtlMs ?? ""
+  );
+  runtimeDefinitionShardCacheSizeEl.value = String(
+    runtime.overrides?.definitions?.shardCacheSize ?? runtime.effective?.definitions?.shardCacheSize ?? ""
+  );
+  runtimeManualMaxBytesEl.value = String(
+    runtime.overrides?.limits?.providerManualMaxFileBytes
+    ?? runtime.effective?.limits?.providerManualMaxFileBytes
+    ?? ""
+  );
+  runtimePerfLoggingEl.checked = Boolean(
+    runtime.overrides?.diagnostics?.perfLogging
+    ?? runtime.effective?.diagnostics?.perfLogging
+  );
+}
+
 function renderWorkspace() {
   setHidden(unlockPanelEl, state.unlocked);
   setHidden(shellPanelEl, !state.unlocked);
-  refreshProvidersBtnEl.disabled = !state.unlocked || state.loading || state.importing;
-  lockSessionBtnEl.disabled = state.loading || state.importing;
-  if (importSourceTypeEl) {
-    importSourceTypeEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importVariantEl) {
-    importVariantEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importCommitEl) {
-    importCommitEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importChecksumDicEl) {
-    importChecksumDicEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importChecksumAffEl) {
-    importChecksumAffEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importDicFileEl) {
-    importDicFileEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importAffFileEl) {
-    importAffFileEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importFilterModeEl) {
-    importFilterModeEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
-  if (importSubmitBtnEl) {
-    importSubmitBtnEl.disabled = !state.unlocked || state.loading || state.importing;
-  }
+
+  const controlsDisabled = !state.unlocked || state.loading || state.importing || state.jobsLoading || state.runtimeLoading;
+  refreshProvidersBtnEl.disabled = controlsDisabled;
+  lockSessionBtnEl.disabled = !state.unlocked || state.loading || state.importing;
+
+  [
+    importSourceTypeEl,
+    importVariantEl,
+    importCommitEl,
+    importChecksumDicEl,
+    importChecksumAffEl,
+    importDicFileEl,
+    importAffFileEl,
+    importFilterModeEl,
+    importAsyncModeEl,
+    importSubmitBtnEl,
+    refreshJobsBtnEl
+  ].forEach((element) => {
+    if (element) {
+      element.disabled = controlsDisabled;
+    }
+  });
+
+  setRuntimeFormEnabled(state.unlocked && !state.loading && !state.runtimeLoading);
   updatedEl.textContent = state.unlocked ? "Session unlocked" : "Session locked";
   renderTabs();
   renderProviders();
+  renderJobs();
+  renderRuntimeSources();
+}
+
+function scheduleQueueRefresh() {
+  if (jobsRefreshTimer) {
+    clearTimeout(jobsRefreshTimer);
+    jobsRefreshTimer = null;
+  }
+  const queue = state.queue;
+  if (!state.unlocked) {
+    return;
+  }
+  if (!(queue.active || queue.queued > 0 || queue.running > 0)) {
+    return;
+  }
+
+  jobsRefreshTimer = setTimeout(async () => {
+    try {
+      await loadJobs({ announce: false });
+      await loadProviders({ announce: false });
+    } catch (_err) {
+      // Best effort refresh while queue is active.
+    }
+    scheduleQueueRefresh();
+  }, JOB_REFRESH_INTERVAL_MS);
 }
 
 async function requestAdminJson(url, options = {}) {
@@ -348,28 +574,72 @@ async function requestAdminJson(url, options = {}) {
   throw error;
 }
 
-async function loadProviders() {
-  state.loading = true;
-  renderWorkspace();
+async function loadProviders(options = {}) {
+  if (options.announce !== false) {
+    state.loading = true;
+    renderWorkspace();
+  }
   try {
     const payload = await requestAdminJson("/api/admin/providers");
     applyProvidersPayload(payload);
     state.unlocked = true;
-    setStatus(workspaceStatusEl, "Provider status loaded.", "admin-status-ok");
-    setStatus(unlockStatusEl, "");
+    if (options.announce !== false) {
+      setStatus(workspaceStatusEl, "Provider status loaded.", "admin-status-ok");
+      setStatus(unlockStatusEl, "");
+    }
   } catch (err) {
     const unauthorized = Number(err.status || 0) === 401;
     state.unlocked = false;
     state.providers = [];
-    setStatus(
-      unlockStatusEl,
-      unauthorized ? "Admin key rejected. Check the key and try again." : `Could not unlock admin shell: ${err.message}`,
-      "admin-status-missing"
-    );
-    setStatus(workspaceStatusEl, "");
+    if (options.announce !== false) {
+      setStatus(
+        unlockStatusEl,
+        unauthorized ? "Admin key rejected. Check the key and try again." : `Could not unlock admin shell: ${err.message}`,
+        "admin-status-missing"
+      );
+      setStatus(workspaceStatusEl, "");
+    }
     throw err;
   } finally {
-    state.loading = false;
+    if (options.announce !== false) {
+      state.loading = false;
+      renderWorkspace();
+    }
+  }
+}
+
+async function loadJobs(options = {}) {
+  state.jobsLoading = true;
+  if (options.announce !== false) {
+    renderWorkspace();
+  }
+  try {
+    const payload = await requestAdminJson("/api/admin/jobs?limit=30");
+    applyJobsPayload(payload);
+    if (options.announce !== false) {
+      setStatus(jobsStatusEl, "Import queue loaded.", "admin-status-ok");
+    }
+    return payload;
+  } finally {
+    state.jobsLoading = false;
+    renderWorkspace();
+    scheduleQueueRefresh();
+  }
+}
+
+async function loadRuntimeConfig(options = {}) {
+  state.runtimeLoading = true;
+  renderWorkspace();
+  try {
+    const payload = await requestAdminJson("/api/admin/runtime-config");
+    state.runtimeConfig = payload;
+    populateRuntimeFormFromState();
+    if (options.announce !== false) {
+      setStatus(runtimeStatusEl, "Runtime config loaded.", "admin-status-ok");
+    }
+    return payload;
+  } finally {
+    state.runtimeLoading = false;
     renderWorkspace();
   }
 }
@@ -418,6 +688,7 @@ async function parseImportPayloadFromForm() {
   const variant = String(importVariantEl?.value || "").trim();
   const commit = String(importCommitEl?.value || "").trim();
   const filterMode = String(importFilterModeEl?.value || "denylist-only").trim();
+  const runAsync = importAsyncModeEl?.checked !== false;
 
   if (!variant) {
     throw new Error("Select a variant before importing.");
@@ -449,6 +720,7 @@ async function parseImportPayloadFromForm() {
     ]);
 
     return {
+      async: runAsync,
       sourceType,
       variant,
       commit,
@@ -476,6 +748,7 @@ async function parseImportPayloadFromForm() {
   }
 
   return {
+    async: runAsync,
     sourceType,
     variant,
     commit,
@@ -491,13 +764,25 @@ async function importProvider() {
   const payload = await parseImportPayloadFromForm();
   state.importing = true;
   renderWorkspace();
-  setStatus(importStatusEl, "Import started. Building provider artifacts...", "admin-status-off");
+  setStatus(importStatusEl, "Import submitted. Waiting for queue update...", "admin-status-off");
   try {
     const response = await requestAdminJson("/api/admin/providers/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+
+    if (response.action === "queued") {
+      const queueText = response.job?.id
+        ? `Import queued (${response.job.id}).`
+        : "Import queued.";
+      setStatus(importStatusEl, queueText, "admin-status-off");
+      await loadJobs({ announce: false });
+      await loadProviders({ announce: false });
+      setStatus(workspaceStatusEl, `Provider import queued for ${payload.variant}.`, "admin-status-off");
+      return;
+    }
+
     const activated = Number(response?.counts?.filteredAnswers || 0);
     const shortCommit = String(response?.commit || payload.commit || "").slice(0, 10) || "auto";
     setStatus(
@@ -505,7 +790,8 @@ async function importProvider() {
       `Import complete for ${payload.variant} @ ${shortCommit}... (${activated} family-safe answers).`,
       "admin-status-ok"
     );
-    await loadProviders();
+    await loadProviders({ announce: false });
+    await loadJobs({ announce: false });
     setStatus(workspaceStatusEl, `Provider import succeeded for ${payload.variant}.`, "admin-status-ok");
   } finally {
     state.importing = false;
@@ -540,20 +826,80 @@ async function toggleProviderState(variant, action) {
   state.loading = true;
   renderWorkspace();
   try {
-    const payload = wantsEnable ? { commit } : {};
+    const requestPayload = wantsEnable ? { commit } : {};
     await requestAdminJson(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(requestPayload)
     });
     setStatus(
       workspaceStatusEl,
-      wantsEnable
-        ? `${provider.variant} enabled.`
-        : `${provider.variant} disabled.`,
+      wantsEnable ? `${provider.variant} enabled.` : `${provider.variant} disabled.`,
       "admin-status-ok"
     );
-    await loadProviders();
+    await loadProviders({ announce: false });
+    await loadJobs({ announce: false });
+  } finally {
+    state.loading = false;
+    renderWorkspace();
+  }
+}
+
+function buildRuntimeOverridePayload() {
+  const definitionsMode = String(runtimeDefinitionsModeEl.value || "memory").trim();
+  const cacheSize = Number(runtimeDefinitionCacheSizeEl.value);
+  const cacheTtlMs = Number(runtimeDefinitionCacheTtlMsEl.value);
+  const shardCacheSize = Number(runtimeDefinitionShardCacheSizeEl.value);
+  const providerManualMaxFileBytes = Number(runtimeManualMaxBytesEl.value);
+
+  return {
+    definitions: {
+      mode: definitionsMode,
+      cacheSize,
+      cacheTtlMs,
+      shardCacheSize
+    },
+    limits: {
+      providerManualMaxFileBytes
+    },
+    diagnostics: {
+      perfLogging: Boolean(runtimePerfLoggingEl.checked)
+    }
+  };
+}
+
+async function saveRuntimeOverrides(overrides) {
+  state.runtimeLoading = true;
+  renderWorkspace();
+  try {
+    const payload = await requestAdminJson("/api/admin/runtime-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ overrides })
+    });
+    state.runtimeConfig = payload;
+    populateRuntimeFormFromState();
+    setStatus(runtimeStatusEl, "Runtime overrides saved.", "admin-status-ok");
+    setStatus(workspaceStatusEl, "Runtime settings updated.", "admin-status-ok");
+  } finally {
+    state.runtimeLoading = false;
+    renderWorkspace();
+  }
+}
+
+async function unlockWorkspace() {
+  state.loading = true;
+  renderWorkspace();
+  try {
+    await loadProviders({ announce: true });
+    await Promise.all([
+      loadJobs({ announce: false }).catch((err) => {
+        setStatus(jobsStatusEl, `Could not load queue: ${err.message}`, "admin-status-missing");
+      }),
+      loadRuntimeConfig({ announce: false }).catch((err) => {
+        setStatus(runtimeStatusEl, `Could not load runtime config: ${err.message}`, "admin-status-missing");
+      })
+    ]);
   } finally {
     state.loading = false;
     renderWorkspace();
@@ -563,22 +909,43 @@ async function toggleProviderState(variant, action) {
 unlockFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   state.adminKey = String(adminKeyInputEl.value || "").trim();
-  await loadProviders().catch(() => {});
+  await unlockWorkspace().catch(() => {});
   adminKeyInputEl.value = "";
 });
 
 refreshProvidersBtnEl.addEventListener("click", async () => {
   if (!state.unlocked) return;
-  await loadProviders().catch(() => {});
+  await Promise.all([
+    loadProviders({ announce: true }),
+    loadJobs({ announce: false }),
+    loadRuntimeConfig({ announce: false })
+  ]).catch(() => {});
 });
 
+if (refreshJobsBtnEl) {
+  refreshJobsBtnEl.addEventListener("click", async () => {
+    if (!state.unlocked) return;
+    await loadJobs({ announce: true }).catch((err) => {
+      setStatus(jobsStatusEl, `Queue refresh failed: ${err.message}`, "admin-status-missing");
+    });
+  });
+}
+
 lockSessionBtnEl.addEventListener("click", () => {
+  if (jobsRefreshTimer) {
+    clearTimeout(jobsRefreshTimer);
+    jobsRefreshTimer = null;
+  }
   state.adminKey = "";
   state.unlocked = false;
   state.providers = [];
+  state.jobs = [];
+  state.runtimeConfig = null;
   state.providerUpdates = Object.create(null);
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
+  setStatus(jobsStatusEl, "", "");
+  setStatus(runtimeStatusEl, "", "");
   renderWorkspace();
   adminKeyInputEl.focus();
 });
@@ -590,6 +957,28 @@ if (importFormEl) {
       await importProvider();
     } catch (err) {
       setStatus(importStatusEl, `Import failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+if (runtimeFormEl) {
+  runtimeFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await saveRuntimeOverrides(buildRuntimeOverridePayload());
+    } catch (err) {
+      setStatus(runtimeStatusEl, `Runtime update failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+if (resetRuntimeBtnEl) {
+  resetRuntimeBtnEl.addEventListener("click", async () => {
+    try {
+      await saveRuntimeOverrides({});
+      setStatus(runtimeStatusEl, "Runtime overrides reset to defaults/env.", "admin-status-ok");
+    } catch (err) {
+      setStatus(runtimeStatusEl, `Reset failed: ${err.message}`, "admin-status-missing");
     }
   });
 }

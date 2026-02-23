@@ -113,6 +113,15 @@
               }
             }
           }
+        },
+        "diagnostics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "perfLogging": {
+              "type": "boolean"
+            }
+          }
         }
       }
     }
