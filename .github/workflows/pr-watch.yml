@@ -14,10 +14,14 @@ on:
       - submitted
       - edited
       - dismissed
+  issue_comment:
+    types:
+      - created
   workflow_run:
     workflows:
       - CI
       - CodeQL
+      - Copilot Review Trigger
     types:
       - completed
   workflow_dispatch:
@@ -34,6 +38,15 @@ concurrency:
 
 jobs:
   pr-watch:
+    if: >
+      github.event_name != 'issue_comment' ||
+      (
+        (
+          contains(github.event.comment.body, '/copilot review') ||
+          contains(github.event.comment.body, 'copilot-auto-review')
+        ) &&
+        !contains(github.event.comment.body, '<!-- pr-watch-status -->')
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -7,7 +7,13 @@ const { formatCommentSummary } = require("./lib/pr-review-utils");
 const STICKY_MARKER = "<!-- pr-watch-status -->";
 const FAILURE_BLOCK_START = "<!-- pr-watch-error:start -->";
 const FAILURE_BLOCK_END = "<!-- pr-watch-error:end -->";
-const COPILOT_LOGIN = "copilot-pull-request-reviewer";
+const COPILOT_LOGIN_PREFIXES = Object.freeze([
+  "copilot-pull-request-reviewer",
+  "copilot"
+]);
+const COPILOT_REVIEW_COMMAND_REGEX = /^\/copilot review\b/im;
+const COPILOT_TRIGGER_MARKER_REGEX = /<!--\s*copilot-auto-review sha:([a-f0-9]{40})\s*-->/i;
+const COPILOT_HEAD_SHA_LINE_REGEX = /head sha:\s*([a-f0-9]{40})/i;
 const MAX_THREADS_TO_SHOW = 10;
 
 function nowIso() {
@@ -49,8 +55,68 @@ function escapeTableCell(value) {
     .trim();
 }
 
+function normalizeLogin(login) {
+  return String(login || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\[bot\]$/i, "");
+}
+
 function isCopilotAuthor(login) {
-  return String(login || "") === COPILOT_LOGIN;
+  const normalized = normalizeLogin(login);
+  return COPILOT_LOGIN_PREFIXES.some((prefix) => (
+    normalized === prefix || normalized.startsWith(`${prefix}-`)
+  ));
+}
+
+function hasCopilotReviewCommand(commentBody) {
+  return COPILOT_REVIEW_COMMAND_REGEX.test(String(commentBody || ""));
+}
+
+function extractCopilotTriggerSha(commentBody) {
+  const body = String(commentBody || "");
+  if (!hasCopilotReviewCommand(body)) {
+    return null;
+  }
+  const markerMatch = body.match(COPILOT_TRIGGER_MARKER_REGEX);
+  if (markerMatch?.[1]) {
+    return markerMatch[1].toLowerCase();
+  }
+  const lineMatch = body.match(COPILOT_HEAD_SHA_LINE_REGEX);
+  if (lineMatch?.[1]) {
+    return lineMatch[1].toLowerCase();
+  }
+  return null;
+}
+
+function hasCopilotTriggerForHeadSha(issueComments, headSha) {
+  const normalizedHeadSha = String(headSha || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(normalizedHeadSha)) {
+    return false;
+  }
+  return issueComments.some((comment) => {
+    const body = String(comment?.body || "");
+    if (!hasCopilotReviewCommand(body)) {
+      return false;
+    }
+    const triggerSha = extractCopilotTriggerSha(body);
+    if (!triggerSha) {
+      // SHA-less manual trigger comments are not treated as a trigger for a specific head SHA.
+      return false;
+    }
+    return triggerSha === normalizedHeadSha;
+  });
+}
+
+function hasAnyCopilotTriggerComment(issueComments) {
+  return issueComments.some((comment) => hasCopilotReviewCommand(comment?.body || ""));
+}
+
+function hasCopilotRequestedReviewer(pr) {
+  const reviewers = Array.isArray(pr?.requested_reviewers)
+    ? pr.requested_reviewers
+    : [];
+  return reviewers.some((reviewer) => isCopilotAuthor(reviewer?.login || ""));
 }
 
 async function githubRequest(urlPath, options = {}) {
@@ -299,24 +365,49 @@ async function fetchThreadAndReviewData(owner, repo, prNumber) {
   return { unresolvedThreads, reviews };
 }
 
-function summarizeCopilotReview(reviews, headSha) {
+function summarizeCopilotReview(reviews, headSha, options = {}) {
   const copilotReviews = reviews.filter((review) => isCopilotAuthor(review?.author?.login || ""));
-  if (!copilotReviews.length) {
+  const hasCurrent = copilotReviews.some(
+    (review) =>
+      String(review?.commit?.oid || "").trim().toLowerCase() === headSha &&
+      ["COMMENTED", "APPROVED", "CHANGES_REQUESTED"].includes(String(review?.state || ""))
+  );
+  if (hasCurrent) {
+    return "completed";
+  }
+
+  if (options.hasCurrentTrigger || options.hasRequestedReviewer) {
     return "pending";
   }
 
-  const hasCurrent = copilotReviews.some(
-    (review) =>
-      String(review?.commit?.oid || "") === headSha &&
-      ["COMMENTED", "APPROVED", "CHANGES_REQUESTED"].includes(String(review?.state || ""))
-  );
-  return hasCurrent ? "completed" : "outdated";
+  if (copilotReviews.length) {
+    return "outdated";
+  }
+
+  return "not-requested";
+}
+
+function summarizeCopilotTriggerSignal(options = {}) {
+  if (options.hasCurrentTrigger && options.hasRequestedReviewer) {
+    return "comment+reviewer";
+  }
+  if (options.hasCurrentTrigger) {
+    return "comment";
+  }
+  if (options.hasRequestedReviewer) {
+    return "reviewer";
+  }
+  if (options.hasAnyTriggerComment) {
+    return "comment";
+  }
+  return "none";
 }
 
 function statusIcon(state) {
   if (state === "pass") return "✅";
   if (state === "fail") return "❌";
   if (state === "completed") return "✅";
+  if (state === "not-requested") return "⚪";
   if (state === "outdated") return "⚠️";
   return "⏳";
 }
@@ -364,6 +455,7 @@ function buildStatusComment(payload) {
     `- Head SHA: \`${escapeMarkdownText(payload.headSha)}\``,
     `- CI Overall: ${statusIcon(payload.checkSummary.overall)} \`${payload.checkSummary.overall}\``,
     `- Copilot Review: ${statusIcon(payload.copilotStatus)} \`${payload.copilotStatus}\``,
+    `- Copilot Trigger Signal: ${statusIcon(payload.copilotTriggerSignal === "none" ? "not-requested" : "pending")} \`${payload.copilotTriggerSignal}\``,
     `- Open Threads: ${payload.unresolvedThreads.length} (Copilot: ${unresolvedCopilot.length}, Human: ${unresolvedHuman.length})`,
     "",
     "### Checks",
@@ -451,17 +543,29 @@ async function main() {
     }
 
     const pr = await fetchPullRequest(owner, repo, prNumber);
-    const headSha = String(pr?.head?.sha || "").trim();
+    const headSha = String(pr?.head?.sha || "").trim().toLowerCase();
     if (!headSha) {
       throw new Error(`PR #${prNumber} has no head SHA.`);
     }
 
-    const [checkRuns, threadData] = await Promise.all([
+    const [checkRuns, threadData, issueComments] = await Promise.all([
       fetchCheckRuns(owner, repo, headSha),
-      fetchThreadAndReviewData(owner, repo, prNumber)
+      fetchThreadAndReviewData(owner, repo, prNumber),
+      fetchIssueComments(owner, repo, prNumber)
     ]);
     const checkSummary = summarizeChecks(checkRuns);
-    const copilotStatus = summarizeCopilotReview(threadData.reviews, headSha);
+    const hasCurrentTrigger = hasCopilotTriggerForHeadSha(issueComments, headSha);
+    const hasAnyTriggerComment = hasAnyCopilotTriggerComment(issueComments);
+    const hasRequestedReviewer = hasCopilotRequestedReviewer(pr);
+    const copilotStatus = summarizeCopilotReview(threadData.reviews, headSha, {
+      hasCurrentTrigger,
+      hasRequestedReviewer
+    });
+    const copilotTriggerSignal = summarizeCopilotTriggerSignal({
+      hasCurrentTrigger,
+      hasAnyTriggerComment,
+      hasRequestedReviewer
+    });
 
     const body = buildStatusComment({
       prNumber,
@@ -469,6 +573,7 @@ async function main() {
       headSha,
       checkSummary,
       copilotStatus,
+      copilotTriggerSignal,
       unresolvedThreads: threadData.unresolvedThreads
     });
 
