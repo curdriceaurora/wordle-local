@@ -50,6 +50,17 @@ const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_MANUAL_FILE_BYTES = 8 * 1024 * 1024;
 const JOB_REFRESH_INTERVAL_MS = 2500;
 
+function createEmptyQueueState() {
+  return {
+    active: false,
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    canceled: 0
+  };
+}
+
 const state = {
   adminKey: "",
   unlocked: false,
@@ -60,14 +71,7 @@ const state = {
   providers: [],
   providerUpdates: Object.create(null),
   jobs: [],
-  queue: {
-    active: false,
-    queued: 0,
-    running: 0,
-    succeeded: 0,
-    failed: 0,
-    canceled: 0
-  },
+  queue: createEmptyQueueState(),
   runtimeConfig: null,
   activeTab: "providers"
 };
@@ -146,14 +150,13 @@ function applyJobsPayload(payload) {
         failed: Number(payload.queue.failed || 0),
         canceled: Number(payload.queue.canceled || 0)
       }
-    : {
-        active: false,
-        queued: 0,
-        running: 0,
-        succeeded: 0,
-        failed: 0,
-        canceled: 0
-      };
+    : createEmptyQueueState();
+}
+
+function appendCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = String(value ?? "-");
+  row.appendChild(cell);
 }
 
 function readFileAsArrayBuffer(file) {
@@ -367,15 +370,13 @@ function renderJobs() {
     const fragment = document.createDocumentFragment();
     state.jobs.forEach((job) => {
       const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${job.id}</td>
-        <td>${String(job.status || "-")}</td>
-        <td>${String(job.request?.variant || "-")}</td>
-        <td>${String(job.request?.sourceType || "-")}</td>
-        <td>${String(job.artifacts?.commit || job.request?.commit || "-")}</td>
-        <td>${formatTimestamp(job.updatedAt)}</td>
-        <td>${String(job.error?.message || "-")}</td>
-      `;
+      appendCell(row, job.id);
+      appendCell(row, job.status || "-");
+      appendCell(row, job.request?.variant || "-");
+      appendCell(row, job.request?.sourceType || "-");
+      appendCell(row, job.artifacts?.commit || job.request?.commit || "-");
+      appendCell(row, formatTimestamp(job.updatedAt));
+      appendCell(row, job.error?.message || "-");
       fragment.appendChild(row);
     });
     jobsBodyEl.appendChild(fragment);
@@ -454,11 +455,9 @@ function renderRuntimeSources() {
   const fragment = document.createDocumentFragment();
   rows.forEach((entry) => {
     const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${entry.key}</td>
-      <td>${String(entry.value)}</td>
-      <td>${String(entry.source || "default")}</td>
-    `;
+    appendCell(row, entry.key);
+    appendCell(row, entry.value);
+    appendCell(row, entry.source || "default");
     fragment.appendChild(row);
   });
 
@@ -700,11 +699,14 @@ async function parseImportPayloadFromForm() {
   if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD) {
     const dicFile = importDicFileEl?.files?.[0];
     const affFile = importAffFileEl?.files?.[0];
+    const maxManualFileBytes = Number(
+      state.runtimeConfig?.effective?.limits?.providerManualMaxFileBytes || MAX_MANUAL_FILE_BYTES
+    );
     if (!dicFile || !affFile) {
       throw new Error("Select both .dic and .aff files for manual upload.");
     }
-    if (dicFile.size > MAX_MANUAL_FILE_BYTES || affFile.size > MAX_MANUAL_FILE_BYTES) {
-      throw new Error(`Manual upload files must each be <= ${MAX_MANUAL_FILE_BYTES} bytes.`);
+    if (dicFile.size > maxManualFileBytes || affFile.size > maxManualFileBytes) {
+      throw new Error(`Manual upload files must each be <= ${maxManualFileBytes} bytes.`);
     }
     if (commit && !COMMIT_PATTERN.test(commit)) {
       throw new Error("Commit must be a 40-character lowercase hexadecimal SHA when provided.");
@@ -846,22 +848,43 @@ async function toggleProviderState(variant, action) {
 }
 
 function buildRuntimeOverridePayload() {
+  const parseOptionalInteger = (element, fieldName) => {
+    const raw = String(element?.value || "").trim();
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed)) {
+      throw new Error(`${fieldName} must be an integer.`);
+    }
+    return parsed;
+  };
+
   const definitionsMode = String(runtimeDefinitionsModeEl.value || "memory").trim();
-  const cacheSize = Number(runtimeDefinitionCacheSizeEl.value);
-  const cacheTtlMs = Number(runtimeDefinitionCacheTtlMsEl.value);
-  const shardCacheSize = Number(runtimeDefinitionShardCacheSizeEl.value);
-  const providerManualMaxFileBytes = Number(runtimeManualMaxBytesEl.value);
+  const cacheSize = parseOptionalInteger(runtimeDefinitionCacheSizeEl, "Definition cache size");
+  const cacheTtlMs = parseOptionalInteger(runtimeDefinitionCacheTtlMsEl, "Definition cache TTL");
+  const shardCacheSize = parseOptionalInteger(runtimeDefinitionShardCacheSizeEl, "Definition shard cache size");
+  const providerManualMaxFileBytes = parseOptionalInteger(runtimeManualMaxBytesEl, "Manual upload max bytes");
+
+  const definitions = { mode: definitionsMode };
+  if (cacheSize !== undefined) {
+    definitions.cacheSize = cacheSize;
+  }
+  if (cacheTtlMs !== undefined) {
+    definitions.cacheTtlMs = cacheTtlMs;
+  }
+  if (shardCacheSize !== undefined) {
+    definitions.shardCacheSize = shardCacheSize;
+  }
+
+  const limits = {};
+  if (providerManualMaxFileBytes !== undefined) {
+    limits.providerManualMaxFileBytes = providerManualMaxFileBytes;
+  }
 
   return {
-    definitions: {
-      mode: definitionsMode,
-      cacheSize,
-      cacheTtlMs,
-      shardCacheSize
-    },
-    limits: {
-      providerManualMaxFileBytes
-    },
+    definitions,
+    limits,
     diagnostics: {
       perfLogging: Boolean(runtimePerfLoggingEl.checked)
     }
@@ -940,6 +963,7 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.unlocked = false;
   state.providers = [];
   state.jobs = [];
+  state.queue = createEmptyQueueState();
   state.runtimeConfig = null;
   state.providerUpdates = Object.create(null);
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");

@@ -31,8 +31,7 @@ const express = require("express");
  * @param {Object} deps.languageRegistryStore - LanguageRegistryStore instance
  * @param {Object} deps.adminJobsStore - AdminJobsStore instance for job queue
  * @param {Object} deps.appConfigStore - AppConfigStore instance for runtime config
- * @param {Object} deps.providerImportInFlight - Mutable reference to in-flight import state
- * @param {Object} deps.providerImportQueueActiveRef - Mutable reference to queue active flag
+ * @param {Object} deps.providerImportQueueActiveRef - Mutable reference to async queue active flag
  * @param {Function} deps.buildRuntimeConfigResponse - Builds runtime config response
  * @param {Function} deps.applyRuntimeConfig - Applies runtime config overrides
  * @param {Function} deps.buildImportQueueSummary - Builds import queue summary
@@ -88,8 +87,8 @@ function createAdminRouter(deps) {
     languageRegistryStore,
     adminJobsStore,
     appConfigStore,
-    providerImportInFlight,
     providerImportQueueActiveRef,
+    providerImportSyncActiveRef,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -278,7 +277,7 @@ function createAdminRouter(deps) {
     }
 
     if (!importAsync) {
-      if (providerImportQueueActiveRef.value) {
+      if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
         return providerAdminError(
           res,
           new StatsApiError(
@@ -288,23 +287,7 @@ function createAdminRouter(deps) {
         );
       }
 
-      if (providerImportInFlight.value) {
-        return providerAdminError(
-          res,
-          new StatsApiError(
-            409,
-            `Another import is already running (${providerImportInFlight.value.variant} @ ${providerImportInFlight.value.commit}).`
-          )
-        );
-      }
-
-      const inFlightToken = {
-        variant,
-        commit: commitInput || "auto",
-        startedAt: new Date().toISOString()
-      };
-      providerImportInFlight.value = inFlightToken;
-
+      providerImportSyncActiveRef.value = true;
       try {
         const result = await runProviderImportPipeline({
           sourceType,
@@ -321,9 +304,10 @@ function createAdminRouter(deps) {
       } catch (err) {
         return providerAdminError(res, mapProviderPipelineError(err));
       } finally {
-        if (providerImportInFlight.value === inFlightToken) {
-          providerImportInFlight.value = null;
-        }
+        providerImportSyncActiveRef.value = false;
+        startProviderImportQueueIfNeeded().catch((queueErr) => {
+          console.error("Provider import queue processing failed.", queueErr);
+        });
       }
     }
 

@@ -830,8 +830,8 @@ const adminJobsStore = new AdminJobsStore({
 });
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
-let providerImportInFlight = { value: null };
 const providerImportQueueActiveRef = { value: false };
+const providerImportSyncActiveRef = { value: false };
 
 function initializeRuntimeConfig() {
   try {
@@ -1055,9 +1055,29 @@ function buildManualStagingPaths(jobId, dicFileName, affFileName) {
 }
 
 function toRelativeAdminJobPath(absolutePath) {
-  return path.posix.normalize(
-    path.relative(DATA_ROOT, absolutePath).split(path.sep).join(path.posix.sep)
+  const relative = path.relative(ADMIN_JOBS_ROOT, absolutePath);
+  const normalized = path.posix.normalize(relative.split(path.sep).join(path.posix.sep));
+  if (!normalized || normalized.startsWith("..") || path.posix.isAbsolute(normalized)) {
+    throw new StatsApiError(500, "Failed to normalize staged upload path.");
+  }
+  return normalized;
+}
+
+function resolveAdminJobStagingPath(relativePathValue) {
+  const relativePath = path.posix.normalize(
+    String(relativePathValue || "").trim().split(path.sep).join(path.posix.sep)
   );
+  if (!relativePath || relativePath.startsWith("..") || path.posix.isAbsolute(relativePath)) {
+    throw new StatsApiError(400, "Staged file paths are outside the expected staging directory.");
+  }
+  const resolvedPath = path.resolve(ADMIN_JOBS_ROOT, relativePath);
+  if (
+    resolvedPath !== ADMIN_JOBS_STAGING_ROOT
+    && !resolvedPath.startsWith(`${ADMIN_JOBS_STAGING_ROOT}${path.sep}`)
+  ) {
+    throw new StatsApiError(400, "Staged file paths are outside the expected staging directory.");
+  }
+  return resolvedPath;
 }
 
 async function persistManualUploadStaging(jobId, manualFiles, maxBytes) {
@@ -1106,15 +1126,8 @@ async function loadManualUploadFromStaging(jobRequest) {
   if (!manualUpload || typeof manualUpload !== "object") {
     throw new StatsApiError(400, "manualUpload metadata is missing for queued manual import.");
   }
-  const stagedDicPath = path.join(DATA_ROOT, manualUpload.stagedDicPath);
-  const stagedAffPath = path.join(DATA_ROOT, manualUpload.stagedAffPath);
-
-  if (
-    !stagedDicPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep) ||
-    !stagedAffPath.startsWith(ADMIN_JOBS_STAGING_ROOT + path.sep)
-  ) {
-    throw new StatsApiError(400, "Staged file paths are outside the expected staging directory.");
-  }
+  const stagedDicPath = resolveAdminJobStagingPath(manualUpload.stagedDicPath);
+  const stagedAffPath = resolveAdminJobStagingPath(manualUpload.stagedAffPath);
 
   const [dicBuffer, affBuffer] = await Promise.all([
     fsp.readFile(stagedDicPath),
@@ -1140,10 +1153,10 @@ async function cleanupManualUploadStaging(manualUpload) {
   }
   const dirCandidates = [];
   if (stagedDicPath) {
-    dirCandidates.push(path.dirname(path.join(DATA_ROOT, stagedDicPath)));
+    dirCandidates.push(path.dirname(resolveAdminJobStagingPath(stagedDicPath)));
   }
   if (stagedAffPath) {
-    dirCandidates.push(path.dirname(path.join(DATA_ROOT, stagedAffPath)));
+    dirCandidates.push(path.dirname(resolveAdminJobStagingPath(stagedAffPath)));
   }
   await Promise.all(
     Array.from(new Set(dirCandidates)).map(async (dirPath) => {
@@ -1877,7 +1890,7 @@ function toAdminJobResponse(job) {
 }
 
 async function startProviderImportQueueIfNeeded() {
-  if (providerImportQueueActiveRef.value) {
+  if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
     return;
   }
   providerImportQueueActiveRef.value = true;
@@ -2082,7 +2095,6 @@ app.use(
     rebuildLanguageRuntimeCatalog,
     leaderboardStore,
     languageRegistryStore,
-    providerImportInFlight,
     adminJobsStore,
     appConfigStore,
     buildRuntimeConfigResponse,
@@ -2099,6 +2111,7 @@ app.use(
     cleanupManualUploadStaging,
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
+    providerImportSyncActiveRef,
     PROVIDER_COMMIT_PATTERN,
     PROVIDER_IMPORT_SOURCE_TYPES,
     PROVIDER_MANUAL_MAX_FILE_BYTES,
