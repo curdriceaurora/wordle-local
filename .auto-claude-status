@@ -3,13 +3,13 @@
   "spec": "003-server-route-modularization",
   "state": "building",
   "subtasks": {
-    "completed": 7,
+    "completed": 9,
     "total": 17,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Extract Stats Routes",
+    "current": "Extract Admin Routes",
     "id": null,
     "total": 2
   },
@@ -18,8 +18,8 @@
     "max": 1
   },
   "session": {
-    "number": 7,
+    "number": 9,
     "started_at": "2026-03-23T18:30:32.580082"
   },
-  "last_update": "2026-03-23T18:48:07.951258"
+  "last_update": "2026-03-23T18:55:19.599539"
 }
