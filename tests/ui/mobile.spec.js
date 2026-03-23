@@ -5,6 +5,9 @@ async function waitForLanguages(page) {
 }
 
 const viewports = [
+  { name: "minimum", width: 320, height: 568 },
+  { name: "galaxy-a", width: 360, height: 740 },
+  { name: "iphone-se", width: 375, height: 667 },
   { name: "iphone-13", width: 390, height: 844 },
   { name: "pixel-7", width: 412, height: 915 }
 ];
