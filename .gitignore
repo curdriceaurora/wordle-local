@@ -22,3 +22,6 @@ yarn-error.log
 .turbo/
 .next/
 public/dist/
+
+# Auto Claude data directory
+.auto-claude/
