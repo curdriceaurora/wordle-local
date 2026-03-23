@@ -1418,6 +1418,13 @@ if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
   console.warn("Admin shell assets are missing. Build assets before serving /admin.");
 }
 
+// ============================================================================
+// ADMIN PAGE ROUTE - To be extracted to routes/admin.js
+// Endpoint: GET /admin (serves admin shell HTML)
+// Dependencies: ADMIN_SHELL
+// Note: This route serves the admin UI entry point, separate from admin API routes
+// ============================================================================
+
 app.get("/admin", (req, res) => {
   // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
   res.setHeader("Cache-Control", "no-store");
@@ -1453,6 +1460,14 @@ app.use(
 
 ensureWordData();
 
+// ============================================================================
+// META ROUTES - To be extracted to routes/meta.js
+// Endpoints: GET /api/health, GET /api/meta
+// Dependencies: availableLanguages, MIN_LEN, MAX_LEN, MIN_GUESSES, MAX_GUESSES,
+//               DEFAULT_GUESSES, DEFAULT_LANG, PERF_LOGGING, DEFINITIONS_MODE,
+//               isLanguageAvailable
+// ============================================================================
+
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
@@ -1475,6 +1490,16 @@ app.get("/api/meta", (req, res) => {
     definitionsMode: DEFINITIONS_MODE
   });
 });
+
+// ============================================================================
+// STATS ROUTES - To be extracted to routes/stats.js
+// Endpoints: POST /api/stats/profile, POST /api/stats/result,
+//            GET /api/stats/leaderboard, GET /api/stats/profile/:id
+// Dependencies: leaderboardStore, normalizeProfileNameInput, parseDailyResultPayload,
+//               parseLeaderboardRange, getLocalDateString, buildLeaderboardRows,
+//               buildProfilePerformance, statsServiceError, mapRegistryErrorToStats,
+//               StatsApiError, mergeDailyResult, describeRange
+// ============================================================================
 
 app.post("/api/stats/profile", async (req, res) => {
   let profileName;
@@ -1625,6 +1650,14 @@ app.get("/api/stats/profile/:id", async (req, res) => {
   }
 });
 
+// ============================================================================
+// ADMIN ROUTES - To be extracted to routes/admin.js
+// Section 1: Admin Stats Management
+// Endpoint: PATCH /api/admin/stats/profile/:id
+// Dependencies: leaderboardStore, normalizeProfileNameInput, statsServiceError,
+//               mapRegistryErrorToStats, StatsApiError
+// ============================================================================
+
 app.patch("/api/admin/stats/profile/:id", async (req, res) => {
   const profileId = String(req.params.id || "").trim();
   if (!profileId) {
@@ -1664,6 +1697,23 @@ app.patch("/api/admin/stats/profile/:id", async (req, res) => {
     return statsServiceError(res, mapRegistryErrorToStats(err));
   }
 });
+
+// ============================================================================
+// ADMIN ROUTES (continued)
+// Section 2: Provider Management
+// Endpoints: GET /api/admin/providers, POST /api/admin/providers/import,
+//            POST /api/admin/providers/:variant/check-update,
+//            POST /api/admin/providers/:variant/enable,
+//            POST /api/admin/providers/:variant/disable
+// Dependencies: buildProviderStatusRows, parseProviderVariant, parseProviderImportSource,
+//               parseProviderFilterMode, providerImportInFlight, fetchAndPersistProviderSource,
+//               persistManualProviderSource, buildExpandedFormsArtifacts,
+//               buildProviderPoolsArtifacts, buildFilteredAnswerPoolArtifacts,
+//               checkProviderUpdate, languageRegistryStore, rebuildLanguageRuntimeCatalog,
+//               loadDictionary, buildProviderArtifactPaths, getProviderVariantLabel,
+//               PROVIDER_*, PROVIDERS_ROOT, providerAdminError, mapProviderPipelineError,
+//               mapProviderUpdateCheckErrorToMessage, mapRegistryErrorToStats, StatsApiError
+// ============================================================================
 
 app.get("/api/admin/providers", (req, res) => {
   return res.json({
@@ -1930,6 +1980,15 @@ app.post("/api/admin/providers/:variant/disable", (req, res) => {
   }
 });
 
+// ============================================================================
+// GAME ROUTES - To be extracted to routes/game.js
+// Endpoints: POST /api/encode, POST /api/random, POST /api/puzzle, POST /api/guess
+// Dependencies: normalizeWord, resolveLang, getMinLengthForLang, assertWord,
+//               getAnswerDictionary, getDictionary, dictionaryHasWord, dictionaryRandomWord,
+//               encodeWord, decodeWord, evaluateGuess, lookupAnswerMeaning,
+//               getLanguageLabel, DEFAULT_GUESSES, MIN_GUESSES, MAX_GUESSES, MAX_LEN
+// ============================================================================
+
 app.post("/api/encode", (req, res) => {
   const word = normalizeWord(req.body.word);
   const lang = resolveLang(req.body.lang);
@@ -2064,6 +2123,14 @@ app.post("/api/guess", (req, res) => {
   });
 });
 
+// ============================================================================
+// DICTIONARY ROUTES - To be extracted to routes/dictionary.js
+// Endpoints: GET /api/word, POST /api/word
+// Middleware: requireAdminAccess (applied to both routes)
+// Dependencies: wordDataCache, buildDefaultWordData, normalizeWord, resolveLang,
+//               assertWord, getMinLengthForLang, saveWordDataAtomic
+// ============================================================================
+
 app.get("/api/word", requireAdminAccess, (req, res) => {
   res.json(wordDataCache || buildDefaultWordData());
 });
@@ -2098,6 +2165,13 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
   wordDataCache = data;
   res.json({ ok: true, data });
 });
+
+// ============================================================================
+// DAILY ROUTE - To be extracted to routes/daily.js
+// Endpoint: GET /daily
+// Dependencies: wordDataCache, normalizeWord, getLocalDateString, renderDailyPage,
+//               renderDailyMissing
+// ============================================================================
 
 app.get("/daily", (req, res) => {
   const data = wordDataCache;
