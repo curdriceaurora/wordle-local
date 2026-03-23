@@ -924,6 +924,11 @@ describe("Wordle API", () => {
       .post("/api/random")
       .send({ lang: "xx", length: 5 });
     expect(unknownLang.status).toBe(400);
+
+    const invalidLengthType = await request(app)
+      .post("/api/random")
+      .send({ lang: "en", length: ["5"] });
+    expect(invalidLengthType.status).toBe(400);
   });
 
   test("random rejects languages that are unavailable at runtime", async () => {

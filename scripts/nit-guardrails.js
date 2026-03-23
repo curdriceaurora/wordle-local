@@ -139,11 +139,14 @@ function checkProviderUpdateCheckSemantics(errors) {
 
 function checkManualUploadGuardrails(errors) {
   const serverSource = readFile("server.js");
+  const adminRouteSource = readFile("routes/admin.js");
   if (!serverSource.includes("parseProviderImportSource(")) {
     errors.push("server.js must validate provider import sourceType explicitly.");
   }
-  if (!serverSource.includes("persistManualProviderSource(")) {
-    errors.push("server.js must route manual upload imports through persistManualProviderSource.");
+  if (!serverSource.includes("persistManualProviderSource(") && !adminRouteSource.includes("persistManualProviderSource(")) {
+    errors.push(
+      "Manual upload imports must route through persistManualProviderSource (in server.js or routes/admin.js)."
+    );
   }
   if (!serverSource.includes("PROVIDER_MANUAL_MAX_FILE_BYTES")) {
     errors.push("server.js must enforce a provider manual upload max file size guardrail.");

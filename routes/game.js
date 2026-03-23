@@ -77,7 +77,11 @@ function createGameRouter(deps) {
     if (!lang) {
       return res.status(400).json({ error: "Unknown language." });
     }
-    const length = Number(req.body.length);
+    const rawLength = req.body?.length;
+    if (Array.isArray(rawLength) || (rawLength !== undefined && typeof rawLength !== "number" && typeof rawLength !== "string")) {
+      return res.status(400).json({ error: "Length must be a number." });
+    }
+    const length = Number(rawLength);
     const minLength = getMinLengthForLang(lang);
 
     if (!Number.isInteger(length) || length < minLength || length > MAX_LEN) {
