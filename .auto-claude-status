@@ -1,0 +1,25 @@
+{
+  "active": true,
+  "spec": "010-mobile-responsive-polish",
+  "state": "building",
+  "subtasks": {
+    "completed": 12,
+    "total": 14,
+    "in_progress": 1,
+    "failed": 0
+  },
+  "phase": {
+    "current": "Final Validation and Acceptance",
+    "id": null,
+    "total": 2
+  },
+  "workers": {
+    "active": 0,
+    "max": 1
+  },
+  "session": {
+    "number": 14,
+    "started_at": "2026-03-23T18:30:24.959690"
+  },
+  "last_update": "2026-03-23T19:15:56.601323"
+}
