@@ -555,6 +555,23 @@ describe("Wordle API", () => {
     expect(guessResponse.body.answerMeaning.length).toBeGreaterThan(0);
   });
 
+  test("does not reveal answer for truthy non-boolean reveal values", async () => {
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "CRANE", lang: "en" });
+
+    const code = encodeResponse.body.code;
+    const guessResponse = await request(app)
+      .post("/api/guess")
+      .send({ code, guess: "SLATE", lang: "en", reveal: "false" });
+
+    expect(guessResponse.status).toBe(200);
+    expect(guessResponse.body.isCorrect).toBe(false);
+    expect(guessResponse.body.answer).toBeUndefined();
+    expect(guessResponse.body.answerMeaning).toBeUndefined();
+  });
+
   test("returns local answer meaning when reveal is true for english puzzles", async () => {
     await withTempDefinitions(
       {
@@ -1765,7 +1782,7 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
       expect(third.status).toBe(200);
-      expect(third.body.retained).toBe(true);
+      expect(third.body.retained).toBe(false);
       expect(third.body.result.won).toBe(true);
       expect(third.body.result.attempts).toBe(4);
       expect(third.body.result.submissionCount).toBe(3);

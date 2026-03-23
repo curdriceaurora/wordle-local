@@ -1,5 +1,4 @@
 const express = require("express");
-const { randomUUID } = require("node:crypto");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
@@ -1180,24 +1179,21 @@ function buildLeaderboardRows(state, range, today) {
 }
 
 function mergeDailyResult(existing, incoming, nowIso) {
-  let canonical;
-  if (!existing) {
-    canonical = incoming;
-  } else if (!existing.won && incoming.won) {
-    canonical = incoming;
-  } else if (existing.won && incoming.won && incoming.attempts < existing.attempts) {
-    canonical = incoming;
-  } else {
-    canonical = existing;
-  }
+  const retained = !existing
+    || (!existing.won && incoming.won)
+    || (existing.won && incoming.won && incoming.attempts < existing.attempts);
+  const canonical = retained ? incoming : existing;
 
   return {
-    date: incoming.date,
-    won: canonical.won,
-    attempts: canonical.won ? canonical.attempts : null,
-    maxGuesses: canonical.maxGuesses,
-    submissionCount: (existing?.submissionCount || 0) + 1,
-    updatedAt: nowIso
+    retained,
+    entry: {
+      date: incoming.date,
+      won: canonical.won,
+      attempts: canonical.won ? canonical.attempts : null,
+      maxGuesses: canonical.maxGuesses,
+      submissionCount: (existing?.submissionCount || 0) + 1,
+      updatedAt: nowIso
+    }
   };
 }
 
@@ -1498,7 +1494,7 @@ ensureWordData();
 const createMetaRouter = require("./routes/meta.js");
 app.use(
   createMetaRouter({
-    availableLanguages,
+    getAvailableLanguages: () => availableLanguages,
     isLanguageAvailable,
     MIN_LEN,
     MAX_LEN,

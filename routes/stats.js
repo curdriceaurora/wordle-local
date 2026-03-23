@@ -14,7 +14,7 @@ const { randomUUID } = require("node:crypto");
  * @param {Function} deps.buildProfilePerformance - Calculates profile stats and streaks
  * @param {Function} deps.statsServiceError - Formats error response for stats endpoints
  * @param {Function} deps.mapRegistryErrorToStats - Maps LanguageRegistryError to StatsApiError
- * @param {Function} deps.mergeDailyResult - Merges new result with existing result
+ * @param {Function} deps.mergeDailyResult - Merges new result with existing result and retention state
  * @param {Function} deps.describeRange - Gets human-readable range description
  * @param {Function} deps.StatsApiError - Error class for stats validation errors
  * @returns {express.Router} Express router
@@ -94,6 +94,7 @@ function createStatsRouter(deps) {
     }
 
     try {
+      let retained = false;
       const snapshot = await leaderboardStore.mutate((draft) => {
         const profile = draft.profiles.find((item) => item.id === payload.profileId);
         if (!profile) {
@@ -106,18 +107,20 @@ function createStatsRouter(deps) {
         );
         const nowIso = new Date().toISOString();
         const existing = currentEntries.get(payload.dailyKey) || null;
-        const merged = mergeDailyResult(existing, payload.entry, nowIso);
-        currentEntries.set(payload.dailyKey, merged);
+        const mergeOutcome = mergeDailyResult(existing, payload.entry, nowIso);
+        retained = mergeOutcome.retained;
+        currentEntries.set(payload.dailyKey, mergeOutcome.entry);
         draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
         profile.updatedAt = nowIso;
       });
       const persistedEntry = snapshot.resultsByProfile[payload.profileId]?.[payload.dailyKey] || null;
+      const retainedInStore = retained && Boolean(persistedEntry);
 
       return res.json({
         ok: true,
         profileId: payload.profileId,
         dailyKey: payload.dailyKey,
-        retained: Boolean(persistedEntry),
+        retained: retainedInStore,
         result: persistedEntry
       });
     } catch (err) {

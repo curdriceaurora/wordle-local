@@ -4,7 +4,7 @@ const express = require("express");
  * Meta routes factory
  * Provides health check and application metadata endpoints
  * @param {Object} deps - Dependencies
- * @param {Map} deps.availableLanguages - Map of available language configurations
+ * @param {Function} deps.getAvailableLanguages - Returns latest map of available language configurations
  * @param {Function} deps.isLanguageAvailable - Function to check if a language is available
  * @param {number} deps.MIN_LEN - Minimum word length
  * @param {number} deps.MAX_LEN - Maximum word length
@@ -18,7 +18,7 @@ const express = require("express");
  */
 function createMetaRouter(deps) {
   const {
-    availableLanguages,
+    getAvailableLanguages,
     isLanguageAvailable,
     MIN_LEN,
     MAX_LEN,
@@ -37,6 +37,7 @@ function createMetaRouter(deps) {
   });
 
   router.get("/api/meta", (req, res) => {
+    const availableLanguages = getAvailableLanguages();
     const languages = Array.from(availableLanguages.values());
     const defaultLang = isLanguageAvailable(DEFAULT_LANG)
       ? DEFAULT_LANG

@@ -142,7 +142,10 @@ function createGameRouter(deps) {
     if (!lang) {
       return res.status(400).json({ error: "Unknown language." });
     }
-    const reveal = Boolean(req.body.reveal);
+    const revealRaw = req.body?.reveal;
+    const reveal =
+      revealRaw === true
+      || (typeof revealRaw === "string" && revealRaw.trim().toLowerCase() === "true");
 
     if (!/^[A-Z]+$/.test(code)) {
       return res.status(400).json({ error: "Invalid word code." });
