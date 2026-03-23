@@ -81,6 +81,10 @@ self.addEventListener('fetch', (event) => {
             })
             .catch(() => {
               if (event.request.mode === 'navigate') {
+                const url = new URL(event.request.url);
+                if (url.pathname.startsWith('/admin')) {
+                  return caches.match('/admin/index.html');
+                }
                 return caches.match('/index.html');
               }
               return new Response('Offline', { status: 503 });
