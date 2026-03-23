@@ -540,6 +540,8 @@ body.high-contrast .tile.absent {
   gap: 0.4rem;
   width: min(40rem, 95vw);
   margin: 0 auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .key-row.offset {
@@ -549,6 +551,7 @@ body.high-contrast .tile.absent {
 .key {
   position: relative;
   flex: 1;
+  flex-shrink: 0;
   padding: 0.7rem 0.3rem;
   border: none;
   border-radius: 0.6rem;
@@ -840,7 +843,8 @@ body.high-contrast .key.absent {
   .key {
     padding: 0.6rem 0.25rem;
     font-size: 0.8rem;
-    min-height: clamp(2.2rem, 6vw, 3rem);
+    min-width: 2.75rem;
+    min-height: 2.75rem;
   }
 
   .keyboard {
@@ -897,7 +901,8 @@ body.high-contrast .key.absent {
   .key {
     padding: 0.5rem 0.2rem;
     font-size: 0.75rem;
-    min-height: 2rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
   }
 
   .keyboard {
@@ -948,7 +953,8 @@ body.high-contrast .key.absent {
   .key {
     padding: 0.45rem 0.15rem;
     font-size: 0.7rem;
-    min-height: 1.9rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
     border-radius: 0.5rem;
   }
 
