@@ -810,11 +810,11 @@ body.high-contrast .key.absent {
 
 @media (max-width: 375px) {
   h1 {
-    font-size: 1.5rem;
+    font-size: 1.6rem;
   }
 
   h2 {
-    font-size: 1.1rem;
+    font-size: 1.2rem;
   }
 
   .topbar {
@@ -827,7 +827,7 @@ body.high-contrast .key.absent {
   }
 
   .tile {
-    font-size: 1.4rem;
+    font-size: 1.5rem;
     max-width: 3.5rem;
   }
 
@@ -842,7 +842,7 @@ body.high-contrast .key.absent {
 
   .key {
     padding: 0.6rem 0.25rem;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
@@ -873,7 +873,11 @@ body.high-contrast .key.absent {
 
 @media (max-width: 360px) {
   h1 {
-    font-size: 1.4rem;
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.15rem;
   }
 
   .topbar {
@@ -885,7 +889,7 @@ body.high-contrast .key.absent {
   }
 
   .tile {
-    font-size: 1.3rem;
+    font-size: 1.45rem;
     max-width: 3.2rem;
   }
 
@@ -900,7 +904,7 @@ body.high-contrast .key.absent {
 
   .key {
     padding: 0.5rem 0.2rem;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
@@ -920,11 +924,15 @@ body.high-contrast .key.absent {
 
 @media (max-width: 320px) {
   h1 {
-    font-size: 1.3rem;
+    font-size: 1.4rem;
   }
 
   h2 {
-    font-size: 1rem;
+    font-size: 1.1rem;
+  }
+
+  h3 {
+    font-size: 0.95rem;
   }
 
   .topbar {
@@ -936,7 +944,7 @@ body.high-contrast .key.absent {
   }
 
   .tile {
-    font-size: 1.2rem;
+    font-size: 1.4rem;
     max-width: 2.8rem;
     border-radius: 0.5rem;
   }
@@ -952,7 +960,7 @@ body.high-contrast .key.absent {
 
   .key {
     padding: 0.45rem 0.15rem;
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     min-width: 2.75rem;
     min-height: 2.75rem;
     border-radius: 0.5rem;
@@ -984,11 +992,25 @@ body.high-contrast .key.absent {
   }
 
   .stat-card strong {
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+  }
+
+  .stat-card span {
+    font-size: 0.8rem;
   }
 
   .leaderboard-table {
     min-width: 28rem;
+    font-size: 0.85rem;
+  }
+
+  .toggle {
+    font-size: 0.85rem;
+  }
+
+  .link-button,
+  .note,
+  .hint {
     font-size: 0.85rem;
   }
 }
