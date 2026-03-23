@@ -1,0 +1,39 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Read(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/**)",
+      "Write(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/**)",
+      "Edit(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/**)",
+      "Glob(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/**)",
+      "Grep(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/**)",
+      "Read(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/.auto-claude/specs/003-server-route-modularization/**)",
+      "Write(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/.auto-claude/specs/003-server-route-modularization/**)",
+      "Edit(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/worktrees/tasks/003-server-route-modularization/.auto-claude/specs/003-server-route-modularization/**)",
+      "Read(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/**)",
+      "Write(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/**)",
+      "Edit(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/**)",
+      "Glob(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/**)",
+      "Grep(/Users/rahul/Projects/Noventa/wordle-local/.auto-claude/**)",
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__context7__resolve-library-id(*)",
+      "mcp__context7__query-docs(*)",
+      "mcp__graphiti-memory__search_nodes(*)",
+      "mcp__graphiti-memory__search_facts(*)",
+      "mcp__graphiti-memory__add_episode(*)",
+      "mcp__graphiti-memory__get_episodes(*)",
+      "mcp__graphiti-memory__get_entity_edge(*)"
+    ]
+  }
+}

@@ -1504,164 +1504,23 @@ app.use(
   })
 );
 
-// ============================================================================
-// STATS ROUTES - To be extracted to routes/stats.js
-// Endpoints: POST /api/stats/profile, POST /api/stats/result,
-//            GET /api/stats/leaderboard, GET /api/stats/profile/:id
-// Dependencies: leaderboardStore, normalizeProfileNameInput, parseDailyResultPayload,
-//               parseLeaderboardRange, getLocalDateString, buildLeaderboardRows,
-//               buildProfilePerformance, statsServiceError, mapRegistryErrorToStats,
-//               StatsApiError, mergeDailyResult, describeRange
-// ============================================================================
-
-app.post("/api/stats/profile", async (req, res) => {
-  let profileName;
-  try {
-    profileName = normalizeProfileNameInput(req.body?.name);
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    let createdProfileId = "";
-    let reused = false;
-
-    const snapshot = await leaderboardStore.mutate((draft) => {
-      const existing = draft.profiles.find(
-        (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
-      );
-      if (existing) {
-        createdProfileId = existing.id;
-        reused = true;
-        return;
-      }
-
-      const nowIso = new Date().toISOString();
-      const createdProfile = {
-        id: randomUUID(),
-        name: profileName,
-        createdAt: nowIso,
-        updatedAt: nowIso
-      };
-      draft.profiles.push(createdProfile);
-      createdProfileId = createdProfile.id;
-    });
-    const responseProfile = snapshot.profiles.find((profile) => profile.id === createdProfileId);
-    if (!responseProfile) {
-      throw new Error("Failed to persist player profile.");
-    }
-
-    return res.json({
-      ok: true,
-      reused,
-      playerId: responseProfile.id,
-      profile: responseProfile
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.post("/api/stats/result", async (req, res) => {
-  let payload;
-  try {
-    payload = parseDailyResultPayload(req.body || {});
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    const snapshot = await leaderboardStore.mutate((draft) => {
-      const profile = draft.profiles.find((item) => item.id === payload.profileId);
-      if (!profile) {
-        throw new StatsApiError(404, "Player profile not found.");
-      }
-
-      const rawEntries = draft.resultsByProfile[payload.profileId];
-      const currentEntries = new Map(
-        Object.entries(rawEntries && typeof rawEntries === "object" ? rawEntries : {})
-      );
-      const nowIso = new Date().toISOString();
-      const existing = currentEntries.get(payload.dailyKey) || null;
-      const merged = mergeDailyResult(existing, payload.entry, nowIso);
-      currentEntries.set(payload.dailyKey, merged);
-      draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
-      profile.updatedAt = nowIso;
-    });
-    const persistedEntry = snapshot.resultsByProfile[payload.profileId]?.[payload.dailyKey] || null;
-
-    return res.json({
-      ok: true,
-      profileId: payload.profileId,
-      dailyKey: payload.dailyKey,
-      retained: Boolean(persistedEntry),
-      result: persistedEntry
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.get("/api/stats/leaderboard", async (req, res) => {
-  let range;
-  try {
-    range = parseLeaderboardRange(req.query.range);
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    const snapshot = await leaderboardStore.getSnapshot();
-    const today = getLocalDateString(new Date());
-    const rows = buildLeaderboardRows(snapshot, range, today);
-    return res.json({
-      ok: true,
-      range,
-      description: describeRange(range),
-      dayKey: today,
-      rowCount: rows.length,
-      rows
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.get("/api/stats/profile/:id", async (req, res) => {
-  const profileId = String(req.params.id || "").trim();
-  if (!profileId) {
-    return res.status(400).json({ error: "Profile ID is required." });
-  }
-
-  try {
-    const snapshot = await leaderboardStore.getSnapshot();
-    const profile = snapshot.profiles.find((item) => item.id === profileId);
-    if (!profile) {
-      return res.status(404).json({ error: "Player profile not found." });
-    }
-
-    const today = getLocalDateString(new Date());
-    const performance = buildProfilePerformance(snapshot.resultsByProfile[profileId], today);
-    const totalSubmissions = Object.values(snapshot.resultsByProfile[profileId] || {}).reduce(
-      (sum, entry) => sum + Number(entry?.submissionCount || 0),
-      0
-    );
-
-    return res.json({
-      ok: true,
-      profile,
-      summary: {
-        streak: performance.streak,
-        overall: performance.overall,
-        weekly: performance.weekly,
-        monthly: performance.monthly,
-        totalSubmissions
-      }
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
+const createStatsRouter = require("./routes/stats.js");
+app.use(
+  createStatsRouter({
+    leaderboardStore,
+    normalizeProfileNameInput,
+    parseDailyResultPayload,
+    parseLeaderboardRange,
+    getLocalDateString,
+    buildLeaderboardRows,
+    buildProfilePerformance,
+    statsServiceError,
+    mapRegistryErrorToStats,
+    mergeDailyResult,
+    describeRange,
+    StatsApiError
+  })
+);
 
 // ============================================================================
 // ADMIN ROUTES - To be extracted to routes/admin.js
