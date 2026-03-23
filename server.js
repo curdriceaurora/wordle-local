@@ -1435,6 +1435,10 @@ app.use(
     }
   })
 );
+app.use("/manifest.json", (req, res, next) => {
+  res.setHeader("Content-Type", "application/manifest+json");
+  next();
+});
 app.use(
   express.static(PUBLIC_PATH, {
     etag: true,
