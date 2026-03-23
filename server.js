@@ -1481,6 +1481,29 @@ app.use(
   })
 );
 
+const createGameRouter = require("./routes/game.js");
+app.use(
+  createGameRouter({
+    normalizeWord,
+    resolveLang,
+    assertWord,
+    getMinLengthForLang,
+    getAnswerDictionary,
+    getDictionary,
+    dictionaryHasWord,
+    dictionaryRandomWord,
+    encodeWord,
+    decodeWord,
+    evaluateGuess,
+    lookupAnswerMeaning,
+    getLanguageLabel,
+    DEFAULT_GUESSES,
+    MIN_GUESSES,
+    MAX_GUESSES,
+    MAX_LEN
+  })
+);
+
 // ============================================================================
 // STATS ROUTES - To be extracted to routes/stats.js
 // Endpoints: POST /api/stats/profile, POST /api/stats/result,
@@ -1968,149 +1991,6 @@ app.post("/api/admin/providers/:variant/disable", (req, res) => {
   } catch (err) {
     return providerAdminError(res, mapRegistryErrorToStats(err));
   }
-});
-
-// ============================================================================
-// GAME ROUTES - To be extracted to routes/game.js
-// Endpoints: POST /api/encode, POST /api/random, POST /api/puzzle, POST /api/guess
-// Dependencies: normalizeWord, resolveLang, getMinLengthForLang, assertWord,
-//               getAnswerDictionary, getDictionary, dictionaryHasWord, dictionaryRandomWord,
-//               encodeWord, decodeWord, evaluateGuess, lookupAnswerMeaning,
-//               getLanguageLabel, DEFAULT_GUESSES, MIN_GUESSES, MAX_GUESSES, MAX_LEN
-// ============================================================================
-
-app.post("/api/encode", (req, res) => {
-  const word = normalizeWord(req.body.word);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-
-  try {
-    assertWord(word, getMinLengthForLang(lang));
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  const dict = getAnswerDictionary(lang);
-  if (dict && !dictionaryHasWord(dict, word)) {
-    return res.status(400).json({ error: "Word not found in dictionary for that language." });
-  }
-
-  const code = encodeWord(word);
-  res.json({
-    code,
-    length: word.length,
-    lang
-  });
-});
-
-app.post("/api/random", (req, res) => {
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  const length = Number(req.body.length);
-  const minLength = getMinLengthForLang(lang);
-
-  if (!Number.isInteger(length) || length < minLength || length > MAX_LEN) {
-    return res
-      .status(400)
-      .json({ error: `Length must be ${minLength}-${MAX_LEN}.` });
-  }
-
-  const dict = getAnswerDictionary(lang);
-  if (!dict) {
-    return res.status(400).json({ error: "No dictionary available for that language." });
-  }
-
-  const word = dictionaryRandomWord(dict, length);
-  if (!word) {
-    return res.status(400).json({ error: "No words available for that length." });
-  }
-
-  res.json({
-    word,
-    code: encodeWord(word),
-    length,
-    lang
-  });
-});
-
-app.post("/api/puzzle", (req, res) => {
-  const code = normalizeWord(req.body.code);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  let guesses = DEFAULT_GUESSES;
-  const minLength = getMinLengthForLang(lang);
-
-  if (req.body.guesses !== undefined) {
-    const parsed = Number(req.body.guesses);
-    if (!Number.isInteger(parsed) || parsed < MIN_GUESSES || parsed > MAX_GUESSES) {
-      return res.status(400).json({ error: `Guesses must be ${MIN_GUESSES}-${MAX_GUESSES}.` });
-    }
-    guesses = parsed;
-  }
-
-  if (!/^[A-Z]+$/.test(code)) {
-    return res.status(400).json({ error: "Invalid word code." });
-  }
-  if (code.length < minLength || code.length > MAX_LEN) {
-    return res.status(400).json({ error: "Invalid word code length." });
-  }
-
-  res.json({
-    length: code.length,
-    lang,
-    label: getLanguageLabel(lang),
-    maxGuesses: guesses
-  });
-});
-
-app.post("/api/guess", (req, res) => {
-  const code = normalizeWord(req.body.code);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  const reveal = Boolean(req.body.reveal);
-
-  if (!/^[A-Z]+$/.test(code)) {
-    return res.status(400).json({ error: "Invalid word code." });
-  }
-
-  const answer = decodeWord(code);
-  const guess = normalizeWord(req.body.guess);
-
-  if (!/^[A-Z]+$/.test(guess)) {
-    return res.status(400).json({ error: "Guess must use only letters A-Z." });
-  }
-  if (guess.length !== answer.length) {
-    return res.status(400).json({ error: "Guess length does not match." });
-  }
-
-  const dict = getDictionary(lang);
-  if (dict && !dictionaryHasWord(dict, guess)) {
-    return res.status(400).json({ error: "Not in word list." });
-  }
-
-  const result = evaluateGuess(guess, answer);
-  const isCorrect = guess === answer;
-
-  const shouldIncludeMeaning = isCorrect || (reveal && !isCorrect);
-  const answerMeaning = shouldIncludeMeaning
-    ? lookupAnswerMeaning(lang, answer) || undefined
-    : undefined;
-
-  res.json({
-    ok: true,
-    result,
-    isCorrect,
-    answer: reveal && !isCorrect ? answer : undefined,
-    answerMeaning
-  });
 });
 
 // ============================================================================
