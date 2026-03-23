@@ -806,6 +806,25 @@ body.high-contrast .key.absent {
     flex-direction: column;
     align-items: stretch;
   }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
+  }
 }
 
 @media (max-width: 375px) {
@@ -869,6 +888,25 @@ body.high-contrast .key.absent {
   .footer {
     padding: 0.75rem 1rem 1.5rem;
   }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
+  }
 }
 
 @media (max-width: 360px) {
@@ -919,6 +957,25 @@ body.high-contrast .key.absent {
 
   .key-row.offset {
     padding: 0 0.4rem;
+  }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
   }
 }
 
@@ -1012,5 +1069,24 @@ body.high-contrast .key.absent {
   .note,
   .hint {
     font-size: 0.85rem;
+  }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
   }
 }
