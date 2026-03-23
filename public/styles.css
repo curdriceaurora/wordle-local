@@ -799,3 +799,185 @@ body.high-contrast .key.absent {
     align-items: stretch;
   }
 }
+
+@media (max-width: 375px) {
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  .topbar {
+    padding: 1.5rem 1rem 0.75rem;
+  }
+
+  .panel {
+    padding: 1.25rem;
+    width: min(56rem, 98vw);
+  }
+
+  .tile {
+    font-size: 1.4rem;
+    max-width: 3.5rem;
+  }
+
+  .board {
+    gap: 0.5rem;
+    width: min(98vw, calc(var(--cols) * 3.8rem));
+  }
+
+  .row {
+    gap: 0.5rem;
+  }
+
+  .key {
+    padding: 0.6rem 0.25rem;
+    font-size: 0.8rem;
+    min-height: clamp(2.2rem, 6vw, 3rem);
+  }
+
+  .keyboard {
+    gap: 0.35rem;
+    width: min(40rem, 98vw);
+  }
+
+  .key-row {
+    gap: 0.35rem;
+    width: min(40rem, 98vw);
+  }
+
+  .key-row.offset {
+    padding: 0 0.5rem;
+  }
+
+  .modal-card {
+    width: min(32rem, 96vw);
+    padding: 1.25rem;
+  }
+
+  .footer {
+    padding: 0.75rem 1rem 1.5rem;
+  }
+}
+
+@media (max-width: 360px) {
+  h1 {
+    font-size: 1.4rem;
+  }
+
+  .topbar {
+    padding: 1.25rem 0.75rem 0.75rem;
+  }
+
+  .panel {
+    padding: 1rem;
+  }
+
+  .tile {
+    font-size: 1.3rem;
+    max-width: 3.2rem;
+  }
+
+  .board {
+    gap: 0.45rem;
+    width: min(98vw, calc(var(--cols) * 3.5rem));
+  }
+
+  .row {
+    gap: 0.45rem;
+  }
+
+  .key {
+    padding: 0.5rem 0.2rem;
+    font-size: 0.75rem;
+    min-height: 2rem;
+  }
+
+  .keyboard {
+    gap: 0.3rem;
+  }
+
+  .key-row {
+    gap: 0.3rem;
+  }
+
+  .key-row.offset {
+    padding: 0 0.4rem;
+  }
+}
+
+@media (max-width: 320px) {
+  h1 {
+    font-size: 1.3rem;
+  }
+
+  h2 {
+    font-size: 1rem;
+  }
+
+  .topbar {
+    padding: 1rem 0.5rem 0.5rem;
+  }
+
+  .panel {
+    padding: 0.85rem;
+  }
+
+  .tile {
+    font-size: 1.2rem;
+    max-width: 3rem;
+    border-radius: 0.5rem;
+  }
+
+  .board {
+    gap: 0.4rem;
+    width: min(98vw, calc(var(--cols) * 3.2rem));
+  }
+
+  .row {
+    gap: 0.4rem;
+  }
+
+  .key {
+    padding: 0.45rem 0.15rem;
+    font-size: 0.7rem;
+    min-height: 1.9rem;
+    border-radius: 0.5rem;
+  }
+
+  .keyboard {
+    gap: 0.25rem;
+  }
+
+  .key-row {
+    gap: 0.25rem;
+  }
+
+  .key-row.offset {
+    padding: 0 0.3rem;
+  }
+
+  .modal-card {
+    width: min(32rem, 98vw);
+    padding: 1rem;
+  }
+
+  .footer {
+    padding: 0.5rem 0.5rem 1rem;
+  }
+
+  .stat-card {
+    padding: 0.5rem;
+  }
+
+  .stat-card strong {
+    font-size: 0.9rem;
+  }
+
+  .leaderboard-table {
+    min-width: 28rem;
+    font-size: 0.85rem;
+  }
+}
