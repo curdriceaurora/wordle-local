@@ -32,3 +32,26 @@ for (const viewport of viewports) {
     expect(keyboardBox.width).toBeLessThanOrEqual(viewport.width);
   });
 }
+
+test("touch targets meet 44x44px minimum", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "commit" });
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+
+  const selectors = [".key", ".admin-link", ".link-button"];
+
+  for (const selector of selectors) {
+    const elements = await page.locator(selector).all();
+    for (const element of elements) {
+      const box = await element.boundingBox();
+      if (box) {
+        expect(box.width).toBeGreaterThanOrEqual(44);
+        expect(box.height).toBeGreaterThanOrEqual(44);
+      }
+    }
+  }
+});
