@@ -73,11 +73,16 @@ function createGameRouter(deps) {
   });
 
   router.post("/api/random", (req, res) => {
-    const lang = resolveLang(req.body.lang);
+    const payload = req.body;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return res.status(400).json({ error: "Invalid request body." });
+    }
+
+    const lang = resolveLang(payload.lang);
     if (!lang) {
       return res.status(400).json({ error: "Unknown language." });
     }
-    const length = req.body?.length;
+    const length = payload.length;
     if (Array.isArray(length) || (length !== undefined && typeof length !== "number")) {
       return res.status(400).json({ error: "Length must be a number." });
     }
