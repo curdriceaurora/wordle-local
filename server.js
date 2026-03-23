@@ -1461,35 +1461,25 @@ app.use(
 ensureWordData();
 
 // ============================================================================
-// META ROUTES - To be extracted to routes/meta.js
-// Endpoints: GET /api/health, GET /api/meta
-// Dependencies: availableLanguages, MIN_LEN, MAX_LEN, MIN_GUESSES, MAX_GUESSES,
-//               DEFAULT_GUESSES, DEFAULT_LANG, PERF_LOGGING, DEFINITIONS_MODE,
-//               isLanguageAvailable
+// ROUTE MOUNTING
 // ============================================================================
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.get("/api/meta", (req, res) => {
-  const languages = Array.from(availableLanguages.values());
-  const defaultLang = isLanguageAvailable(DEFAULT_LANG)
-    ? DEFAULT_LANG
-    : languages[0]?.id || DEFAULT_LANG;
-
-  res.json({
-    minLength: MIN_LEN,
-    maxLength: MAX_LEN,
-    minGuesses: MIN_GUESSES,
-    maxGuesses: MAX_GUESSES,
-    defaultGuesses: DEFAULT_GUESSES,
-    languages,
-    defaultLang,
-    perfLogging: PERF_LOGGING,
-    definitionsMode: DEFINITIONS_MODE
-  });
-});
+// Mount meta routes (health check and application metadata)
+const createMetaRouter = require("./routes/meta.js");
+app.use(
+  createMetaRouter({
+    availableLanguages,
+    isLanguageAvailable,
+    MIN_LEN,
+    MAX_LEN,
+    MIN_GUESSES,
+    MAX_GUESSES,
+    DEFAULT_GUESSES,
+    DEFAULT_LANG,
+    PERF_LOGGING,
+    DEFINITIONS_MODE
+  })
+);
 
 // ============================================================================
 // STATS ROUTES - To be extracted to routes/stats.js
