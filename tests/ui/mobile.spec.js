@@ -55,3 +55,27 @@ test("touch targets meet 44x44px minimum", async ({ page }) => {
     }
   }
 });
+
+test("landscape orientation remains playable", async ({ page }) => {
+  await page.setViewportSize({ width: 568, height: 320 });
+  await page.goto("/", { waitUntil: "commit" });
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+
+  const boardBox = await page.locator("#board").boundingBox();
+  const keyboardBox = await page.locator("#keyboard").boundingBox();
+
+  expect(boardBox).not.toBeNull();
+  expect(keyboardBox).not.toBeNull();
+
+  expect(boardBox.width).toBeLessThanOrEqual(568);
+  expect(keyboardBox.width).toBeLessThanOrEqual(568);
+
+  const board = page.locator("#board");
+  const keyboard = page.locator("#keyboard");
+  await expect(board).toBeVisible();
+  await expect(keyboard).toBeVisible();
+});
