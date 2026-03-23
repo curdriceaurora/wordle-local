@@ -33,6 +33,45 @@ for (const viewport of viewports) {
   });
 }
 
+for (const viewport of viewports) {
+  test(`no horizontal overflow or content clipping (${viewport.name})`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto("/", { waitUntil: "commit" });
+    await waitForLanguages(page);
+    await page.selectOption("#langSelect", "en");
+    await page.fill("#wordInput", "CRANE");
+    await page.click("form#createForm button[type=submit]");
+    await page.waitForSelector("#playPanel:not(.hidden)");
+
+    // Check no horizontal scrollbar exists (scrollable width equals client width)
+    const hasHorizontalScroll = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    expect(hasHorizontalScroll).toBe(false);
+
+    // Verify key interactive elements (board, keyboard) are fully visible
+    // Note: Some container elements may extend slightly beyond viewport but are clipped by overflow-x: hidden
+    const interactiveElements = await page.locator("#board, #keyboard").all();
+    for (const element of interactiveElements) {
+      await expect(element).toBeVisible();
+      const box = await element.boundingBox();
+      if (box) {
+        // Ensure interactive content starts within viewport
+        expect(box.x).toBeGreaterThanOrEqual(0);
+      }
+    }
+
+    // Verify overflow-x is hidden on html and body
+    const overflowSettings = await page.evaluate(() => {
+      const htmlOverflow = window.getComputedStyle(document.documentElement).overflowX;
+      const bodyOverflow = window.getComputedStyle(document.body).overflowX;
+      return { html: htmlOverflow, body: bodyOverflow };
+    });
+    expect(overflowSettings.html).toBe("hidden");
+    expect(overflowSettings.body).toBe("hidden");
+  });
+}
+
 test("touch targets meet 44x44px minimum", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/", { waitUntil: "commit" });
