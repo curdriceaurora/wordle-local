@@ -885,6 +885,7 @@ describe("Wordle API", () => {
       .post("/api/guess")
       .send({ code: "AAAAAAAAAAAAA", guess: "CRANE", lang: "en" });
     expect(oversizedCode.status).toBe(400);
+    expect(oversizedCode.body.error).toMatch(/word code length/i);
 
     const invalidLang = await request(app)
       .post("/api/guess")

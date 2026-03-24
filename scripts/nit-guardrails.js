@@ -140,8 +140,8 @@ function checkProviderUpdateCheckSemantics(errors) {
 function checkManualUploadGuardrails(errors) {
   const serverSource = readFile("server.js");
   const adminRouteSource = readFile("routes/admin.js");
-  if (!serverSource.includes("parseProviderImportSource(")) {
-    errors.push("server.js must validate provider import sourceType explicitly.");
+  if (!adminRouteSource.includes("parseProviderImportSource(")) {
+    errors.push("routes/admin.js must validate provider import sourceType explicitly.");
   }
   if (!serverSource.includes("persistManualProviderSource(") && !adminRouteSource.includes("persistManualProviderSource(")) {
     errors.push(

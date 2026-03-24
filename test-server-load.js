@@ -1,13 +1,14 @@
+const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
-const filesToCheck = [
-  "server.js",
-  "routes/admin.js",
-  "routes/game.js",
-  "routes/meta.js",
-  "routes/stats.js"
-];
+const routesDir = path.join(__dirname, "routes");
+const routeFiles = fs.readdirSync(routesDir)
+  .filter((name) => name.endsWith(".js"))
+  .sort()
+  .map((name) => path.join("routes", name));
+
+const filesToCheck = ["server.js", ...routeFiles];
 
 for (const file of filesToCheck) {
   const fullPath = path.join(__dirname, file);
