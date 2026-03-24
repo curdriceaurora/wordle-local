@@ -1438,6 +1438,15 @@ strictToggle.addEventListener("change", () => {
   }
 });
 
+/**
+ * Initialize application state, apply persisted UI settings, load metadata, and route to Create or Play based on URL parameters.
+ *
+ * Loads server-side metadata, resets profile and leaderboard state, applies stored theme/contrast/strict preferences, and then either:
+ * - validates URL query parameters and starts a Play session for a shared or daily puzzle, or
+ * - enters Create mode when no puzzle code is present.
+ *
+ * If a URL-provided puzzle link fails validation, an error panel is shown with a generic link-failure message.
+ */
 async function init() {
   await loadMeta();
   profileState = {
