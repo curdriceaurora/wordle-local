@@ -881,6 +881,11 @@ describe("Wordle API", () => {
       .send({ code: "F0TND", guess: "CRANE", lang: "en" });
     expect(invalidCode.status).toBe(400);
 
+    const oversizedCode = await request(app)
+      .post("/api/guess")
+      .send({ code: "AAAAAAAAAAAAA", guess: "CRANE", lang: "en" });
+    expect(oversizedCode.status).toBe(400);
+
     const invalidLang = await request(app)
       .post("/api/guess")
       .send({ code, guess: "CRANE", lang: "xx" });

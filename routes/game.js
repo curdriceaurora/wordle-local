@@ -150,6 +150,7 @@ function createGameRouter(deps) {
     if (!lang) {
       return res.status(400).json({ error: "Unknown language." });
     }
+    const minLength = getMinLengthForLang(lang);
     const revealRaw = req.body?.reveal;
     const reveal =
       revealRaw === true
@@ -158,12 +159,18 @@ function createGameRouter(deps) {
     if (!/^[A-Z]+$/.test(code)) {
       return res.status(400).json({ error: "Invalid word code." });
     }
+    if (code.length < minLength || code.length > MAX_LEN) {
+      return res.status(400).json({ error: "Invalid word code length." });
+    }
 
     const answer = decodeWord(code);
     const guess = normalizeWord(req.body.guess);
 
     if (!/^[A-Z]+$/.test(guess)) {
       return res.status(400).json({ error: "Guess must use only letters A-Z." });
+    }
+    if (guess.length < minLength || guess.length > MAX_LEN) {
+      return res.status(400).json({ error: `Guess length must be ${minLength}-${MAX_LEN}.` });
     }
     if (guess.length !== answer.length) {
       return res.status(400).json({ error: "Guess length does not match." });
