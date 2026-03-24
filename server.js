@@ -1,5 +1,4 @@
 const express = require("express");
-const { randomUUID } = require("node:crypto");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
@@ -612,7 +611,7 @@ const languageRegistryStore = new LanguageRegistryStore({
 });
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
-let providerImportInFlight = null;
+let providerImportInFlight = { value: null };
 
 function clearObjectValues(target) {
   for (const key of Object.keys(target)) {
@@ -1180,24 +1179,21 @@ function buildLeaderboardRows(state, range, today) {
 }
 
 function mergeDailyResult(existing, incoming, nowIso) {
-  let canonical;
-  if (!existing) {
-    canonical = incoming;
-  } else if (!existing.won && incoming.won) {
-    canonical = incoming;
-  } else if (existing.won && incoming.won && incoming.attempts < existing.attempts) {
-    canonical = incoming;
-  } else {
-    canonical = existing;
-  }
+  const retained = !existing
+    || (!existing.won && incoming.won)
+    || (existing.won && incoming.won && incoming.attempts < existing.attempts);
+  const canonical = retained ? incoming : existing;
 
   return {
-    date: incoming.date,
-    won: canonical.won,
-    attempts: canonical.won ? canonical.attempts : null,
-    maxGuesses: canonical.maxGuesses,
-    submissionCount: (existing?.submissionCount || 0) + 1,
-    updatedAt: nowIso
+    retained,
+    entry: {
+      date: incoming.date,
+      won: canonical.won,
+      attempts: canonical.won ? canonical.attempts : null,
+      maxGuesses: canonical.maxGuesses,
+      submissionCount: (existing?.submissionCount || 0) + 1,
+      updatedAt: nowIso
+    }
   };
 }
 
@@ -1418,11 +1414,48 @@ if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
   console.warn("Admin shell assets are missing. Build assets before serving /admin.");
 }
 
-app.get("/admin", (req, res) => {
-  // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
-  res.setHeader("Cache-Control", "no-store");
-  res.sendFile(ADMIN_SHELL.indexPath);
-});
+// Mount admin router first so GET /admin route takes precedence over static serving
+const createAdminRouter = require("./routes/admin.js");
+app.use(
+  createAdminRouter({
+    ADMIN_SHELL,
+    buildProviderStatusRows,
+    parseProviderVariant,
+    parseProviderImportSource,
+    parseProviderFilterMode,
+    providerAdminError,
+    statsServiceError,
+    mapRegistryErrorToStats,
+    mapProviderPipelineError,
+    mapProviderUpdateCheckErrorToMessage,
+    resolveCurrentProviderCommitForUpdateCheck,
+    resolvePreferredProviderCommit,
+    normalizeProfileNameInput,
+    fetchAndPersistProviderSource,
+    persistManualProviderSource,
+    buildExpandedFormsArtifacts,
+    buildProviderPoolsArtifacts,
+    buildFilteredAnswerPoolArtifacts,
+    checkProviderUpdate,
+    buildProviderArtifactPaths,
+    getProviderVariantLabel,
+    loadDictionary,
+    rebuildLanguageRuntimeCatalog,
+    leaderboardStore,
+    languageRegistryStore,
+    providerImportInFlight,
+    PROVIDER_COMMIT_PATTERN,
+    PROVIDER_IMPORT_SOURCE_TYPES,
+    PROVIDER_MANUAL_MAX_FILE_BYTES,
+    PROVIDER_MIN_LENGTH,
+    PROVIDER_POLICY_VERSION,
+    PROVIDER_ID,
+    PROVIDER_REPOSITORY,
+    PROVIDERS_ROOT,
+    StatsApiError,
+    ProviderUpdateCheckError
+  })
+);
 
 const STATIC_MAX_AGE = NODE_ENV === "production" ? 60 * 60 * 1000 : 0;
 app.use(
@@ -1453,616 +1486,75 @@ app.use(
 
 ensureWordData();
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.get("/api/meta", (req, res) => {
-  const languages = Array.from(availableLanguages.values());
-  const defaultLang = isLanguageAvailable(DEFAULT_LANG)
-    ? DEFAULT_LANG
-    : languages[0]?.id || DEFAULT_LANG;
-
-  res.json({
-    minLength: MIN_LEN,
-    maxLength: MAX_LEN,
-    minGuesses: MIN_GUESSES,
-    maxGuesses: MAX_GUESSES,
-    defaultGuesses: DEFAULT_GUESSES,
-    languages,
-    defaultLang,
-    perfLogging: PERF_LOGGING,
-    definitionsMode: DEFINITIONS_MODE
-  });
-});
-
-app.post("/api/stats/profile", async (req, res) => {
-  let profileName;
-  try {
-    profileName = normalizeProfileNameInput(req.body?.name);
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    let createdProfileId = "";
-    let reused = false;
-
-    const snapshot = await leaderboardStore.mutate((draft) => {
-      const existing = draft.profiles.find(
-        (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
-      );
-      if (existing) {
-        createdProfileId = existing.id;
-        reused = true;
-        return;
-      }
-
-      const nowIso = new Date().toISOString();
-      const createdProfile = {
-        id: randomUUID(),
-        name: profileName,
-        createdAt: nowIso,
-        updatedAt: nowIso
-      };
-      draft.profiles.push(createdProfile);
-      createdProfileId = createdProfile.id;
-    });
-    const responseProfile = snapshot.profiles.find((profile) => profile.id === createdProfileId);
-    if (!responseProfile) {
-      throw new Error("Failed to persist player profile.");
-    }
-
-    return res.json({
-      ok: true,
-      reused,
-      playerId: responseProfile.id,
-      profile: responseProfile
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.post("/api/stats/result", async (req, res) => {
-  let payload;
-  try {
-    payload = parseDailyResultPayload(req.body || {});
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    const snapshot = await leaderboardStore.mutate((draft) => {
-      const profile = draft.profiles.find((item) => item.id === payload.profileId);
-      if (!profile) {
-        throw new StatsApiError(404, "Player profile not found.");
-      }
-
-      const rawEntries = draft.resultsByProfile[payload.profileId];
-      const currentEntries = new Map(
-        Object.entries(rawEntries && typeof rawEntries === "object" ? rawEntries : {})
-      );
-      const nowIso = new Date().toISOString();
-      const existing = currentEntries.get(payload.dailyKey) || null;
-      const merged = mergeDailyResult(existing, payload.entry, nowIso);
-      currentEntries.set(payload.dailyKey, merged);
-      draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
-      profile.updatedAt = nowIso;
-    });
-    const persistedEntry = snapshot.resultsByProfile[payload.profileId]?.[payload.dailyKey] || null;
-
-    return res.json({
-      ok: true,
-      profileId: payload.profileId,
-      dailyKey: payload.dailyKey,
-      retained: Boolean(persistedEntry),
-      result: persistedEntry
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.get("/api/stats/leaderboard", async (req, res) => {
-  let range;
-  try {
-    range = parseLeaderboardRange(req.query.range);
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    const snapshot = await leaderboardStore.getSnapshot();
-    const today = getLocalDateString(new Date());
-    const rows = buildLeaderboardRows(snapshot, range, today);
-    return res.json({
-      ok: true,
-      range,
-      description: describeRange(range),
-      dayKey: today,
-      rowCount: rows.length,
-      rows
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.get("/api/stats/profile/:id", async (req, res) => {
-  const profileId = String(req.params.id || "").trim();
-  if (!profileId) {
-    return res.status(400).json({ error: "Profile ID is required." });
-  }
-
-  try {
-    const snapshot = await leaderboardStore.getSnapshot();
-    const profile = snapshot.profiles.find((item) => item.id === profileId);
-    if (!profile) {
-      return res.status(404).json({ error: "Player profile not found." });
-    }
-
-    const today = getLocalDateString(new Date());
-    const performance = buildProfilePerformance(snapshot.resultsByProfile[profileId], today);
-    const totalSubmissions = Object.values(snapshot.resultsByProfile[profileId] || {}).reduce(
-      (sum, entry) => sum + Number(entry?.submissionCount || 0),
-      0
-    );
-
-    return res.json({
-      ok: true,
-      profile,
-      summary: {
-        streak: performance.streak,
-        overall: performance.overall,
-        weekly: performance.weekly,
-        monthly: performance.monthly,
-        totalSubmissions
-      }
-    });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.patch("/api/admin/stats/profile/:id", async (req, res) => {
-  const profileId = String(req.params.id || "").trim();
-  if (!profileId) {
-    return res.status(400).json({ error: "Profile ID is required." });
-  }
-
-  let nextName;
-  try {
-    nextName = normalizeProfileNameInput(req.body?.name);
-  } catch (err) {
-    return statsServiceError(res, err);
-  }
-
-  try {
-    const snapshot = await leaderboardStore.mutate((draft) => {
-      const profile = draft.profiles.find((item) => item.id === profileId);
-      if (!profile) {
-        throw new StatsApiError(404, "Player profile not found.");
-      }
-      const duplicate = draft.profiles.find(
-        (item) => item.id !== profileId && item.name.toLowerCase() === nextName.toLowerCase()
-      );
-      if (duplicate) {
-        throw new StatsApiError(409, "Another player already uses that name.");
-      }
-      const nowIso = new Date().toISOString();
-      profile.name = nextName;
-      profile.updatedAt = nowIso;
-    });
-    const persistedProfile = snapshot.profiles.find((item) => item.id === profileId) || null;
-    if (!persistedProfile) {
-      throw new Error("Failed to persist player profile rename.");
-    }
-
-    return res.json({ ok: true, profile: persistedProfile });
-  } catch (err) {
-    return statsServiceError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.get("/api/admin/providers", (req, res) => {
-  return res.json({
-    ok: true,
-    providers: buildProviderStatusRows()
-  });
-});
-
-app.post("/api/admin/providers/import", async (req, res) => {
-  let variant;
-  try {
-    variant = parseProviderVariant(req.body?.variant);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  let sourceType;
-  try {
-    sourceType = parseProviderImportSource(req.body?.sourceType);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  const commitInput = String(req.body?.commit || "").trim();
-  if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.REMOTE_FETCH && !PROVIDER_COMMIT_PATTERN.test(commitInput)) {
-    return providerAdminError(
-      res,
-      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA.")
-    );
-  }
-  if (
-    sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
-    && commitInput
-    && !PROVIDER_COMMIT_PATTERN.test(commitInput)
-  ) {
-    return providerAdminError(
-      res,
-      new StatsApiError(400, "commit must be a 40-character lowercase hexadecimal git SHA when provided.")
-    );
-  }
-
-  const checksums = req.body?.expectedChecksums;
-  const expectedChecksums = {
-    dic: String(checksums?.dic || "").trim().toLowerCase(),
-    aff: String(checksums?.aff || "").trim().toLowerCase()
-  };
-
-  let filterMode;
-  try {
-    filterMode = parseProviderFilterMode(req.body?.filterMode);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  if (providerImportInFlight) {
-    return providerAdminError(
-      res,
-      new StatsApiError(
-        409,
-        `Another import is already running (${providerImportInFlight.variant} @ ${providerImportInFlight.commit}).`
-      )
-    );
-  }
-
-  const inFlightToken = {
-    variant,
-    commit: commitInput || "auto",
-    startedAt: new Date().toISOString()
-  };
-  providerImportInFlight = inFlightToken;
-
-  try {
-    const sourceResult = sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD
-      ? await persistManualProviderSource({
-        variant,
-        commit: commitInput || null,
-        expectedChecksums,
-        manualFiles: req.body?.manualFiles,
-        maxManualFileBytes: PROVIDER_MANUAL_MAX_FILE_BYTES,
-        outputRoot: PROVIDERS_ROOT
-      })
-      : await fetchAndPersistProviderSource({
-        variant,
-        commit: commitInput,
-        expectedChecksums,
-        outputRoot: PROVIDERS_ROOT
-      });
-    const commit = sourceResult.descriptor.commit;
-    const expandedResult = await buildExpandedFormsArtifacts({
-      variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
-      policyVersion: PROVIDER_POLICY_VERSION
-    });
-    const poolsResult = await buildProviderPoolsArtifacts({
-      variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
-      policyVersion: PROVIDER_POLICY_VERSION
-    });
-    const filteredResult = await buildFilteredAnswerPoolArtifacts({
-      variant,
-      commit,
-      providerRoot: PROVIDERS_ROOT,
-      outputRoot: PROVIDERS_ROOT,
-      filterMode
-    });
-
-    return res.json({
-      ok: true,
-      action: "imported",
-      variant,
-      commit,
-      sourceType,
-      filterMode,
-      counts: {
-        sourceFiles: {
-          dicBytes: sourceResult.sourceFiles.dic.byteSize,
-          affBytes: sourceResult.sourceFiles.aff.byteSize
-        },
-        expandedForms: expandedResult.counts.expandedForms,
-        guessPool: poolsResult.counts.expandedForms,
-        answerPool: poolsResult.counts.answerPool,
-        filteredAnswers: filteredResult.counts.activatedAnswers
-      },
-      providers: buildProviderStatusRows()
-    });
-  } catch (err) {
-    return providerAdminError(res, mapProviderPipelineError(err));
-  } finally {
-    if (providerImportInFlight === inFlightToken) {
-      providerImportInFlight = null;
-    }
-  }
-});
-
-app.post("/api/admin/providers/:variant/check-update", async (req, res) => {
-  let variant;
-  try {
-    variant = parseProviderVariant(req.params.variant);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  let currentCommit;
-  try {
-    currentCommit = resolveCurrentProviderCommitForUpdateCheck(variant, req.body?.commit);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  try {
-    const result = await checkProviderUpdate({
-      variant,
-      currentCommit,
-      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN || ""
-    });
-    return res.json({
-      ok: true,
-      ...result,
-      providers: buildProviderStatusRows()
-    });
-  } catch (err) {
-    if (
-      err instanceof ProviderUpdateCheckError &&
-      (err.code === "UNSUPPORTED_VARIANT" || err.code === "INVALID_COMMIT")
-    ) {
-      return providerAdminError(res, new StatsApiError(400, err.message));
-    }
-
-    return res.json({
-      ok: true,
-      providerId: PROVIDER_ID,
-      repository: PROVIDER_REPOSITORY,
-      variant,
-      checkedAt: new Date().toISOString(),
-      status: "error",
-      message: mapProviderUpdateCheckErrorToMessage(err),
-      currentCommit,
-      latestCommit: null,
-      latestByPath: null,
-      providers: buildProviderStatusRows()
-    });
-  }
-});
-
-app.post("/api/admin/providers/:variant/enable", (req, res) => {
-  let variant;
-  try {
-    variant = parseProviderVariant(req.params.variant);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  let commit;
-  try {
-    commit = resolvePreferredProviderCommit(variant, req.body?.commit);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  try {
-    const paths = buildProviderArtifactPaths(variant, commit);
-    const minLength = PROVIDER_MIN_LENGTH;
-    const guessDictionary = loadDictionary(paths.guessPool, minLength);
-    const answerDictionary = loadDictionary(paths.answerPoolActive, minLength)
-      || loadDictionary(paths.answerPoolFallback, minLength);
-    if (!guessDictionary || !answerDictionary) {
-      throw new StatsApiError(
-        409,
-        "Provider artifacts are incomplete. Expected guess and answer pools for that variant."
-      );
-    }
-
-    const snapshot = languageRegistryStore.upsertProviderLanguageSync({
-      variant,
-      commit,
-      providerId: PROVIDER_ID,
-      dictionaryFile: paths.guessPool,
-      label: getProviderVariantLabel(variant),
-      minLength,
-      enabled: true
-    });
-    rebuildLanguageRuntimeCatalog();
-
-    const entry = snapshot.languages.find((language) => language.id === variant) || null;
-    return res.json({
-      ok: true,
-      action: "enabled",
-      variant,
-      commit,
-      language: entry,
-      providers: buildProviderStatusRows()
-    });
-  } catch (err) {
-    return providerAdminError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.post("/api/admin/providers/:variant/disable", (req, res) => {
-  let variant;
-  try {
-    variant = parseProviderVariant(req.params.variant);
-  } catch (err) {
-    return providerAdminError(res, err);
-  }
-
-  try {
-    const snapshot = languageRegistryStore.setLanguageEnabledSync(variant, false);
-    rebuildLanguageRuntimeCatalog();
-
-    const entry = snapshot.languages.find((language) => language.id === variant) || null;
-    return res.json({
-      ok: true,
-      action: "disabled",
-      variant,
-      language: entry,
-      providers: buildProviderStatusRows()
-    });
-  } catch (err) {
-    return providerAdminError(res, mapRegistryErrorToStats(err));
-  }
-});
-
-app.post("/api/encode", (req, res) => {
-  const word = normalizeWord(req.body.word);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-
-  try {
-    assertWord(word, getMinLengthForLang(lang));
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  const dict = getAnswerDictionary(lang);
-  if (dict && !dictionaryHasWord(dict, word)) {
-    return res.status(400).json({ error: "Word not found in dictionary for that language." });
-  }
-
-  const code = encodeWord(word);
-  res.json({
-    code,
-    length: word.length,
-    lang
-  });
-});
-
-app.post("/api/random", (req, res) => {
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  const length = Number(req.body.length);
-  const minLength = getMinLengthForLang(lang);
-
-  if (!Number.isInteger(length) || length < minLength || length > MAX_LEN) {
-    return res
-      .status(400)
-      .json({ error: `Length must be ${minLength}-${MAX_LEN}.` });
-  }
-
-  const dict = getAnswerDictionary(lang);
-  if (!dict) {
-    return res.status(400).json({ error: "No dictionary available for that language." });
-  }
-
-  const word = dictionaryRandomWord(dict, length);
-  if (!word) {
-    return res.status(400).json({ error: "No words available for that length." });
-  }
-
-  res.json({
-    word,
-    code: encodeWord(word),
-    length,
-    lang
-  });
-});
-
-app.post("/api/puzzle", (req, res) => {
-  const code = normalizeWord(req.body.code);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  let guesses = DEFAULT_GUESSES;
-  const minLength = getMinLengthForLang(lang);
-
-  if (req.body.guesses !== undefined) {
-    const parsed = Number(req.body.guesses);
-    if (!Number.isInteger(parsed) || parsed < MIN_GUESSES || parsed > MAX_GUESSES) {
-      return res.status(400).json({ error: `Guesses must be ${MIN_GUESSES}-${MAX_GUESSES}.` });
-    }
-    guesses = parsed;
-  }
-
-  if (!/^[A-Z]+$/.test(code)) {
-    return res.status(400).json({ error: "Invalid word code." });
-  }
-  if (code.length < minLength || code.length > MAX_LEN) {
-    return res.status(400).json({ error: "Invalid word code length." });
-  }
-
-  res.json({
-    length: code.length,
-    lang,
-    label: getLanguageLabel(lang),
-    maxGuesses: guesses
-  });
-});
-
-app.post("/api/guess", (req, res) => {
-  const code = normalizeWord(req.body.code);
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-  const reveal = Boolean(req.body.reveal);
-
-  if (!/^[A-Z]+$/.test(code)) {
-    return res.status(400).json({ error: "Invalid word code." });
-  }
-
-  const answer = decodeWord(code);
-  const guess = normalizeWord(req.body.guess);
-
-  if (!/^[A-Z]+$/.test(guess)) {
-    return res.status(400).json({ error: "Guess must use only letters A-Z." });
-  }
-  if (guess.length !== answer.length) {
-    return res.status(400).json({ error: "Guess length does not match." });
-  }
-
-  const dict = getDictionary(lang);
-  if (dict && !dictionaryHasWord(dict, guess)) {
-    return res.status(400).json({ error: "Not in word list." });
-  }
-
-  const result = evaluateGuess(guess, answer);
-  const isCorrect = guess === answer;
-
-  const shouldIncludeMeaning = isCorrect || (reveal && !isCorrect);
-  const answerMeaning = shouldIncludeMeaning
-    ? lookupAnswerMeaning(lang, answer) || undefined
-    : undefined;
-
-  res.json({
-    ok: true,
-    result,
-    isCorrect,
-    answer: reveal && !isCorrect ? answer : undefined,
-    answerMeaning
-  });
-});
+// ============================================================================
+// ROUTE MOUNTING
+// ============================================================================
+
+// Mount meta routes (health check and application metadata)
+const createMetaRouter = require("./routes/meta.js");
+app.use(
+  createMetaRouter({
+    getAvailableLanguages: () => availableLanguages,
+    isLanguageAvailable,
+    MIN_LEN,
+    MAX_LEN,
+    MIN_GUESSES,
+    MAX_GUESSES,
+    DEFAULT_GUESSES,
+    DEFAULT_LANG,
+    PERF_LOGGING,
+    DEFINITIONS_MODE
+  })
+);
+
+const createGameRouter = require("./routes/game.js");
+app.use(
+  createGameRouter({
+    normalizeWord,
+    resolveLang,
+    assertWord,
+    getMinLengthForLang,
+    getAnswerDictionary,
+    getDictionary,
+    dictionaryHasWord,
+    dictionaryRandomWord,
+    encodeWord,
+    decodeWord,
+    evaluateGuess,
+    lookupAnswerMeaning,
+    getLanguageLabel,
+    DEFAULT_GUESSES,
+    MIN_GUESSES,
+    MAX_GUESSES,
+    MAX_LEN
+  })
+);
+
+const createStatsRouter = require("./routes/stats.js");
+app.use(
+  createStatsRouter({
+    leaderboardStore,
+    normalizeProfileNameInput,
+    parseDailyResultPayload,
+    parseLeaderboardRange,
+    getLocalDateString,
+    buildLeaderboardRows,
+    buildProfilePerformance,
+    statsServiceError,
+    mapRegistryErrorToStats,
+    mergeDailyResult,
+    describeRange,
+    StatsApiError
+  })
+);
+
+// ============================================================================
+// DICTIONARY ROUTES - To be extracted to routes/dictionary.js
+// Endpoints: GET /api/word, POST /api/word
+// Middleware: requireAdminAccess (applied to both routes)
+// Dependencies: wordDataCache, buildDefaultWordData, normalizeWord, resolveLang,
+//               assertWord, getMinLengthForLang, saveWordDataAtomic
+// ============================================================================
 
 app.get("/api/word", requireAdminAccess, (req, res) => {
   res.json(wordDataCache || buildDefaultWordData());
@@ -2098,6 +1590,13 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
   wordDataCache = data;
   res.json({ ok: true, data });
 });
+
+// ============================================================================
+// DAILY ROUTE - To be extracted to routes/daily.js
+// Endpoint: GET /daily
+// Dependencies: wordDataCache, normalizeWord, getLocalDateString, renderDailyPage,
+//               renderDailyMissing
+// ============================================================================
 
 app.get("/daily", (req, res) => {
   const data = wordDataCache;
