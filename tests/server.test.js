@@ -935,11 +935,13 @@ describe("Wordle API", () => {
       .post("/api/random")
       .send({ lang: "en", length: ["5"] });
     expect(invalidLengthType.status).toBe(400);
+    expect(invalidLengthType.body.error).toMatch(/length must be a number/i);
 
     const stringLength = await request(app)
       .post("/api/random")
       .send({ lang: "en", length: "5" });
     expect(stringLength.status).toBe(400);
+    expect(stringLength.body.error).toMatch(/length must be a number/i);
   });
 
   test("random rejects languages that are unavailable at runtime", async () => {
