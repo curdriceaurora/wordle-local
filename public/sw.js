@@ -81,7 +81,6 @@ self.addEventListener('fetch', (event) => {
             })
             .catch(() => {
               if (event.request.mode === 'navigate') {
-                const url = new URL(event.request.url);
                 if (url.pathname.startsWith('/admin')) {
                   return caches.match('/admin/index.html');
                 }

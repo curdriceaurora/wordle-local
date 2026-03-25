@@ -1485,19 +1485,24 @@ async function init() {
     const resolvedLang = langParam
       ? canonicalizeLanguageId(langParam)
       : defaultLang;
+    const hasLoadedLanguageMeta = Object.keys(languageMinLengths).length > 0;
     const isDailyFromLink = dailyParam === "1";
     const resolvedDailyDate = isDailyFromLink
       ? (dayParam ? String(dayParam).trim() : toLocalDateString(new Date()))
       : "";
-    const availableLang = languageMinLengths[resolvedLang]
-      ? resolvedLang
-      : null;
+    const availableLang = hasLoadedLanguageMeta
+      ? (languageMinLengths[resolvedLang] ? resolvedLang : null)
+      : resolvedLang;
 
     if (!trimmedCode || !/^[a-zA-Z]+$/.test(trimmedCode)) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
     }
-    if (!availableLang) {
+    if (!resolvedLang) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+    if (hasLoadedLanguageMeta && !availableLang) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
     }
@@ -1506,7 +1511,7 @@ async function init() {
       return;
     }
 
-    const minLength = getMinLengthForLang(availableLang);
+    const minLength = hasLoadedLanguageMeta ? getMinLengthForLang(availableLang) : minLen;
     if (trimmedCode.length < minLength || trimmedCode.length > maxLen) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;

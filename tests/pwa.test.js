@@ -250,8 +250,9 @@ describe("Progressive Web App (PWA)", () => {
       const swPath = path.join(__dirname, "..", "public", "sw.js");
       const swContent = fs.readFileSync(swPath, "utf8");
 
-      // Should have an array of assets to cache
-      expect(swContent).toMatch(/\[[\s\S]*?['"]\/[\s\S]*?\]/);
+      // Should cache assets during install
+      expect(swContent).toMatch(/self\.addEventListener\s*\(\s*['"]install['"]/);
+      expect(swContent).toMatch(/cache\.addAll\s*\(/);
     });
 
     test("sw.js caches core HTML files", () => {
