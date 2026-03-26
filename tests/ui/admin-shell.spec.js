@@ -1,6 +1,16 @@
 const { test, expect } = require("./fixtures");
 const AxeBuilder = require("@axe-core/playwright");
 
+async function blockServiceWorkerScript(page) {
+  await page.route("**/sw.js", async (route) => {
+    await route.abort();
+  });
+}
+
+test.beforeEach(async ({ page }) => {
+  await blockServiceWorkerScript(page);
+});
+
 function createProviderRows(state) {
   const variants = [
     ["en-GB", "English (UK)"],
