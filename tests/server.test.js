@@ -555,6 +555,23 @@ describe("Wordle API", () => {
     expect(guessResponse.body.answerMeaning.length).toBeGreaterThan(0);
   });
 
+  test("does not reveal answer for truthy non-boolean reveal values", async () => {
+    const app = loadApp();
+    const encodeResponse = await request(app)
+      .post("/api/encode")
+      .send({ word: "CRANE", lang: "en" });
+
+    const code = encodeResponse.body.code;
+    const guessResponse = await request(app)
+      .post("/api/guess")
+      .send({ code, guess: "SLATE", lang: "en", reveal: "false" });
+
+    expect(guessResponse.status).toBe(200);
+    expect(guessResponse.body.isCorrect).toBe(false);
+    expect(guessResponse.body.answer).toBeUndefined();
+    expect(guessResponse.body.answerMeaning).toBeUndefined();
+  });
+
   test("returns local answer meaning when reveal is true for english puzzles", async () => {
     await withTempDefinitions(
       {
@@ -864,6 +881,12 @@ describe("Wordle API", () => {
       .send({ code: "F0TND", guess: "CRANE", lang: "en" });
     expect(invalidCode.status).toBe(400);
 
+    const oversizedCode = await request(app)
+      .post("/api/guess")
+      .send({ code: "AAAAAAAAAAAAA", guess: "CRANE", lang: "en" });
+    expect(oversizedCode.status).toBe(400);
+    expect(oversizedCode.body.error).toMatch(/word code length/i);
+
     const invalidLang = await request(app)
       .post("/api/guess")
       .send({ code, guess: "CRANE", lang: "xx" });
@@ -907,6 +930,18 @@ describe("Wordle API", () => {
       .post("/api/random")
       .send({ lang: "xx", length: 5 });
     expect(unknownLang.status).toBe(400);
+
+    const invalidLengthType = await request(app)
+      .post("/api/random")
+      .send({ lang: "en", length: ["5"] });
+    expect(invalidLengthType.status).toBe(400);
+    expect(invalidLengthType.body.error).toMatch(/length must be a number/i);
+
+    const stringLength = await request(app)
+      .post("/api/random")
+      .send({ lang: "en", length: "5" });
+    expect(stringLength.status).toBe(400);
+    expect(stringLength.body.error).toMatch(/length must be a number/i);
   });
 
   test("random rejects languages that are unavailable at runtime", async () => {
@@ -1765,7 +1800,7 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
       expect(third.status).toBe(200);
-      expect(third.body.retained).toBe(true);
+      expect(third.body.retained).toBe(false);
       expect(third.body.result.won).toBe(true);
       expect(third.body.result.attempts).toBe(4);
       expect(third.body.result.submissionCount).toBe(3);

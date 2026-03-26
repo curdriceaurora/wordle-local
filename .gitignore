@@ -29,6 +29,7 @@ public/dist/
 # Auto Claude generated files
 .auto-claude-security.json
 .auto-claude-status
+.auto-claude*
 .claude_settings.json
 .worktrees/
 .security-key
