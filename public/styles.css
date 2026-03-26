@@ -849,6 +849,29 @@ body.high-contrast .key.absent {
   }
 }
 
+@media (max-width: 420px) {
+  .keyboard {
+    width: min(40rem, 100%);
+    gap: 0.3rem;
+  }
+
+  .key-row {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    max-width: 100%;
+  }
+
+  .key {
+    flex: 0 0 2.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .key.wide {
+    flex: 0 0 4.3rem;
+  }
+}
+
 @media (max-width: 375px) {
   h1 {
     font-size: 1.6rem;
@@ -1222,8 +1245,8 @@ body.high-contrast .key.absent {
   .key {
     padding: 0.4rem 0.2rem;
     font-size: 0.75rem;
-    min-width: 2.5rem;
-    min-height: 2.5rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
     border-radius: 0.4rem;
   }
 
