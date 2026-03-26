@@ -1438,6 +1438,15 @@ strictToggle.addEventListener("change", () => {
   }
 });
 
+/**
+ * Initialize application state, apply persisted UI settings, load metadata, and route to Create or Play based on URL parameters.
+ *
+ * Loads server-side metadata, resets profile and leaderboard state, applies stored theme/contrast/strict preferences, and then either:
+ * - validates URL query parameters and starts a Play session for a shared or daily puzzle, or
+ * - enters Create mode when no puzzle code is present.
+ *
+ * If a URL-provided puzzle link fails validation, an error panel is shown with a generic link-failure message.
+ */
 async function init() {
   await loadMeta();
   profileState = {
@@ -1476,19 +1485,24 @@ async function init() {
     const resolvedLang = langParam
       ? canonicalizeLanguageId(langParam)
       : defaultLang;
+    const hasLoadedLanguageMeta = Object.keys(languageMinLengths).length > 0;
     const isDailyFromLink = dailyParam === "1";
     const resolvedDailyDate = isDailyFromLink
       ? (dayParam ? String(dayParam).trim() : toLocalDateString(new Date()))
       : "";
-    const availableLang = languageMinLengths[resolvedLang]
-      ? resolvedLang
-      : null;
+    const availableLang = hasLoadedLanguageMeta
+      ? (languageMinLengths[resolvedLang] ? resolvedLang : null)
+      : resolvedLang;
 
     if (!trimmedCode || !/^[a-zA-Z]+$/.test(trimmedCode)) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
     }
-    if (!availableLang) {
+    if (!resolvedLang) {
+      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      return;
+    }
+    if (hasLoadedLanguageMeta && !availableLang) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
     }
@@ -1497,7 +1511,7 @@ async function init() {
       return;
     }
 
-    const minLength = getMinLengthForLang(availableLang);
+    const minLength = hasLoadedLanguageMeta ? getMinLengthForLang(availableLang) : minLen;
     if (trimmedCode.length < minLength || trimmedCode.length > maxLen) {
       showErrorPanel("That link doesn't work. Let's make a new puzzle.");
       return;
@@ -1531,3 +1545,9 @@ async function init() {
 }
 
 init();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
