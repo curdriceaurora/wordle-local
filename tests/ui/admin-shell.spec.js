@@ -1,6 +1,18 @@
 const { test, expect } = require("./fixtures");
 const AxeBuilder = require("@axe-core/playwright");
 
+test.use({ serviceWorkers: "block" });
+
+async function blockServiceWorkerScript(page) {
+  await page.route("**/sw.js", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/javascript",
+      body: ""
+    });
+  });
+}
+
 function createProviderRows(state) {
   const variants = [
     ["en-GB", "English (UK)"],
@@ -36,6 +48,7 @@ function createProviderRows(state) {
 }
 
 test("admin shell unlocks with session-only key and loads provider status", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   await page.goto("/admin", { waitUntil: "commit" });
 
   await expect(page.locator("#unlockPanel")).toBeVisible();
@@ -74,6 +87,7 @@ test("admin shell unlocks with session-only key and loads provider status", asyn
 });
 
 test("admin shell supports import and enable workflows without CLI usage", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   const state = {
     imported: false,
     enabled: false,
@@ -155,6 +169,7 @@ test("admin shell supports import and enable workflows without CLI usage", async
 });
 
 test("admin shell supports manual upload fallback import mode", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   const state = {
     imported: false,
     enabled: false,
@@ -231,6 +246,7 @@ test("admin shell supports manual upload fallback import mode", async ({ page })
 });
 
 test("admin shell supports manual provider update checks", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   const state = {
     imported: true,
     enabled: true,
@@ -278,6 +294,7 @@ test("admin shell supports manual provider update checks", async ({ page }) => {
 });
 
 test("admin shell surfaces provider warning and error details", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   await page.route("**/api/admin/providers", async (route) => {
     const providers = createProviderRows({ imported: false, enabled: false, commit: "" });
     const errorRow = providers.find((provider) => provider.variant === "en-US");
@@ -323,6 +340,7 @@ test("admin shell surfaces provider warning and error details", async ({ page })
 });
 
 test("admin shell lock button clears unlocked session", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   await page.goto("/admin", { waitUntil: "commit" });
 
   await page.fill("#adminKeyInput", "demo-key");
@@ -336,6 +354,7 @@ test("admin shell lock button clears unlocked session", async ({ page }) => {
 });
 
 test("admin shell tablist supports keyboard tab navigation", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   await page.goto("/admin", { waitUntil: "commit" });
   await page.fill("#adminKeyInput", "demo-key");
   await page.click("#unlockForm button[type=submit]");
@@ -361,6 +380,7 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
 });
 
 test("admin shell passes axe checks in locked and unlocked states", async ({ page }) => {
+  await blockServiceWorkerScript(page);
   await page.goto("/admin", { waitUntil: "commit" });
   const lockedResults = await new AxeBuilder({ page }).analyze();
   expect(lockedResults.violations).toEqual([]);
