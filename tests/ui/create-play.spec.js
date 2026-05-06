@@ -53,6 +53,7 @@ test("shows local meaning when english puzzle is solved", async ({ page }) => {
   await page.fill("#wordInput", "CRANE");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.click("#board");
   await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6!");
@@ -66,6 +67,7 @@ test("reveals a local meaning after final failed guess", async ({ page }) => {
   await page.fill("#wordInput", "CRANE");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.click("#board");
 
   const failedGuesses = ["SLATE", "CRATE", "STONE", "TRAIL", "ABATE", "ADORE"];
   for (let i = 0; i < failedGuesses.length; i += 1) {
@@ -87,6 +89,7 @@ test("daily mode requires a player name and updates leaderboard stats", async ({
   await page.goto(`/?word=yfrqp&lang=en&daily=1&day=${todayLocalDate()}`, gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)");
   await expect(page.locator("#profilePanel")).toBeVisible();
+  await page.click("#board");
 
   await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
@@ -116,6 +119,7 @@ test("strict mode enforces revealed hints", async ({ page }) => {
   await page.waitForSelector("#playPanel:not(.hidden)");
   await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
+  await page.click("#board");
   await page.keyboard.type("CRATE");
   await page.keyboard.press("Enter");
   await expect(
@@ -137,6 +141,7 @@ test("strict mode requires repeated letters when revealed", async ({ page }) => 
   await page.waitForSelector("#playPanel:not(.hidden)");
   await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
+  await page.click("#board");
   await page.keyboard.type("ALLOT");
   await page.keyboard.press("Enter");
   await expect(page.locator("#board .row:nth-child(1) .tile.present")).toHaveCount(2);
@@ -157,6 +162,7 @@ test("theme selector persists explicit light and dark preferences", async ({ pag
   await expect(page.locator("html")).toHaveClass(/theme-light/);
 
   await page.reload(gotoOptions);
+  await waitForLanguages(page);
   await expect(page.locator("#themeSelect")).toHaveValue("light");
   await expect(page.locator("html")).toHaveClass(/theme-light/);
 

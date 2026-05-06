@@ -19,7 +19,8 @@ module.exports = defineConfig({
   workers: process.env.CI ? 1 : 2,
   use: {
     baseURL: "http://localhost:3000",
-    headless: true
+    headless: true,
+    serviceWorkers: "block"
   },
   projects: browsers.map((browserName) => ({
     name: browserName,

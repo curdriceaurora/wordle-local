@@ -33,6 +33,7 @@
   --modal-border: rgba(148, 163, 184, 0.2);
   --modal-shadow: rgba(2, 6, 23, 0.6);
   --focus-outline: var(--accent);
+  --touch-target-min: 44.25px;
   color-scheme: dark;
 }
 
@@ -201,9 +202,12 @@ p {
 }
 
 .admin-link {
+  display: inline-flex;
+  align-items: center;
   color: var(--text);
   text-decoration: none;
   border: 1px solid var(--chip-border);
+  min-height: var(--touch-target-min);
   padding: 0.6rem 1.2rem;
   border-radius: 999px;
   transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -554,7 +558,7 @@ body.high-contrast .tile.absent {
   font-size: 0.9rem;
   cursor: pointer;
   min-width: 2rem;
-  min-height: clamp(2.4rem, 7vw, 3.2rem);
+  min-height: max(var(--touch-target-min), clamp(2.4rem, 7vw, 3.2rem));
   transition: transform 0.1s ease, background 0.15s ease;
   touch-action: manipulation;
 }
@@ -640,6 +644,7 @@ body.high-contrast .key.absent {
   background: transparent;
   color: var(--text);
   font-size: 0.9rem;
+  min-height: var(--touch-target-min);
   padding: 0.45rem 0.9rem;
   border-radius: 999px;
   cursor: pointer;
