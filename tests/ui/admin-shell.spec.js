@@ -422,6 +422,65 @@ test("admin shell saves runtime overrides and renders source metadata", async ({
   await expect(page.locator("#runtimeSourcesBody")).toContainText("override");
 });
 
+test("admin shell shows restart-required settings as read-only", async ({ page }) => {
+  const providerState = { imported: false, enabled: false, commit: "" };
+  const runtimeConfig = {
+    ok: true,
+    effective: {
+      definitions: { mode: "memory", cacheSize: 512, cacheTtlMs: 1800000, shardCacheSize: 6 },
+      limits: { providerManualMaxFileBytes: 8388608 },
+      diagnostics: { perfLogging: false },
+      security: { trustProxy: false, trustProxyHops: 1, requireAdminKey: true },
+      server: {
+        jsonBodyLimit: "1mb",
+        rateLimitWindowMs: 60000,
+        rateLimitMax: 100,
+        adminRateLimitWindowMs: 60000,
+        adminRateLimitMax: 20,
+        adminWriteRateLimitWindowMs: 60000,
+        adminWriteRateLimitMax: 10
+      }
+    },
+    overrides: {},
+    sources: {
+      definitions: { mode: "default", cacheSize: "default", cacheTtlMs: "default", shardCacheSize: "default" },
+      limits: { providerManualMaxFileBytes: "default" },
+      diagnostics: { perfLogging: "default" }
+    },
+    editable: {
+      definitions: { modeOptions: ["memory", "lazy", "indexed"], cacheSize: { min: 1, max: 4096 }, cacheTtlMs: { min: 1000, max: 86400000 }, shardCacheSize: { min: 1, max: 26 } },
+      limits: { providerManualMaxFileBytes: { min: 1048576, max: 33554432 } },
+      diagnostics: { perfLogging: true }
+    }
+  };
+
+  await page.route("**/api/admin/providers", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, providers: createProviderRows(providerState) }) })
+  );
+  await page.route("**/api/admin/jobs?limit=30", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, queue: { active: false, queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 }, jobs: [] }) })
+  );
+  await page.route("**/api/admin/runtime-config", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(runtimeConfig) })
+  );
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click("#admin-tab-runtime");
+
+  const lockedTable = page.locator("#runtimeLockedBody");
+  await expect(lockedTable).toContainText("security.trustProxy");
+  await expect(lockedTable).toContainText("security.requireAdminKey");
+  await expect(lockedTable).toContainText("server.jsonBodyLimit");
+  await expect(lockedTable).toContainText("server.rateLimitMax");
+
+  await expect(page.locator("#runtimeDefinitionsMode")).not.toBeDisabled();
+  await expect(page.locator("#runtimeLockedBody input")).toHaveCount(0);
+});
+
 test("admin shell shows queued imports in import queue panel", async ({ page }) => {
   const state = {
     imported: false,
