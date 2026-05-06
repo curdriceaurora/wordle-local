@@ -91,6 +91,10 @@ body.high-contrast {
   box-sizing: border-box;
 }
 
+html {
+  overflow-x: clip;
+}
+
 .skip-link {
   position: absolute;
   top: 0.5rem;
@@ -130,6 +134,7 @@ body {
   flex-direction: column;
   padding-bottom: env(safe-area-inset-bottom);
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
 }
 
 h1 {
@@ -160,6 +165,8 @@ p {
   gap: 1rem;
   padding: 2rem clamp(1.5rem, 4vw, 4rem) 1rem;
   border-bottom: 1px solid var(--topbar-border);
+  width: 100%;
+  min-width: 0;
 }
 
 .top-actions {
@@ -210,6 +217,9 @@ p {
   min-height: var(--touch-target-min);
   padding: 0.6rem 1.2rem;
   border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -224,6 +234,8 @@ p {
   display: grid;
   place-items: center;
   padding: 2rem 1rem 1rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .panel {
@@ -434,6 +446,7 @@ button:disabled {
 
 .leaderboard-table-wrap {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .leaderboard-table {
@@ -538,8 +551,9 @@ body.high-contrast .tile.absent {
   display: flex;
   justify-content: center;
   gap: 0.4rem;
-  width: min(40rem, 95vw);
+  max-width: min(40rem, 95vw);
   margin: 0 auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .key-row.offset {
@@ -549,6 +563,7 @@ body.high-contrast .tile.absent {
 .key {
   position: relative;
   flex: 1;
+  flex-shrink: 0;
   padding: 0.7rem 0.3rem;
   border: none;
   border-radius: 0.6rem;
@@ -637,6 +652,8 @@ body.high-contrast .key.absent {
   padding: 1rem clamp(1.5rem, 4vw, 4rem) 2rem;
   color: var(--muted);
   border-top: 1px solid var(--footer-border);
+  width: 100%;
+  min-width: 0;
 }
 
 .link-button {
@@ -648,6 +665,9 @@ body.high-contrast .key.absent {
   padding: 0.45rem 0.9rem;
   border-radius: 999px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -718,6 +738,8 @@ body.high-contrast .key.absent {
   padding: 2rem clamp(1.5rem, 4vw, 4rem) 3rem;
   display: grid;
   gap: 2rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .admin-form {
@@ -784,15 +806,27 @@ body.high-contrast .key.absent {
     flex-direction: column;
     align-items: flex-start;
     gap: 1rem;
+    padding: 1.5rem clamp(1rem, 3vw, 2rem) 0.75rem;
+  }
+
+  .layout {
+    padding: 1.5rem 1rem 0.75rem;
   }
 
   .panel {
     padding: 1.5rem;
+    gap: 1.25rem;
+  }
+
+  .profile-panel,
+  .leaderboard-panel {
+    padding: 0.85rem;
   }
 
   .footer {
     flex-direction: column;
     gap: 0.4rem;
+    padding: 0.85rem clamp(1rem, 3vw, 2rem) 1.5rem;
   }
 
   .player-stats {
@@ -802,5 +836,432 @@ body.high-contrast .key.absent {
   .profile-form {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .layout {
+    padding-inline: 0.5rem;
+  }
+
+  .panel {
+    width: min(56rem, 100vw);
+    padding-inline: 0.5rem;
+  }
+
+  .keyboard {
+    width: min(40rem, 100%);
+    margin: 0 auto;
+    gap: 0.2rem;
+  }
+
+  .key-row {
+    flex-wrap: wrap;
+    gap: 0.2rem;
+    max-width: 100%;
+  }
+
+  .key {
+    flex: 0 0 2.76rem;
+    min-width: 2.76rem;
+    min-height: 2.76rem;
+  }
+
+  .key.wide {
+    flex: 0 0 3.65rem;
+  }
+}
+
+@media (max-width: 375px) {
+  h1 {
+    font-size: 1.6rem;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+  }
+
+  .topbar {
+    padding: 1.25rem 0.85rem 0.65rem;
+  }
+
+  .layout {
+    padding: 1.25rem 0.85rem 0.65rem;
+  }
+
+  .panel {
+    padding: 1.15rem;
+    gap: 1.15rem;
+    width: min(56rem, 98vw);
+  }
+
+  .profile-panel,
+  .leaderboard-panel {
+    padding: 0.75rem;
+    gap: 0.7rem;
+  }
+
+  .tile {
+    font-size: 1.5rem;
+    max-width: 3.5rem;
+  }
+
+  .board {
+    gap: 0.5rem;
+    width: min(98vw, calc(var(--cols) * 3.8rem));
+  }
+
+  .row {
+    gap: 0.5rem;
+  }
+
+  .key {
+    flex: 0 0 2.74rem;
+    padding: 0.6rem 0.25rem;
+    font-size: 0.85rem;
+    min-width: 2.74rem;
+    min-height: 2.74rem;
+  }
+
+  .keyboard {
+    gap: 0.2rem;
+    width: 100%;
+  }
+
+  .key-row {
+    gap: 0.2rem;
+    max-width: 100%;
+  }
+
+  .key-row.offset {
+    padding: 0 0.35rem;
+  }
+
+  .modal-card {
+    width: min(32rem, 96vw);
+    padding: 1.15rem;
+  }
+
+  .footer {
+    padding: 0.65rem 0.85rem 1.25rem;
+  }
+
+}
+
+@media (max-width: 360px) {
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.15rem;
+  }
+
+  .topbar {
+    padding: 1rem 0.65rem 0.5rem;
+  }
+
+  .layout {
+    padding: 1rem 0.65rem 0.5rem;
+  }
+
+  .panel {
+    padding: 0.95rem;
+    gap: 1rem;
+  }
+
+  .profile-panel,
+  .leaderboard-panel {
+    padding: 0.65rem;
+    gap: 0.65rem;
+  }
+
+  .tile {
+    font-size: 1.45rem;
+    max-width: 3.2rem;
+  }
+
+  .board {
+    gap: 0.45rem;
+    width: min(98vw, calc(var(--cols) * 3.5rem));
+  }
+
+  .row {
+    gap: 0.45rem;
+  }
+
+  .key {
+    padding: 0.5rem 0.2rem;
+    font-size: 0.8rem;
+    min-width: 2.76rem;
+    min-height: 2.76rem;
+  }
+
+  .keyboard {
+    gap: 0.2rem;
+  }
+
+  .key-row {
+    gap: 0.2rem;
+  }
+
+  .key-row.offset {
+    padding: 0 0.2rem;
+  }
+
+  .footer {
+    padding: 0.5rem 0.65rem 1rem;
+  }
+
+}
+
+@media (max-width: 320px) {
+  h1 {
+    font-size: 1.4rem;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  h3 {
+    font-size: 0.95rem;
+  }
+
+  .topbar {
+    padding: 0.85rem 0.5rem 0.45rem;
+  }
+
+  .layout {
+    padding: 0.85rem 0.5rem 0.45rem;
+  }
+
+  .panel {
+    padding: 0.75rem;
+    gap: 0.85rem;
+  }
+
+  .profile-panel,
+  .leaderboard-panel {
+    padding: 0.55rem;
+    gap: 0.6rem;
+  }
+
+  .tile {
+    font-size: 1.4rem;
+    max-width: 2.8rem;
+    border-radius: 0.5rem;
+  }
+
+  .board {
+    gap: 0.35rem;
+    width: min(98vw, calc(var(--cols) * 3rem));
+  }
+
+  .row {
+    gap: 0.35rem;
+  }
+
+  .key {
+    padding: 0.45rem 0.15rem;
+    font-size: 0.8rem;
+    min-width: 2.76rem;
+    min-height: 2.76rem;
+    border-radius: 0.5rem;
+  }
+
+  .keyboard {
+    gap: 0.2rem;
+  }
+
+  .key-row {
+    gap: 0.2rem;
+  }
+
+  .key-row.offset {
+    padding: 0;
+  }
+
+  .modal-card {
+    width: min(32rem, 98vw);
+    padding: 0.85rem;
+  }
+
+  .footer {
+    padding: 0.45rem 0.5rem 0.85rem;
+  }
+
+  .stat-card {
+    padding: 0.5rem;
+  }
+
+  .stat-card strong {
+    font-size: 0.95rem;
+  }
+
+  .stat-card span {
+    font-size: 0.8rem;
+  }
+
+  .leaderboard-table {
+    min-width: 28rem;
+    font-size: 0.85rem;
+  }
+
+  .toggle {
+    font-size: 0.85rem;
+  }
+
+  .link-button,
+  .note,
+  .hint {
+    font-size: 0.85rem;
+  }
+
+  .admin-link {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .ghost {
+    min-height: 44px;
+    padding: 0.75rem 1.1rem;
+  }
+
+  .link-button {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
+
+  .top-actions {
+    gap: 1rem;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  body {
+    min-height: 100vh;
+  }
+
+  .topbar {
+    padding: 0.65rem clamp(0.75rem, 2.5vw, 1.5rem) 0.4rem;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 0;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .layout {
+    padding: 0.85rem 0.85rem 0.4rem;
+    gap: 0.65rem;
+  }
+
+  .panel {
+    padding: 0.85rem;
+    gap: 0.85rem;
+  }
+
+  .profile-panel,
+  .leaderboard-panel {
+    padding: 0.6rem;
+    gap: 0.5rem;
+  }
+
+  .board {
+    gap: 0.4rem;
+    width: min(95vw, calc(var(--cols) * 3rem));
+  }
+
+  .row {
+    gap: 0.4rem;
+  }
+
+  .tile {
+    font-size: 1.3rem;
+    max-width: 2.8rem;
+    border-radius: 0.4rem;
+  }
+
+  .message {
+    min-height: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .keyboard {
+    gap: 0.3rem;
+    width: min(40rem, 95vw);
+  }
+
+  .key-row {
+    gap: 0.3rem;
+    max-width: min(40rem, 95vw);
+  }
+
+  .key-row.offset {
+    padding: 0 0.4rem;
+  }
+
+  .key {
+    padding: 0.4rem 0.2rem;
+    font-size: 0.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border-radius: 0.4rem;
+  }
+
+  .share {
+    gap: 0.5rem;
+  }
+
+  .footer {
+    padding: 0.4rem clamp(0.75rem, 2.5vw, 1.5rem) 0.65rem;
+    font-size: 0.85rem;
+  }
+
+  .modal-card {
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 0.85rem;
+  }
+
+  .player-stats {
+    gap: 0.4rem;
+  }
+
+  .stat-card {
+    padding: 0.4rem;
+  }
+
+  .stat-card strong {
+    font-size: 0.9rem;
+  }
+
+  .stat-card span {
+    font-size: 0.75rem;
   }
 }
