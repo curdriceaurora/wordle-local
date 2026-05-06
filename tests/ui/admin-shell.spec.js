@@ -477,7 +477,7 @@ test("admin shell shows restart-required settings as read-only", async ({ page }
   await expect(lockedTable).toContainText("server.jsonBodyLimit");
   await expect(lockedTable).toContainText("server.rateLimitMax");
 
-  await expect(page.locator("#runtimeForm input")).not.toBeDisabled();
+  await expect(page.locator("#runtimeDefinitionsMode")).not.toBeDisabled();
   await expect(page.locator("#runtimeLockedBody input")).toHaveCount(0);
 });
 
