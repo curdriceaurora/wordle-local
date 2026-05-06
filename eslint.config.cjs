@@ -4,6 +4,7 @@ const globals = require("globals");
 module.exports = [
   {
     ignores: [
+      ".auto-claude/**",
       "coverage/**",
       "node_modules/**",
       "playwright-report/**",
