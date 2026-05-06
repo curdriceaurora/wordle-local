@@ -469,6 +469,9 @@ function populateRuntimeFormFromState() {
   if (!runtime) {
     return;
   }
+  const manualUploadEditableLimits = runtime.editable?.limits?.providerManualMaxFileBytes || {};
+  runtimeManualMaxBytesEl.min = String(manualUploadEditableLimits.min ?? 1048576);
+  runtimeManualMaxBytesEl.max = String(manualUploadEditableLimits.max ?? MAX_MANUAL_FILE_BYTES);
   runtimeDefinitionsModeEl.value = String(runtime.overrides?.definitions?.mode || runtime.effective?.definitions?.mode || "memory");
   runtimeDefinitionCacheSizeEl.value = String(
     runtime.overrides?.definitions?.cacheSize ?? runtime.effective?.definitions?.cacheSize ?? ""

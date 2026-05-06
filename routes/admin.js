@@ -1,4 +1,5 @@
 const express = require("express");
+const { randomUUID } = require("node:crypto");
 
 /**
  * Admin routes factory
@@ -102,6 +103,8 @@ function createAdminRouter(deps) {
     persistManualUploadStaging,
     cleanupManualUploadStaging,
     getProviderManualMaxFileBytes,
+    getEditableProviderManualMaxFileBytes,
+    PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
     PROVIDER_IMPORT_SOURCE_TYPES,
     PROVIDER_MANUAL_MAX_FILE_BYTES,
@@ -169,6 +172,19 @@ function createAdminRouter(deps) {
 
   router.put("/api/admin/runtime-config", (req, res) => {
     try {
+      const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
+      if (requestedManualUploadMaxBytes !== undefined) {
+        const parsedRequestedMaxBytes = Number(requestedManualUploadMaxBytes);
+        const editableProviderManualMaxFileBytes = getEditableProviderManualMaxFileBytes();
+        if (
+          !Number.isInteger(parsedRequestedMaxBytes)
+          || parsedRequestedMaxBytes > editableProviderManualMaxFileBytes
+        ) {
+          return res.status(400).json({
+            error: `overrides.limits.providerManualMaxFileBytes must be an integer between ${PROVIDER_MANUAL_MAX_FILE_BYTES_MIN} and ${editableProviderManualMaxFileBytes}.`
+          });
+        }
+      }
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
       applyRuntimeConfig(nextState.overrides || {});
       return res.json(buildRuntimeConfigResponse());
@@ -323,20 +339,18 @@ function createAdminRouter(deps) {
         filterMode
       };
 
-      queuedJob = await adminJobsStore.enqueueProviderImportJob(requestPayload, {
-        requestedBy: "admin"
-      });
-
       if (sourceType === PROVIDER_IMPORT_SOURCE_TYPES.MANUAL_UPLOAD) {
         stagedManualUpload = await persistManualUploadStaging(
-          queuedJob.id,
+          `job-${randomUUID()}`,
           req.body?.manualFiles,
           getProviderManualMaxFileBytes()
         );
-        queuedJob = await adminJobsStore.updateJobRequest(queuedJob.id, {
-          manualUpload: stagedManualUpload
-        });
+        requestPayload.manualUpload = stagedManualUpload;
       }
+
+      queuedJob = await adminJobsStore.enqueueProviderImportJob(requestPayload, {
+        requestedBy: "admin"
+      });
     } catch (err) {
       if (queuedJob?.id) {
         await adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err)).catch(() => {});

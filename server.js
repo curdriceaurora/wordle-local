@@ -114,6 +114,9 @@ const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
 const SUPPORTED_PROVIDER_IMPORT_SOURCE_TYPES = new Set(Object.values(PROVIDER_IMPORT_SOURCE_TYPES));
 const PROVIDER_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_UPLOAD_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const PROVIDER_MANUAL_MAX_FILE_BYTES_MIN = 1024 * 1024;
+const PROVIDER_MANUAL_MAX_FILE_BYTES_MAX = 32 * 1024 * 1024;
+const JSON_BODY_LIMIT_OVERHEAD_BYTES = 64 * 1024;
 const PROVIDER_VARIANT_LABELS = Object.freeze({
   "en-GB": "English (UK)",
   "en-US": "English (US)",
@@ -150,6 +153,25 @@ function parseNonNegativeInteger(value, fallback) {
     return fallback;
   }
   return parsed;
+}
+
+function parseByteSizeLiteral(rawValue) {
+  const normalized = String(rawValue || "").trim().toLowerCase();
+  const match = normalized.match(/^([0-9]+)(kb|mb|gb)$/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return null;
+  }
+  const multiplier = match[2] === "kb"
+    ? 1024
+    : match[2] === "mb"
+      ? 1024 * 1024
+      : 1024 * 1024 * 1024;
+  const totalBytes = value * multiplier;
+  return Number.isSafeInteger(totalBytes) ? totalBytes : null;
 }
 
 function normalizeDefinitionsMode(raw) {
@@ -1938,7 +1960,21 @@ function buildImportQueueSummary(snapshot) {
   };
 }
 
+function getEditableProviderManualMaxFileBytes() {
+  const jsonBodyLimitBytes = parseByteSizeLiteral(JSON_BODY_LIMIT);
+  if (!jsonBodyLimitBytes) {
+    return PROVIDER_MANUAL_MAX_FILE_BYTES_MAX;
+  }
+  const usablePayloadBytes = Math.max(jsonBodyLimitBytes - JSON_BODY_LIMIT_OVERHEAD_BYTES, 0);
+  const maxManualUploadBytes = Math.floor((usablePayloadBytes * 3) / 4);
+  return Math.max(
+    PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
+    Math.min(PROVIDER_MANUAL_MAX_FILE_BYTES_MAX, maxManualUploadBytes)
+  );
+}
+
 function buildRuntimeConfigResponse() {
+  const editableProviderManualMaxFileBytes = getEditableProviderManualMaxFileBytes();
   const snapshot = getRuntimeConfigSnapshot();
   return {
     ok: true,
@@ -1972,7 +2008,10 @@ function buildRuntimeConfigResponse() {
         shardCacheSize: { min: 1, max: 26 }
       },
       limits: {
-        providerManualMaxFileBytes: { min: 1048576, max: 33554432 }
+        providerManualMaxFileBytes: {
+          min: PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
+          max: editableProviderManualMaxFileBytes
+        }
       },
       diagnostics: {
         perfLogging: true
@@ -2112,6 +2151,8 @@ app.use(
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    getEditableProviderManualMaxFileBytes,
+    PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
     PROVIDER_IMPORT_SOURCE_TYPES,
     PROVIDER_MANUAL_MAX_FILE_BYTES,
