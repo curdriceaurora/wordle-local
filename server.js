@@ -2122,11 +2122,6 @@ app.use(
     resolveCurrentProviderCommitForUpdateCheck,
     resolvePreferredProviderCommit,
     normalizeProfileNameInput,
-    fetchAndPersistProviderSource,
-    persistManualProviderSource,
-    buildExpandedFormsArtifacts,
-    buildProviderPoolsArtifacts,
-    buildFilteredAnswerPoolArtifacts,
     checkProviderUpdate,
     buildProviderArtifactPaths,
     getProviderVariantLabel,
@@ -2155,12 +2150,9 @@ app.use(
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
     PROVIDER_IMPORT_SOURCE_TYPES,
-    PROVIDER_MANUAL_MAX_FILE_BYTES,
     PROVIDER_MIN_LENGTH,
-    PROVIDER_POLICY_VERSION,
     PROVIDER_ID,
     PROVIDER_REPOSITORY,
-    PROVIDERS_ROOT,
     StatsApiError,
     ProviderUpdateCheckError,
     AppConfigStoreError
@@ -2227,8 +2219,8 @@ app.use(
     MAX_GUESSES,
     DEFAULT_GUESSES,
     DEFAULT_LANG,
-    PERF_LOGGING,
-    DEFINITIONS_MODE
+    isPerfLoggingEnabled,
+    getDefinitionsMode
   })
 );
 
