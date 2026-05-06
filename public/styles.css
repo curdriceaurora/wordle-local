@@ -202,6 +202,8 @@ p {
 }
 
 .admin-link {
+  display: inline-flex;
+  align-items: center;
   color: var(--text);
   text-decoration: none;
   border: 1px solid var(--chip-border);
@@ -555,7 +557,7 @@ body.high-contrast .tile.absent {
   font-weight: 600;
   font-size: 0.9rem;
   cursor: pointer;
-  min-width: var(--touch-target-min);
+  min-width: 2rem;
   min-height: max(var(--touch-target-min), clamp(2.4rem, 7vw, 3.2rem));
   transition: transform 0.1s ease, background 0.15s ease;
   touch-action: manipulation;
