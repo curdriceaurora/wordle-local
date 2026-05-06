@@ -310,6 +310,19 @@
                 <tbody id="runtimeSourcesBody"></tbody>
               </table>
             </div>
+            <h4>Restart-required settings (read-only)</h4>
+            <p class="note">These values are set via environment variables and cannot be changed without a server restart.</p>
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Restart-required settings table">
+                <thead>
+                  <tr>
+                    <th>Setting</th>
+                    <th>Effective value</th>
+                  </tr>
+                </thead>
+                <tbody id="runtimeLockedBody"></tbody>
+              </table>
+            </div>
           </section>
 
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>

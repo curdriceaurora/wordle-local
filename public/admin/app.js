@@ -37,6 +37,7 @@ const runtimePerfLoggingEl = document.getElementById("runtimePerfLogging");
 const resetRuntimeBtnEl = document.getElementById("resetRuntimeBtn");
 const runtimeStatusEl = document.getElementById("runtimeStatus");
 const runtimeSourcesBodyEl = document.getElementById("runtimeSourcesBody");
+const runtimeLockedBodyEl = document.getElementById("runtimeLockedBody");
 
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
@@ -464,6 +465,48 @@ function renderRuntimeSources() {
   runtimeSourcesBodyEl.appendChild(fragment);
 }
 
+function renderLockedSettings() {
+  if (!runtimeLockedBodyEl) {
+    return;
+  }
+  runtimeLockedBodyEl.innerHTML = "";
+
+  const runtime = state.runtimeConfig;
+  if (!runtime || typeof runtime !== "object") {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 2;
+    cell.textContent = "Runtime config is not loaded yet.";
+    row.appendChild(cell);
+    runtimeLockedBodyEl.appendChild(row);
+    return;
+  }
+
+  const sec = runtime.effective?.security || {};
+  const srv = runtime.effective?.server || {};
+  const rows = [
+    { key: "security.trustProxy", value: sec.trustProxy },
+    { key: "security.trustProxyHops", value: sec.trustProxyHops },
+    { key: "security.requireAdminKey", value: sec.requireAdminKey },
+    { key: "server.jsonBodyLimit", value: srv.jsonBodyLimit },
+    { key: "server.rateLimitWindowMs", value: srv.rateLimitWindowMs },
+    { key: "server.rateLimitMax", value: srv.rateLimitMax },
+    { key: "server.adminRateLimitWindowMs", value: srv.adminRateLimitWindowMs },
+    { key: "server.adminRateLimitMax", value: srv.adminRateLimitMax },
+    { key: "server.adminWriteRateLimitWindowMs", value: srv.adminWriteRateLimitWindowMs },
+    { key: "server.adminWriteRateLimitMax", value: srv.adminWriteRateLimitMax }
+  ];
+
+  const fragment = document.createDocumentFragment();
+  rows.forEach((entry) => {
+    const row = document.createElement("tr");
+    appendCell(row, entry.key);
+    appendCell(row, entry.value ?? "-");
+    fragment.appendChild(row);
+  });
+  runtimeLockedBodyEl.appendChild(fragment);
+}
+
 function populateRuntimeFormFromState() {
   const runtime = state.runtimeConfig;
   if (!runtime) {
@@ -525,6 +568,7 @@ function renderWorkspace() {
   renderProviders();
   renderJobs();
   renderRuntimeSources();
+  renderLockedSettings();
 }
 
 function scheduleQueueRefresh() {
