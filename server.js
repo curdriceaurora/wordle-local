@@ -70,7 +70,9 @@ const PUBLIC_ROOT = path.join(__dirname, "public");
 const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
 const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
 const DICT_PATH = path.join(DATA_ROOT, "dictionaries");
-const PROVIDERS_ROOT = process.env.PROVIDERS_ROOT || path.join(DATA_ROOT, "providers");
+const PROVIDERS_ROOT = process.env.PROVIDERS_ROOT
+  ? path.resolve(process.env.PROVIDERS_ROOT)
+  : path.join(DATA_ROOT, "providers");
 const EN_DEFINITIONS_PATH = path.join(DICT_PATH, "en-definitions.json");
 const EN_DEFINITIONS_INDEX_DIR = path.join(DICT_PATH, "en-definitions-index");
 const EN_DEFINITIONS_INDEX_MANIFEST_PATH = path.join(EN_DEFINITIONS_INDEX_DIR, "manifest.json");
@@ -907,11 +909,11 @@ function listImportableProviderCommits(variant) {
     .map((entry) => entry.name)
     .filter((commit) => PROVIDER_COMMIT_PATTERN.test(commit))
     .filter((commit) => {
-      const paths = buildProviderArtifactPaths(variant, commit);
-      const hasGuessPool = fs.existsSync(path.join(DATA_ROOT, paths.guessPool));
-      const hasAnswerPool = fs.existsSync(path.join(DATA_ROOT, paths.answerPoolActive))
-        || fs.existsSync(path.join(DATA_ROOT, paths.answerPoolFallback));
-      const hasManifest = fs.existsSync(path.join(DATA_ROOT, paths.sourceManifest));
+      const base = (p) => path.join(PROVIDERS_ROOT, variant, commit, p);
+      const hasGuessPool = fs.existsSync(base("guess-pool.txt"));
+      const hasAnswerPool = fs.existsSync(base("answer-pool-active.txt"))
+        || fs.existsSync(base("answer-pool.txt"));
+      const hasManifest = fs.existsSync(base("source-manifest.json"));
       return hasGuessPool && hasAnswerPool && hasManifest;
     })
     // Commits are lowercase hex strings; code-point sort keeps ordering deterministic across locales.
@@ -2024,7 +2026,22 @@ app.disable("x-powered-by");
 if (TRUST_PROXY) {
   app.set("trust proxy", TRUST_PROXY_HOPS);
 }
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      fontSrc: ["'self'", "https:", "data:"],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'none'"],
+      styleSrc: ["'self'", "https:", "'unsafe-inline'"]
+    }
+  }
+}));
 app.use(
   rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,

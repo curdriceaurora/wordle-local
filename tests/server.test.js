@@ -1715,16 +1715,20 @@ describe("Admin auth", () => {
 
   test("returns 404 when enabling provider variant without imported artifacts", async () => {
     const emptyProvidersRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-providers-"));
-    await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
-      const app = loadApp({ adminKey: "secret", providersRoot: emptyProvidersRoot });
-      const response = await request(app)
-        .post("/api/admin/providers/en-US/enable")
-        .set("x-admin-key", "secret")
-        .send({});
+    try {
+      await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
+        const app = loadApp({ adminKey: "secret", providersRoot: emptyProvidersRoot });
+        const response = await request(app)
+          .post("/api/admin/providers/en-US/enable")
+          .set("x-admin-key", "secret")
+          .send({});
 
-      expect(response.status).toBe(404);
-      expect(response.body.error).toMatch(/No imported provider artifacts/i);
-    });
+        expect(response.status).toBe(404);
+        expect(response.body.error).toMatch(/No imported provider artifacts/i);
+      });
+    } finally {
+      fs.rmSync(emptyProvidersRoot, { recursive: true, force: true });
+    }
   });
 
   test("returns 404 when disabling provider variant that is not in registry", async () => {
