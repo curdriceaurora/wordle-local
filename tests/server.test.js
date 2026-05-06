@@ -51,6 +51,7 @@ function loadApp(options = {}) {
           statsStorePath: options.statsStorePath,
           adminJobsStorePath: options.adminJobsStorePath,
           appConfigPath: options.appConfigPath,
+          providersRoot: options.providersRoot,
           clearRuntimeEnv: options.clearRuntimeEnv
         };
 
@@ -117,6 +118,11 @@ function loadApp(options = {}) {
     process.env.APP_CONFIG_PATH = opts.appConfigPath;
   } else {
     delete process.env.APP_CONFIG_PATH;
+  }
+  if (opts.providersRoot !== undefined) {
+    process.env.PROVIDERS_ROOT = opts.providersRoot;
+  } else {
+    delete process.env.PROVIDERS_ROOT;
   }
   if (opts.clearRuntimeEnv) {
     delete process.env.DEFINITIONS_MODE;
@@ -1708,8 +1714,9 @@ describe("Admin auth", () => {
   });
 
   test("returns 404 when enabling provider variant without imported artifacts", async () => {
+    const emptyProvidersRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-providers-"));
     await withTempLanguageRegistryContent(ORIGINAL_LANGUAGE_REGISTRY, async () => {
-      const app = loadApp({ adminKey: "secret" });
+      const app = loadApp({ adminKey: "secret", providersRoot: emptyProvidersRoot });
       const response = await request(app)
         .post("/api/admin/providers/en-US/enable")
         .set("x-admin-key", "secret")
