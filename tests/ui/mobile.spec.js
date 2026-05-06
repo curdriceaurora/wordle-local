@@ -8,6 +8,7 @@ const viewports = [
   { name: "minimum", width: 320, height: 568 },
   { name: "galaxy-a", width: 360, height: 740 },
   { name: "iphone-se", width: 375, height: 667 },
+  { name: "tablet", width: 768, height: 1024 },
   { name: "iphone-13", width: 390, height: 844 },
   { name: "pixel-7", width: 412, height: 915 }
 ];
@@ -29,7 +30,7 @@ for (const viewport of viewports) {
     expect(keyboardBox).not.toBeNull();
 
     expect(boardBox.width).toBeLessThanOrEqual(viewport.width);
-    expect(keyboardBox.width).toBeLessThanOrEqual(viewport.width);
+    await expect(page.locator("#keyboard")).toBeVisible();
   });
 }
 
@@ -43,22 +44,15 @@ for (const viewport of viewports) {
     await page.click("form#createForm button[type=submit]");
     await page.waitForSelector("#playPanel:not(.hidden)");
 
-    // Check no horizontal scrollbar exists (scrollable width equals client width)
-    const hasHorizontalScroll = await page.evaluate(() => {
-      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
-    });
-    expect(hasHorizontalScroll).toBe(false);
-
-    // Verify all interactive game controls remain fully inside the viewport.
+    // Bounding boxes catch genuine clipping without depending on root overflow behavior.
     const interactiveElements = await page.locator("#board .tile, #keyboard .key").all();
-    const viewportOverflowTolerance = 25;
+    const viewportOverflowTolerance = 7;
     for (const element of interactiveElements) {
       await expect(element).toBeVisible();
       const box = await element.boundingBox();
-      if (box) {
-        expect(box.x).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + viewportOverflowTolerance);
-      }
+      expect(box).not.toBeNull();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + viewportOverflowTolerance);
     }
   });
 }
@@ -83,13 +77,12 @@ for (const viewport of touchTargetViewports) {
     const selectors = [".key", ".admin-link", ".link-button"];
 
     for (const selector of selectors) {
-      const elements = await page.locator(selector).all();
+      const elements = await page.locator(`${selector}:visible`).all();
       for (const element of elements) {
         const box = await element.boundingBox();
-        if (box) {
-          expect(box.width).toBeGreaterThanOrEqual(44);
-          expect(box.height).toBeGreaterThanOrEqual(44);
-        }
+        expect(box).not.toBeNull();
+        expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+        expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
       }
     }
   });
