@@ -2024,11 +2024,7 @@ app.disable("x-powered-by");
 if (TRUST_PROXY) {
   app.set("trust proxy", TRUST_PROXY_HOPS);
 }
-app.use(
-  helmet({
-    contentSecurityPolicy: false
-  })
-);
+app.use(helmet());
 app.use(
   rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
