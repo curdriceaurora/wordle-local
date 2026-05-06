@@ -9,18 +9,10 @@
       "shardCacheSize": 6
     },
     "limits": {
-      "jsonBodyLimit": "12mb",
       "providerManualMaxFileBytes": 8388608
     },
-    "security": {
-      "trustProxy": null,
-      "trustProxyHops": null,
-      "adminRateLimit": {
-        "windowMs": 900000,
-        "max": 90,
-        "writeWindowMs": 900000,
-        "writeMax": 30
-      }
+    "diagnostics": {
+      "perfLogging": false
     }
   }
 }

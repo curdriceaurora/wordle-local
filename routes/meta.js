@@ -12,8 +12,8 @@ const express = require("express");
  * @param {number} deps.MAX_GUESSES - Maximum number of guesses
  * @param {number} deps.DEFAULT_GUESSES - Default number of guesses
  * @param {string} deps.DEFAULT_LANG - Default language code
- * @param {boolean} deps.PERF_LOGGING - Performance logging enabled
- * @param {string} deps.DEFINITIONS_MODE - Definitions mode configuration
+ * @param {Function} deps.isPerfLoggingEnabled - Returns whether performance logging is enabled
+ * @param {Function} deps.getDefinitionsMode - Returns current definitions mode configuration
  * @returns {express.Router} Express router
  */
 function createMetaRouter(deps) {
@@ -26,8 +26,8 @@ function createMetaRouter(deps) {
     MAX_GUESSES,
     DEFAULT_GUESSES,
     DEFAULT_LANG,
-    PERF_LOGGING,
-    DEFINITIONS_MODE
+    isPerfLoggingEnabled,
+    getDefinitionsMode
   } = deps;
 
   const router = express.Router();
@@ -51,8 +51,8 @@ function createMetaRouter(deps) {
       defaultGuesses: DEFAULT_GUESSES,
       languages,
       defaultLang,
-      perfLogging: PERF_LOGGING,
-      definitionsMode: DEFINITIONS_MODE
+      perfLogging: isPerfLoggingEnabled(),
+      definitionsMode: getDefinitionsMode()
     });
   });
 

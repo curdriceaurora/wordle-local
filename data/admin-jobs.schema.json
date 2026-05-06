@@ -88,6 +88,40 @@
         }
       }
     },
+    "manualUpload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dicFileName",
+        "affFileName",
+        "contentChecksums",
+        "stagedDicPath",
+        "stagedAffPath"
+      ],
+      "properties": {
+        "dicFileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+\\.dic$"
+        },
+        "affFileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+\\.aff$"
+        },
+        "contentChecksums": {
+          "$ref": "#/$defs/checksumPair"
+        },
+        "stagedDicPath": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "stagedAffPath": {
+          "$ref": "#/$defs/relativePath"
+        }
+      }
+    },
     "request": {
       "type": "object",
       "additionalProperties": false,
@@ -114,30 +148,7 @@
           "$ref": "#/$defs/checksumPair"
         },
         "manualUpload": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "dicFileName",
-            "affFileName",
-            "contentChecksums"
-          ],
-          "properties": {
-            "dicFileName": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 120,
-              "pattern": "^[A-Za-z0-9._-]+\\.dic$"
-            },
-            "affFileName": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 120,
-              "pattern": "^[A-Za-z0-9._-]+\\.aff$"
-            },
-            "contentChecksums": {
-              "$ref": "#/$defs/checksumPair"
-            }
-          }
+          "$ref": "#/$defs/manualUpload"
         }
       },
       "allOf": [
@@ -181,30 +192,7 @@
             ],
             "properties": {
               "manualUpload": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "dicFileName",
-                  "affFileName",
-                  "contentChecksums"
-                ],
-                "properties": {
-                  "dicFileName": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 120,
-                    "pattern": "^[A-Za-z0-9._-]+\\.dic$"
-                  },
-                  "affFileName": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 120,
-                    "pattern": "^[A-Za-z0-9._-]+\\.aff$"
-                  },
-                  "contentChecksums": {
-                    "$ref": "#/$defs/checksumPair"
-                  }
-                }
+                "$ref": "#/$defs/manualUpload"
               }
             }
           }

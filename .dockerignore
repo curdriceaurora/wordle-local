@@ -28,3 +28,5 @@ docker-compose.yml
 .idea
 *.log
 public/dist
+data/admin-jobs.json
+data/app-config.json
