@@ -53,6 +53,7 @@ test("shows local meaning when english puzzle is solved", async ({ page }) => {
   await page.fill("#wordInput", "CRANE");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.click("#board");
   await page.keyboard.type("CRANE");
   await page.keyboard.press("Enter");
   await expect(page.locator("#message")).toContainText("Solved in 1/6!");
@@ -157,6 +158,7 @@ test("theme selector persists explicit light and dark preferences", async ({ pag
   await expect(page.locator("html")).toHaveClass(/theme-light/);
 
   await page.reload(gotoOptions);
+  await waitForLanguages(page);
   await expect(page.locator("#themeSelect")).toHaveValue("light");
   await expect(page.locator("html")).toHaveClass(/theme-light/);
 
