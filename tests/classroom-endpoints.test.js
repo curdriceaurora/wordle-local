@@ -64,7 +64,7 @@ function makeTempState() {
   return { statsPath, classesPath, adminJobsPath, appConfigPath };
 }
 
-function loadFreshApp(adminKey, paths) {
+function loadFreshApp(adminKey, paths, extraEnv = {}) {
   jest.resetModules();
   resetEnv();
   process.env.ADMIN_KEY = adminKey;
@@ -75,6 +75,10 @@ function loadFreshApp(adminKey, paths) {
   process.env.RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_WRITE_RATE_LIMIT_MAX = "1000";
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (value === undefined || value === null) continue;
+    process.env[key] = String(value);
+  }
   return require("../server");
 }
 
@@ -259,6 +263,15 @@ describe("Classes API: bulk member add", () => {
       .send({ csv: "Alice,\"unbalanced" });
     expect(bad.status).toBe(400);
     expect(bad.body.error).toMatch(/parsed/);
+
+    // Non-delimiter character after a quoted field closes — must reject
+    // rather than concatenating.
+    const trailing = await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ csv: "\"Carol\"x\r\n" });
+    expect(trailing.status).toBe(400);
+    expect(trailing.body.parseErrors[0].message).toMatch(/closing quote/);
   });
 
   test("bulk-add to archived class is rejected with 409", async () => {
@@ -322,7 +335,14 @@ describe("Classes API: delete carve-out", () => {
 
 describe("Classes API: report and CSV", () => {
   function todayLocalIso() {
-    return new Date().toISOString().slice(0, 10);
+    // Match the server's getLocalDateString helper (server-local calendar
+    // date) so the report endpoint sees the same today value the test does
+    // around UTC day boundaries.
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 
   test("returns JSON report aggregating per-day status", async () => {
@@ -521,6 +541,48 @@ describe("Classes API: idempotent re-upload at capacity", () => {
     expect(second.status).toBe(200);
     expect(second.body.classMemberCount).toBe(4);
     expect(second.body.addedToClass).toEqual([]);
+  });
+
+  test("rejects bulk-add with 409 when it would exceed host profile cap", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths, { LEADERBOARD_MAX_PROFILES: "5" });
+
+    const a = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "First Cohort" });
+    const aClassId = a.body.class.id;
+    const fillRoster = await request(app)
+      .post(`/api/admin/classes/${aClassId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Una", "Doi", "Tre", "Pat", "Cin"] });
+    expect(fillRoster.status).toBe(200);
+    expect(fillRoster.body.classMemberCount).toBe(5);
+
+    const b = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Second Cohort" });
+    const bClassId = b.body.class.id;
+    const overflow = await request(app)
+      .post(`/api/admin/classes/${bClassId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Sex", "Sept"] });
+    expect(overflow.status).toBe(409);
+    expect(overflow.body.error).toMatch(/host profile cap/);
+
+    // The host stays at 5 — older profiles are NOT pruned to make room.
+    const stored = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    expect(stored.profiles).toHaveLength(5);
+    expect(stored.profiles.map((p) => p.name).sort()).toEqual(
+      ["Cin", "Doi", "Pat", "Tre", "Una"]
+    );
+
+    // The First Cohort roster is intact — no member dropped to make room.
+    const aDetail = await request(app)
+      .get(`/api/admin/classes/${aClassId}`)
+      .set("x-admin-key", "secret");
+    expect(aDetail.body.members).toHaveLength(5);
   });
 });
 

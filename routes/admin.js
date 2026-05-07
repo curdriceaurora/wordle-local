@@ -1186,20 +1186,40 @@ function createAdminRouter(deps) {
       });
     }
 
+    // Host-cap pre-check. Count names that would create truly new profiles
+    // (not in the leaderboard) and reject 409 if accepting the request
+    // would push the host past LEADERBOARD_MAX_PROFILES. Without this, the
+    // mutate path's normalizer would silently prune older profiles —
+    // including profiles owned by other classes — to make room.
+    let projectedNetNewProfiles = 0;
+    for (const name of normalizedNames) {
+      if (!existingProfileByLowerName.has(name.toLowerCase())) {
+        projectedNetNewProfiles += 1;
+      }
+    }
+    const hostCap = leaderboardStore.maxProfiles;
+    if (
+      Number.isInteger(hostCap)
+      && hostCap > 0
+      && leaderboardSnapshotForPrecheck.profiles.length + projectedNetNewProfiles > hostCap
+    ) {
+      return res.status(409).json({
+        error: `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
+      });
+    }
+
     // Resolve each name to an existing profile (case-insensitive match) or
     // create a new profile inside a single mutate so we never half-write.
-    // The mutate's normalizer can prune the oldest profiles past the
-    // leaderboard cap — including pre-existing class members — so we
-    // (1) filter the current bulk's resolved IDs against the surviving set
-    // before adding to the class, and (2) reconcile every class against the
-    // surviving set so previously-tracked members that were pruned away
-    // don't remain as dead references.
+    // The pre-check above bounds growth, but we re-validate inside the
+    // mutate to defend against concurrent bulk-adds: two requests that
+    // each pass the pre-check could still overflow when serialized. The
+    // throw aborts the mutate and rolls back the draft, so no profiles
+    // are persisted.
     const resolvedProfileIds = [];
-    const intendedReused = [];
-    const intendedCreated = [];
-    let persistedSnapshot;
+    const reusedProfileIds = [];
+    const createdProfileIds = [];
     try {
-      persistedSnapshot = await leaderboardStore.mutate((draft) => {
+      await leaderboardStore.mutate((draft) => {
         const nowIso = new Date().toISOString();
         const existingByLowerName = new Map(
           draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
@@ -1209,7 +1229,7 @@ function createAdminRouter(deps) {
           const existing = existingByLowerName.get(key);
           if (existing) {
             resolvedProfileIds.push(existing.id);
-            intendedReused.push(existing.id);
+            reusedProfileIds.push(existing.id);
             continue;
           }
           const created = {
@@ -1221,36 +1241,25 @@ function createAdminRouter(deps) {
           draft.profiles.push(created);
           existingByLowerName.set(key, created);
           resolvedProfileIds.push(created.id);
-          intendedCreated.push(created.id);
+          createdProfileIds.push(created.id);
+        }
+        if (Number.isInteger(hostCap) && hostCap > 0 && draft.profiles.length > hostCap) {
+          throw new ClassesStoreError(
+            "HOST_CAP_EXCEEDED",
+            `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
+          );
         }
       });
     } catch (err) {
+      if (err && err.code === "HOST_CAP_EXCEEDED") {
+        return res.status(409).json({ error: err.message });
+      }
       return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
-    }
-
-    const survivingProfileIds = new Set(
-      persistedSnapshot.profiles.map((profile) => profile.id)
-    );
-    const survivors = resolvedProfileIds.filter((id) => survivingProfileIds.has(id));
-    const droppedDueToCap = resolvedProfileIds.filter((id) => !survivingProfileIds.has(id));
-    const reusedProfileIds = intendedReused.filter((id) => survivingProfileIds.has(id));
-    const createdProfileIds = intendedCreated.filter((id) => survivingProfileIds.has(id));
-
-    // Reconcile every class against the persisted leaderboard so any
-    // pre-existing class member that the cap-pruner just dropped is
-    // removed from class rosters atomically. Without this, class
-    // detail/report could surface "(missing profile)" rows immediately
-    // after a successful bulk-add that crossed the cap.
-    let reconciliationDrops = [];
-    try {
-      reconciliationDrops = await classesStore.reconcileMissingProfiles(survivingProfileIds);
-    } catch (err) {
-      return handleClassesStoreError(res, err, "Class reconciliation after bulk add failed.");
     }
 
     let addOutcome;
     try {
-      addOutcome = await classesStore.addMembers(classId, survivors);
+      addOutcome = await classesStore.addMembers(classId, resolvedProfileIds);
     } catch (err) {
       // Race window: between the pre-check and addMembers, another admin
       // could have archived the class or filled the per-class cap. Roll back
@@ -1286,15 +1295,6 @@ function createAdminRouter(deps) {
       reusedProfileIds,
       classMemberCount: addOutcome.class.memberProfileIds.length
     };
-    if (droppedDueToCap.length > 0) {
-      responseBody.droppedDueToCap = droppedDueToCap.length;
-    }
-    if (reconciliationDrops.length > 0) {
-      responseBody.reconciledClasses = reconciliationDrops.map((entry) => ({
-        classId: entry.classId,
-        removedProfileIds: entry.removedProfileIds
-      }));
-    }
     return res.json(responseBody);
   });
 

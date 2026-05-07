@@ -1338,9 +1338,19 @@ function closeClassDetail() {
 async function loadClassDetail(classId) {
   if (!classDetailPanelEl) return;
   state.classMembersLoading = true;
+  // Stamp this request so out-of-order responses can be discarded. Two
+  // quick "Open" clicks could otherwise resolve in reverse order and
+  // leave the panel pinned to the wrong class.
+  const requestToken = (state.classDetailRequestToken || 0) + 1;
+  state.classDetailRequestToken = requestToken;
+  state.pendingClassDetailId = classId;
   setStatus(classDetailStatusEl, "Loading class…", "");
   try {
     const payload = await requestAdminJson(`/api/admin/classes/${encodeURIComponent(classId)}`);
+    if (state.classDetailRequestToken !== requestToken) {
+      // A newer request started before this one resolved — discard.
+      return;
+    }
     state.activeClassId = classId;
     state.activeClassDetail = payload;
     if (classDetailHeadingEl) {
@@ -1355,10 +1365,14 @@ async function loadClassDetail(classId) {
       "admin-status-ok"
     );
   } catch (err) {
+    if (state.classDetailRequestToken !== requestToken) return;
     setStatus(classDetailStatusEl, `Load failed: ${err.message}`, "admin-status-missing");
     throw err;
   } finally {
-    state.classMembersLoading = false;
+    if (state.classDetailRequestToken === requestToken) {
+      state.classMembersLoading = false;
+      state.pendingClassDetailId = null;
+    }
   }
 }
 
@@ -1971,6 +1985,14 @@ lockSessionBtnEl.addEventListener("click", () => {
   }
   if (classMembersBodyEl) classMembersBodyEl.innerHTML = "";
   if (classReportRenderedEl) classReportRenderedEl.innerHTML = "";
+  // Clear roster/class inputs so locking the session doesn't leave PII
+  // (names, dates) sitting in the DOM on a shared machine.
+  if (classCreateNameEl) classCreateNameEl.value = "";
+  if (classBulkAddNamesEl) classBulkAddNamesEl.value = "";
+  if (classReportFromEl) classReportFromEl.value = "";
+  if (classReportToEl) classReportToEl.value = "";
+  if (classReportLangEl) classReportLangEl.value = "";
+  if (classReportBomEl) classReportBomEl.checked = false;
   setStatus(profilesStatusEl, "");
   setStatus(profilesLimitsStatusEl, "");
   setStatus(classesStatusEl, "");
