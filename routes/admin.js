@@ -1319,9 +1319,29 @@ function createAdminRouter(deps) {
       return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
     }
 
+    // Cross-store race: between resolving resolvedProfileIds in the
+    // leaderboard mutate above and calling addMembers below, a concurrent
+    // admin DELETE /api/admin/stats/profile/:id (or a profile-merge) can
+    // remove one of those IDs from the leaderboard. Re-read a fresh
+    // leaderboard snapshot and filter resolvedProfileIds so we don't
+    // persist a class member id that no longer points at a real profile.
+    let membersToAdd = resolvedProfileIds;
+    try {
+      const recheck = await leaderboardStore.getSnapshot();
+      const liveIds = new Set(recheck.profiles.map((profile) => profile.id));
+      membersToAdd = resolvedProfileIds.filter((id) => liveIds.has(id));
+    } catch (recheckErr) {
+      console.warn(
+        `[admin] Bulk add could not revalidate profile IDs against the leaderboard; proceeding with the resolved set: ${recheckErr?.message || String(recheckErr)}`
+      );
+    }
+    const droppedDuringRecheck = resolvedProfileIds.filter(
+      (id) => !membersToAdd.includes(id)
+    );
+
     let addOutcome;
     try {
-      addOutcome = await classesStore.addMembers(classId, resolvedProfileIds);
+      addOutcome = await classesStore.addMembers(classId, membersToAdd);
     } catch (err) {
       // Race window: between the pre-check and addMembers, another admin
       // could have archived the class or filled the per-class cap. Roll back
@@ -1372,13 +1392,17 @@ function createAdminRouter(deps) {
       return handleClassesStoreError(res, err, "Bulk class add failed.");
     }
 
+    const droppedSet = new Set(droppedDuringRecheck);
     const responseBody = {
       ok: true,
       addedToClass: addOutcome.added,
-      createdProfileIds,
-      reusedProfileIds,
+      createdProfileIds: createdProfileIds.filter((id) => !droppedSet.has(id)),
+      reusedProfileIds: reusedProfileIds.filter((id) => !droppedSet.has(id)),
       classMemberCount: addOutcome.class.memberProfileIds.length
     };
+    if (droppedDuringRecheck.length > 0) {
+      responseBody.droppedDueToConcurrentDelete = droppedDuringRecheck;
+    }
     return res.json(responseBody);
   });
 
