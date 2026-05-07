@@ -52,6 +52,8 @@ function loadApp(options = {}) {
           adminJobsStorePath: options.adminJobsStorePath,
           appConfigPath: options.appConfigPath,
           providersRoot: options.providersRoot,
+          leaderboardMaxProfiles: options.leaderboardMaxProfiles,
+          leaderboardMaxResultsPerProfile: options.leaderboardMaxResultsPerProfile,
           clearRuntimeEnv: options.clearRuntimeEnv
         };
 
@@ -124,6 +126,16 @@ function loadApp(options = {}) {
   } else {
     delete process.env.PROVIDERS_ROOT;
   }
+  if (opts.leaderboardMaxProfiles !== undefined) {
+    process.env.LEADERBOARD_MAX_PROFILES = String(opts.leaderboardMaxProfiles);
+  } else {
+    delete process.env.LEADERBOARD_MAX_PROFILES;
+  }
+  if (opts.leaderboardMaxResultsPerProfile !== undefined) {
+    process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE = String(opts.leaderboardMaxResultsPerProfile);
+  } else {
+    delete process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE;
+  }
   if (opts.clearRuntimeEnv) {
     delete process.env.DEFINITIONS_MODE;
     delete process.env.LOW_MEMORY_DEFINITIONS;
@@ -131,6 +143,8 @@ function loadApp(options = {}) {
     delete process.env.DEFINITION_CACHE_TTL_MS;
     delete process.env.DEFINITION_SHARD_CACHE_SIZE;
     delete process.env.PROVIDER_MANUAL_MAX_FILE_BYTES;
+    delete process.env.LEADERBOARD_MAX_PROFILES;
+    delete process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE;
     delete process.env.PERF_LOGGING;
   }
 
@@ -2295,6 +2309,442 @@ describe("Stats API", () => {
       expect(stillExists.body.profile.name).toBe("Ben");
     } finally {
       tempStore.cleanup();
+    }
+  });
+
+  test("admin profiles list returns aggregated stats per profile", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const ben = await request(app).post("/api/stats/profile").send({ name: "Ben" });
+
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: false,
+        attempts: null,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ben.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      const unauthorized = await request(app).get("/api/admin/stats/profiles");
+      expect(unauthorized.status).toBe(401);
+
+      const response = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(response.status).toBe(200);
+      expect(response.body.ok).toBe(true);
+      expect(Array.isArray(response.body.profiles)).toBe(true);
+
+      const avaRow = response.body.profiles.find((row) => row.id === ava.body.playerId);
+      const benRow = response.body.profiles.find((row) => row.id === ben.body.playerId);
+      expect(avaRow.name).toBe("Ava");
+      expect(avaRow.stats.totalGames).toBe(2);
+      expect(avaRow.stats.wins).toBe(1);
+      expect(avaRow.stats.losses).toBe(1);
+      expect(avaRow.stats.winRate).toBeCloseTo(0.5, 5);
+      expect(avaRow.stats.averageWinningAttempts).toBeCloseTo(3, 5);
+      expect(typeof avaRow.stats.lastPlayedAt).toBe("string");
+      expect(benRow.stats.totalGames).toBe(1);
+      expect(benRow.stats.wins).toBe(1);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("admin delete profile requires matching confirmName and removes results", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+
+      const noConfirmedFlag = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmName: "Ava" });
+      expect(noConfirmedFlag.status).toBe(400);
+      expect(noConfirmedFlag.body.error).toMatch(/confirmed=true/);
+
+      const noConfirmName = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true });
+      expect(noConfirmName.status).toBe(400);
+      expect(noConfirmName.body.error).toMatch(/confirmName/);
+
+      const wrongConfirm = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true, confirmName: "Avery" });
+      expect(wrongConfirm.status).toBe(409);
+      expect(wrongConfirm.body.error).toMatch(/Profile name has changed/);
+
+      const missing = await request(app)
+        .delete("/api/admin/stats/profile/missing")
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true, confirmName: "anything" });
+      expect(missing.status).toBe(404);
+
+      const ok = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true, confirmName: "Ava" });
+      expect(ok.status).toBe(200);
+      expect(ok.body.deletedProfileId).toBe(ava.body.playerId);
+
+      const stored = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(stored.profiles.find((profile) => profile.id === ava.body.playerId)).toBeUndefined();
+      expect(stored.resultsByProfile[ava.body.playerId]).toBeUndefined();
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("admin merge profile applies canonical conflict policy and removes the source", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const avery = await request(app).post("/api/stats/profile").send({ name: "Avery" });
+
+      // Source: replayed twice with attempts=5 (higher submissionCount, but slower).
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 5,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 5,
+        maxGuesses: 6
+      });
+      // Target: a single faster win on the same daily key.
+      await request(app).post("/api/stats/result").send({
+        profileId: avery.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      // Source-only key should land in target.
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      const noTarget = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true });
+      expect(noTarget.status).toBe(400);
+
+      const noConfirm = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: avery.body.playerId });
+      expect(noConfirm.status).toBe(400);
+
+      const selfMerge = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: ava.body.playerId, confirmed: true });
+      expect(selfMerge.status).toBe(400);
+
+      const merged = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: avery.body.playerId, confirmed: true });
+      expect(merged.status).toBe(200);
+      expect(merged.body.deletedProfileId).toBe(ava.body.playerId);
+      expect(merged.body.mergedProfile.id).toBe(avery.body.playerId);
+
+      const stored = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(stored.profiles.find((profile) => profile.id === ava.body.playerId)).toBeUndefined();
+      expect(stored.resultsByProfile[ava.body.playerId]).toBeUndefined();
+      const targetResults = stored.resultsByProfile[avery.body.playerId];
+      // Canonical replay policy: both wins, prefer lower attempts (target's 3),
+      // sum submissionCount across both inputs (source 2 + target 1 = 3).
+      expect(targetResults["2026-02-20|en|abcde"].attempts).toBe(3);
+      expect(targetResults["2026-02-20|en|abcde"].submissionCount).toBe(3);
+      expect(targetResults["2026-02-21|en|fghij"]).toBeDefined();
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("PUT runtime-config rejects leaderboardMaxProfiles below current profile count", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/profile").send({ name: "Ben" });
+      await request(app).post("/api/stats/profile").send({ name: "Cal" });
+
+      const tooLow = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 2 } } });
+      expect(tooLow.status).toBe(409);
+      expect(tooLow.body.error).toMatch(/Cannot lower leaderboardMaxProfiles/);
+
+      const ok = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 50 } } });
+      expect(ok.status).toBe(200);
+      expect(ok.body.effective.limits.leaderboardMaxProfiles).toBe(50);
+      expect(ok.body.sources.limits.leaderboardMaxProfiles).toBe("override");
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config skips count check when LEADERBOARD_MAX_PROFILES env locks the cap", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        leaderboardMaxProfiles: 100
+      });
+      await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/profile").send({ name: "Ben" });
+      await request(app).post("/api/stats/profile").send({ name: "Cal" });
+
+      // Persisted override is below the live profile count, but env-locked so it cannot apply.
+      const allowed = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 2 } } });
+      expect(allowed.status).toBe(200);
+      expect(allowed.body.effective.limits.leaderboardMaxProfiles).toBe(100);
+      expect(allowed.body.sources.limits.leaderboardMaxProfiles).toBe("env");
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("LEADERBOARD_MAX_PROFILES out of bounds does not lock the override", async () => {
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        leaderboardMaxProfiles: 5000
+      });
+      const initial = await request(app)
+        .get("/api/admin/runtime-config")
+        .set("x-admin-key", "secret");
+      expect(initial.status).toBe(200);
+      // 5000 is out of bounds (max 1000), env clamps to default 20 and does NOT lock.
+      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(20);
+      expect(initial.body.sources.limits.leaderboardMaxProfiles).toBe("default");
+
+      const update = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 75 } } });
+      expect(update.status).toBe(200);
+      expect(update.body.effective.limits.leaderboardMaxProfiles).toBe(75);
+      expect(update.body.sources.limits.leaderboardMaxProfiles).toBe("override");
+    } finally {
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config awaits normalize before reporting a lowered result cap", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const profileId = profile.body.playerId;
+
+      // Seed five distinct daily results for the profile.
+      const dates = [
+        "2026-02-20",
+        "2026-02-21",
+        "2026-02-22",
+        "2026-02-23",
+        "2026-02-24"
+      ];
+      for (const date of dates) {
+        const dailyKey = `${date}|en|abcde`;
+        const submission = await request(app).post("/api/stats/result").send({
+          profileId,
+          dailyKey,
+          won: true,
+          attempts: 3,
+          maxGuesses: 6
+        });
+        expect(submission.status).toBe(200);
+      }
+
+      const before = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(before.status).toBe(200);
+      expect(before.body.profiles[0].stats.totalGames).toBe(5);
+
+      const lowered = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 2 } } });
+      expect(lowered.status).toBe(200);
+      expect(lowered.body.effective.limits.leaderboardMaxResultsPerProfile).toBe(2);
+
+      // No await between PUT and GET on the test side: the PUT must have
+      // already pruned in-memory state before responding.
+      const after = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(after.status).toBe(200);
+      expect(after.body.profiles[0].stats.totalGames).toBe(2);
+
+      const persisted = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(Object.keys(persisted.resultsByProfile[profileId])).toHaveLength(2);
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config returns 503 when post-cap-lower normalize fails", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/result").send({
+        profileId: profile.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: profile.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      // Force the next mutate to fail by making the leaderboard file path
+      // unwritable. The store opens its own descriptor each persist, so
+      // chmod-ing the directory is the cleanest cross-platform-ish trick.
+      const dir = path.dirname(tempStore.filePath);
+      fs.chmodSync(dir, 0o500);
+
+      let response;
+      try {
+        response = await request(app)
+          .put("/api/admin/runtime-config")
+          .set("x-admin-key", "secret")
+          .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 1 } } });
+        expect(response.status).toBe(503);
+      } finally {
+        fs.chmodSync(dir, 0o700);
+      }
+
+      // After the 503, GET should still report the previous (default) cap and
+      // the persisted app-config.json must NOT carry the failed override.
+      const after = await request(app)
+        .get("/api/admin/runtime-config")
+        .set("x-admin-key", "secret");
+      expect(after.status).toBe(200);
+      expect(after.body.effective.limits.leaderboardMaxResultsPerProfile).toBe(400);
+      expect(after.body.overrides.limits?.leaderboardMaxResultsPerProfile).toBeUndefined();
+      const persistedConfig = JSON.parse(fs.readFileSync(tempAdminState.configPath, "utf8"));
+      expect(persistedConfig.overrides.limits?.leaderboardMaxResultsPerProfile).toBeUndefined();
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config validates leaderboardMaxProfiles bounds and integer type", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+
+      const tooHigh = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 100000 } } });
+      expect(tooHigh.status).toBe(400);
+
+      const fractional = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 12.5 } } });
+      expect(fractional.status).toBe(400);
+
+      const invalidResults = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 0 } } });
+      expect(invalidResults.status).toBe(400);
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
     }
   });
 

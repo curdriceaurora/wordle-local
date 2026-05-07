@@ -76,6 +76,17 @@
   min-width: 5.6rem;
 }
 
+.admin-action-destructive {
+  border-color: var(--present);
+  color: var(--present);
+}
+
+.admin-action-destructive:hover,
+.admin-action-destructive:focus-visible {
+  background: var(--present);
+  color: var(--bg);
+}
+
 .admin-status-ok {
   color: var(--correct);
 }

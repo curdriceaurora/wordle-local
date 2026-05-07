@@ -105,6 +105,12 @@ function createAdminRouter(deps) {
     PROVIDER_MIN_LENGTH,
     PROVIDER_ID,
     PROVIDER_REPOSITORY,
+    LEADERBOARD_MAX_PROFILES_MIN,
+    LEADERBOARD_MAX_PROFILES_MAX,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    isLeaderboardMaxProfilesEnvLocked,
+    LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
     AppConfigStoreError
@@ -158,11 +164,145 @@ function createAdminRouter(deps) {
     }
   });
 
+  router.get("/api/admin/stats/profiles", async (req, res) => {
+    try {
+      const snapshot = await leaderboardStore.getSnapshot();
+      const profiles = snapshot.profiles.map((profile) => {
+        const results = snapshot.resultsByProfile?.[profile.id] || {};
+        let totalGames = 0;
+        let wins = 0;
+        let winningAttemptsSum = 0;
+        let winningAttemptsCount = 0;
+        let lastPlayedAt = null;
+
+        for (const entry of Object.values(results)) {
+          totalGames += 1;
+          if (entry.won === true) {
+            wins += 1;
+            if (Number.isInteger(entry.attempts)) {
+              winningAttemptsSum += entry.attempts;
+              winningAttemptsCount += 1;
+            }
+          }
+          if (entry.updatedAt && (!lastPlayedAt || entry.updatedAt > lastPlayedAt)) {
+            lastPlayedAt = entry.updatedAt;
+          }
+        }
+
+        return {
+          id: profile.id,
+          name: profile.name,
+          createdAt: profile.createdAt,
+          updatedAt: profile.updatedAt,
+          stats: {
+            totalGames,
+            wins,
+            losses: totalGames - wins,
+            winRate: totalGames > 0 ? wins / totalGames : 0,
+            // averageWinningAttempts is the meaningful metric — losses store
+            // attempts=null per schema, so any "average across all games"
+            // would either drop those rows or pretend a loss was 0 attempts.
+            averageWinningAttempts:
+              winningAttemptsCount > 0 ? winningAttemptsSum / winningAttemptsCount : 0,
+            lastPlayedAt
+          }
+        };
+      });
+      return res.json({ ok: true, profiles });
+    } catch (err) {
+      console.error("Admin profile list failed.", err);
+      return res.status(503).json({ error: "Profile list unavailable right now. Try again soon." });
+    }
+  });
+
+  router.delete("/api/admin/stats/profile/:id", async (req, res) => {
+    const profileId = String(req.params.id || "").trim();
+    if (!profileId) {
+      return res.status(400).json({ error: "Profile ID is required." });
+    }
+
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "confirmed=true is required to delete a profile."
+      });
+    }
+
+    const confirmName = typeof req.body?.confirmName === "string"
+      ? req.body.confirmName.trim()
+      : "";
+    if (!confirmName) {
+      return res.status(400).json({
+        error: "confirmName is required and must match the profile name exactly."
+      });
+    }
+
+    try {
+      await leaderboardStore.deleteProfile(profileId, { expectedName: confirmName });
+      return res.json({ ok: true, deletedProfileId: profileId });
+    } catch (err) {
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "PROFILE_NOT_FOUND") {
+          return res.status(404).json({ error: err.message });
+        }
+        if (err.code === "PROFILE_NAME_MISMATCH") {
+          return res.status(409).json({ error: err.message });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Admin profile delete failed.", err);
+      return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
+    }
+  });
+
+  router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
+    const sourceId = String(req.params.id || "").trim();
+    const targetId = typeof req.body?.targetProfileId === "string"
+      ? req.body.targetProfileId.trim()
+      : "";
+
+    if (!sourceId) {
+      return res.status(400).json({ error: "Source profile ID is required." });
+    }
+    if (!targetId) {
+      return res.status(400).json({ error: "targetProfileId is required." });
+    }
+    if (sourceId === targetId) {
+      return res.status(400).json({ error: "Cannot merge a profile into itself." });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "confirmed=true is required to merge profiles."
+      });
+    }
+
+    try {
+      const snapshot = await leaderboardStore.mergeProfiles(sourceId, targetId);
+      const mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
+      if (!mergedProfile) {
+        throw new Error("Failed to persist merged profile.");
+      }
+      return res.json({
+        ok: true,
+        mergedProfile,
+        deletedProfileId: sourceId
+      });
+    } catch (err) {
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "PROFILE_NOT_FOUND") {
+          return res.status(404).json({ error: err.message });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Admin profile merge failed.", err);
+      return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
+    }
+  });
+
   router.get("/api/admin/runtime-config", (req, res) => {
     return res.json(buildRuntimeConfigResponse());
   });
 
-  router.put("/api/admin/runtime-config", (req, res) => {
+  router.put("/api/admin/runtime-config", async (req, res) => {
     try {
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
@@ -177,12 +317,76 @@ function createAdminRouter(deps) {
           });
         }
       }
+
+      const requestedMaxProfiles = req.body?.overrides?.limits?.leaderboardMaxProfiles;
+      if (requestedMaxProfiles !== undefined) {
+        const parsed = Number(requestedMaxProfiles);
+        if (
+          !Number.isInteger(parsed)
+          || parsed < LEADERBOARD_MAX_PROFILES_MIN
+          || parsed > LEADERBOARD_MAX_PROFILES_MAX
+        ) {
+          return res.status(400).json({
+            error: `overrides.limits.leaderboardMaxProfiles must be an integer between ${LEADERBOARD_MAX_PROFILES_MIN} and ${LEADERBOARD_MAX_PROFILES_MAX}.`
+          });
+        }
+        // Skip the count check when the env locks the cap — the persisted
+        // override is dormant in that case, so it cannot orphan profiles.
+        if (!isLeaderboardMaxProfilesEnvLocked()) {
+          const snapshot = await leaderboardStore.getSnapshot();
+          if (parsed < snapshot.profiles.length) {
+            return res.status(409).json({
+              error: `Cannot lower leaderboardMaxProfiles to ${parsed}; ${snapshot.profiles.length} profiles are currently registered.`
+            });
+          }
+        }
+      }
+
+      const requestedMaxResults = req.body?.overrides?.limits?.leaderboardMaxResultsPerProfile;
+      if (requestedMaxResults !== undefined) {
+        const parsed = Number(requestedMaxResults);
+        if (
+          !Number.isInteger(parsed)
+          || parsed < LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN
+          || parsed > LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
+        ) {
+          return res.status(400).json({
+            error: `overrides.limits.leaderboardMaxResultsPerProfile must be an integer between ${LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN} and ${LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX}.`
+          });
+        }
+      }
+
+      // Snapshot the current overrides so a failed normalize can roll back
+      // both disk and in-memory state, keeping GET /api/admin/runtime-config
+      // honest about what the store is actually enforcing.
+      const previousOverrides = appConfigStore.getOverridesSync();
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
-      applyRuntimeConfig(nextState.overrides || {});
+      try {
+        await applyRuntimeConfig(nextState.overrides || {});
+      } catch (applyErr) {
+        try {
+          appConfigStore.replaceOverridesSync(previousOverrides);
+          applyRuntimeConfig(previousOverrides);
+        } catch (rollbackErr) {
+          console.error(
+            "[runtime-config] Rollback after apply failure also failed.",
+            rollbackErr
+          );
+        }
+        throw applyErr;
+      }
       return res.json(buildRuntimeConfigResponse());
     } catch (err) {
       if (err instanceof AppConfigStoreError && err.code === "INVALID_OVERRIDES") {
         return res.status(400).json({ error: err.message });
+      }
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "MAX_PROFILES_TOO_LOW") {
+          return res.status(409).json({ error: err.message });
+        }
+        if (err.code === "INVALID_REQUEST") {
+          return res.status(400).json({ error: err.message });
+        }
       }
       console.error("Runtime config update failed.", err);
       return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });

@@ -101,22 +101,28 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
       "shardCacheSize": 6
     },
     "limits": {
-      "jsonBodyLimit": "12mb",
-      "providerManualMaxFileBytes": 8388608
+      "providerManualMaxFileBytes": 8388608,
+      "leaderboardMaxProfiles": 50,
+      "leaderboardMaxResultsPerProfile": 400
     },
-    "security": {
-      "trustProxy": null,
-      "trustProxyHops": null,
-      "adminRateLimit": {
-        "windowMs": 900000,
-        "max": 90,
-        "writeWindowMs": 900000,
-        "writeMax": 30
-      }
+    "diagnostics": {
+      "perfLogging": false
     }
   }
 }
 ```
+
+Only the keys whitelisted by `data/app-config.schema.json` and `lib/app-config-store.js` round-trip through `PUT /api/admin/runtime-config`. Anything outside that allowlist (security, body-size limits, deployment-scoped values) stays env-controlled.
+
+## Persisted Override Keys (`overrides.limits`)
+
+| Key | Bounds | Notes |
+| --- | --- | --- |
+| `providerManualMaxFileBytes` | 1 MiB – 32 MiB | Capped by `JSON_BODY_LIMIT`. Env: `PROVIDER_MANUAL_MAX_FILE_BYTES`. |
+| `leaderboardMaxProfiles` | 1 – 1000 | Lowering below current registered profile count is rejected (`409`). Env: `LEADERBOARD_MAX_PROFILES`. |
+| `leaderboardMaxResultsPerProfile` | 1 – 10000 | Excess results are pruned (oldest first) on next mutation. Env: `LEADERBOARD_MAX_RESULTS_PER_PROFILE`. |
+
+Whitelisted keys must round-trip the schema (`data/app-config.schema.json`) and the `normalizeLimitsOverrides` validator (`lib/app-config-store.js`). For the leaderboard caps, an env value only locks the corresponding override key when it parses to an integer that falls inside the documented bounds — out-of-range or non-integer env values warn at startup, fall back to defaults, and leave admin overrides editable so operators can correct the lock.
 
 ## Re-entry Criteria For Deferred Work
 - `#9` queue work resumes only if import concurrency/reliability requirements exceed single-import mutex behavior.

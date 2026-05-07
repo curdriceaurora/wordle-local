@@ -5,7 +5,12 @@ const path = require("path");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
+const {
+  LeaderboardStore,
+  LeaderboardStoreError,
+  parseDailyKey,
+  PROFILE_NAME_PATTERN
+} = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
@@ -61,6 +66,45 @@ const ENV_DEFINITION_SHARD_CACHE_SIZE = parsePositiveInteger(
 const ENV_PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
   process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
   8 * 1024 * 1024
+);
+const LEADERBOARD_MAX_PROFILES_MIN = 1;
+const LEADERBOARD_MAX_PROFILES_MAX = 1000;
+const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN = 1;
+const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX = 10000;
+
+function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
+  if (rawValue === undefined) {
+    return defaultValue;
+  }
+  const numeric = Number(rawValue);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    console.warn(
+      `${envName}=${String(rawValue)} is not a positive integer; using default ${defaultValue}.`
+    );
+    return defaultValue;
+  }
+  if (numeric < min || numeric > max) {
+    console.warn(
+      `${envName}=${String(rawValue)} is outside the documented range (${min}-${max}); using default ${defaultValue}.`
+    );
+    return defaultValue;
+  }
+  return numeric;
+}
+
+const ENV_LEADERBOARD_MAX_PROFILES = clampEnvBounded(
+  process.env.LEADERBOARD_MAX_PROFILES,
+  20,
+  LEADERBOARD_MAX_PROFILES_MIN,
+  LEADERBOARD_MAX_PROFILES_MAX,
+  "LEADERBOARD_MAX_PROFILES"
+);
+const ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE = clampEnvBounded(
+  process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE,
+  400,
+  LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+  LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+  "LEADERBOARD_MAX_RESULTS_PER_PROFILE"
 );
 const ENV_PERF_LOGGING = process.env.PERF_LOGGING === "true";
 
@@ -139,7 +183,11 @@ const INDEX_LOOKUP_UNAVAILABLE = Symbol("index-lookup-unavailable");
 let fullEnglishDefinitions = null;
 let englishDefinitionIndexManifest = null;
 let hasWarnedAboutDefinitionIndex = false;
-const leaderboardStore = new LeaderboardStore({ filePath: LEADERBOARD_DATA_PATH });
+const leaderboardStore = new LeaderboardStore({
+  filePath: LEADERBOARD_DATA_PATH,
+  maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
+  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
+});
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -216,6 +264,14 @@ function hasValidNonNegativeIntegerEnv(name) {
   return Number.isInteger(parsed) && parsed >= 0;
 }
 
+function hasValidBoundedPositiveIntegerEnv(name, min, max) {
+  if (process.env[name] === undefined) {
+    return false;
+  }
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max;
+}
+
 const ENV_CONFIG = Object.freeze({
   definitions: Object.freeze({
     mode: ENV_DEFINITIONS_MODE,
@@ -224,7 +280,9 @@ const ENV_CONFIG = Object.freeze({
     shardCacheSize: ENV_DEFINITION_SHARD_CACHE_SIZE
   }),
   limits: Object.freeze({
-    providerManualMaxFileBytes: ENV_PROVIDER_MANUAL_MAX_FILE_BYTES
+    providerManualMaxFileBytes: ENV_PROVIDER_MANUAL_MAX_FILE_BYTES,
+    leaderboardMaxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
+    leaderboardMaxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
   }),
   diagnostics: Object.freeze({
     perfLogging: ENV_PERF_LOGGING
@@ -239,7 +297,17 @@ const ENV_CONFIG_LOCKS = Object.freeze({
     shardCacheSize: hasValidPositiveIntegerEnv("DEFINITION_SHARD_CACHE_SIZE")
   }),
   limits: Object.freeze({
-    providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES")
+    providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES"),
+    leaderboardMaxProfiles: hasValidBoundedPositiveIntegerEnv(
+      "LEADERBOARD_MAX_PROFILES",
+      LEADERBOARD_MAX_PROFILES_MIN,
+      LEADERBOARD_MAX_PROFILES_MAX
+    ),
+    leaderboardMaxResultsPerProfile: hasValidBoundedPositiveIntegerEnv(
+      "LEADERBOARD_MAX_RESULTS_PER_PROFILE",
+      LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+      LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
+    )
   }),
   diagnostics: Object.freeze({
     perfLogging: process.env.PERF_LOGGING !== undefined
@@ -258,6 +326,12 @@ const runtimeConfigState = {
     },
     limits: {
       providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default",
+      leaderboardMaxProfiles: ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+        ? "env"
+        : "default",
+      leaderboardMaxResultsPerProfile: ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
         ? "env"
         : "default"
     },
@@ -286,6 +360,12 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
     },
     limits: {
       providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default",
+      leaderboardMaxProfiles: ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+        ? "env"
+        : "default",
+      leaderboardMaxResultsPerProfile: ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
         ? "env"
         : "default"
     },
@@ -324,6 +404,22 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
     sources.limits.providerManualMaxFileBytes = "override";
   }
   if (
+    !ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+    && overrides.limits?.leaderboardMaxProfiles !== undefined
+  ) {
+    effective.limits.leaderboardMaxProfiles = Number(overrides.limits.leaderboardMaxProfiles);
+    sources.limits.leaderboardMaxProfiles = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
+    && overrides.limits?.leaderboardMaxResultsPerProfile !== undefined
+  ) {
+    effective.limits.leaderboardMaxResultsPerProfile = Number(
+      overrides.limits.leaderboardMaxResultsPerProfile
+    );
+    sources.limits.leaderboardMaxResultsPerProfile = "override";
+  }
+  if (
     !ENV_CONFIG_LOCKS.diagnostics.perfLogging
     && overrides.diagnostics?.perfLogging !== undefined
   ) {
@@ -337,7 +433,38 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
 function applyRuntimeConfig(overrides) {
   const previousMode = runtimeConfigState.effective.definitions.mode;
   const previousShardCacheSize = runtimeConfigState.effective.definitions.shardCacheSize;
+  const previousMaxResultsPerProfile =
+    runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile;
   const next = resolveRuntimeConfigFromOverrides(overrides);
+
+  // Apply leaderboard limits to the store first; if it fails (e.g. a hand-edited
+  // app-config sets a cap below the current profile count), keep the previously
+  // effective limits in the runtime snapshot so /api/admin/runtime-config does
+  // not advertise a value the store is not actually enforcing.
+  let limitsApplied = true;
+  try {
+    leaderboardStore.setLimits({
+      maxProfiles: next.effective.limits.leaderboardMaxProfiles,
+      maxResultsPerProfile: next.effective.limits.leaderboardMaxResultsPerProfile
+    });
+  } catch (err) {
+    limitsApplied = false;
+    console.warn(
+      `[runtime-config] Could not apply leaderboard limits: ${err?.message || String(err)}`
+    );
+    next.effective.limits = {
+      ...next.effective.limits,
+      leaderboardMaxProfiles: runtimeConfigState.effective.limits.leaderboardMaxProfiles,
+      leaderboardMaxResultsPerProfile:
+        runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
+    };
+    next.sources.limits = {
+      ...next.sources.limits,
+      leaderboardMaxProfiles: runtimeConfigState.sources.limits.leaderboardMaxProfiles,
+      leaderboardMaxResultsPerProfile:
+        runtimeConfigState.sources.limits.leaderboardMaxResultsPerProfile
+    };
+  }
 
   runtimeConfigState.overrides = next.overrides;
   runtimeConfigState.effective = next.effective;
@@ -363,6 +490,21 @@ function applyRuntimeConfig(overrides) {
       definitionShardCache.delete(oldestKey);
     }
   }
+
+  // If the per-profile result cap was lowered, force a noop mutate so existing
+  // in-memory results past the new cap are pruned-and-persisted right away.
+  // Return the unhandled promise so callers can decide: admin PUT awaits it
+  // and lets a rejection surface as 503; boot wraps its own .catch so a
+  // pruning failure logs but doesn't crash the process.
+  if (
+    limitsApplied
+    && runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
+      < previousMaxResultsPerProfile
+  ) {
+    return leaderboardStore.mutate(() => {});
+  }
+
+  return undefined;
 }
 
 function getRuntimeConfigSnapshot() {
@@ -858,12 +1000,20 @@ const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
 
 function initializeRuntimeConfig() {
+  let normalizePromise;
   try {
     const snapshot = appConfigStore.loadSync();
-    applyRuntimeConfig(snapshot.overrides || {});
+    normalizePromise = applyRuntimeConfig(snapshot.overrides || {});
   } catch (err) {
     console.error("Failed to load app config overrides. Falling back to environment defaults.", err);
-    applyRuntimeConfig({});
+    normalizePromise = applyRuntimeConfig({});
+  }
+  if (normalizePromise && typeof normalizePromise.catch === "function") {
+    normalizePromise.catch((err) => {
+      console.warn(
+        `[runtime-config] Could not normalize leaderboard at boot: ${err?.message || String(err)}`
+      );
+    });
   }
 }
 
@@ -2013,6 +2163,14 @@ function buildRuntimeConfigResponse() {
         providerManualMaxFileBytes: {
           min: PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
           max: editableProviderManualMaxFileBytes
+        },
+        leaderboardMaxProfiles: {
+          min: LEADERBOARD_MAX_PROFILES_MIN,
+          max: LEADERBOARD_MAX_PROFILES_MAX
+        },
+        leaderboardMaxResultsPerProfile: {
+          min: LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+          max: LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
         }
       },
       diagnostics: {
@@ -2166,6 +2324,14 @@ app.use(
     PROVIDER_MIN_LENGTH,
     PROVIDER_ID,
     PROVIDER_REPOSITORY,
+    LEADERBOARD_MAX_PROFILES_MIN,
+    LEADERBOARD_MAX_PROFILES_MAX,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    isLeaderboardMaxProfilesEnvLocked: () => ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles,
+    isLeaderboardMaxResultsPerProfileEnvLocked: () =>
+      ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile,
+    LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
     AppConfigStoreError

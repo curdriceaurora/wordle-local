@@ -686,7 +686,7 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
 
   const providersTab = page.locator("#admin-tab-providers");
   const importsTab = page.locator("#admin-tab-imports");
-  const runtimeTab = page.locator("#admin-tab-runtime");
+  const profilesTab = page.locator("#admin-tab-profiles");
 
   await providersTab.focus();
   await page.keyboard.press("ArrowRight");
@@ -695,12 +695,197 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
   await expect(page.locator("#admin-panel-imports")).toBeVisible();
 
   await page.keyboard.press("End");
-  await expect(runtimeTab).toBeFocused();
-  await expect(runtimeTab).toHaveAttribute("aria-selected", "true");
+  await expect(profilesTab).toBeFocused();
+  await expect(profilesTab).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Home");
   await expect(providersTab).toBeFocused();
   await expect(providersTab).toHaveAttribute("aria-selected", "true");
+});
+
+test("admin shell profiles tab supports rename, merge, and delete flows", async ({ page }) => {
+  const baseProviderState = { imported: false, enabled: false, commit: "" };
+  const profileFixtures = [
+    {
+      id: "ava",
+      name: "Ava",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      stats: {
+        totalGames: 4,
+        wins: 3,
+        losses: 1,
+        winRate: 0.75,
+        averageWinningAttempts: 3.5,
+        lastPlayedAt: "2026-02-25T18:00:00.000Z"
+      }
+    },
+    {
+      id: "ben",
+      name: "Ben",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      stats: {
+        totalGames: 2,
+        wins: 1,
+        losses: 1,
+        winRate: 0.5,
+        averageWinningAttempts: 5,
+        lastPlayedAt: "2026-02-24T20:00:00.000Z"
+      }
+    }
+  ];
+  let profilesState = profileFixtures.map((entry) => ({
+    ...entry,
+    stats: { ...entry.stats }
+  }));
+
+  await page.route("**/api/admin/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, providers: createProviderRows(baseProviderState) })
+    });
+  });
+  await page.route("**/api/admin/jobs?limit=30", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        queue: { active: false, queued: 0, running: 0, succeeded: 0, failed: 0, canceled: 0 },
+        jobs: []
+      })
+    });
+  });
+  await page.route("**/api/admin/runtime-config", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        effective: {
+          definitions: { mode: "memory", cacheSize: 512, cacheTtlMs: 1800000, shardCacheSize: 6 },
+          limits: {
+            providerManualMaxFileBytes: 8388608,
+            leaderboardMaxProfiles: 20,
+            leaderboardMaxResultsPerProfile: 400
+          },
+          diagnostics: { perfLogging: false }
+        },
+        overrides: {},
+        sources: {
+          definitions: {
+            mode: "default",
+            cacheSize: "default",
+            cacheTtlMs: "default",
+            shardCacheSize: "default"
+          },
+          limits: {
+            providerManualMaxFileBytes: "default",
+            leaderboardMaxProfiles: "default",
+            leaderboardMaxResultsPerProfile: "default"
+          },
+          diagnostics: { perfLogging: "default" }
+        }
+      })
+    });
+  });
+  await page.route("**/api/admin/stats/profiles", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, profiles: profilesState })
+    });
+  });
+
+  let renameRequest = null;
+  let mergeRequest = null;
+  let deleteRequest = null;
+  await page.route("**/api/admin/stats/profile/*", async (route) => {
+    const url = new URL(route.request().url());
+    const segments = url.pathname.split("/");
+    const profileId = segments[segments.length - 1];
+    const method = route.request().method();
+
+    if (method === "PATCH") {
+      renameRequest = JSON.parse(route.request().postData() || "{}");
+      profilesState = profilesState.map((profile) =>
+        profile.id === profileId ? { ...profile, name: renameRequest.name } : profile
+      );
+      const updated = profilesState.find((profile) => profile.id === profileId);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, profile: updated })
+      });
+      return;
+    }
+
+    if (method === "DELETE") {
+      deleteRequest = { profileId, body: JSON.parse(route.request().postData() || "{}") };
+      profilesState = profilesState.filter((profile) => profile.id !== profileId);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, deletedProfileId: profileId })
+      });
+      return;
+    }
+
+    await route.continue();
+  });
+
+  await page.route("**/api/admin/stats/profile/*/merge", async (route) => {
+    const url = new URL(route.request().url());
+    const segments = url.pathname.split("/");
+    const sourceId = segments[segments.length - 2];
+    mergeRequest = JSON.parse(route.request().postData() || "{}");
+    const target = profilesState.find((profile) => profile.id === mergeRequest.targetProfileId);
+    profilesState = profilesState.filter((profile) => profile.id !== sourceId);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        deletedProfileId: sourceId,
+        mergedProfile: target
+      })
+    });
+  });
+
+  await page.addInitScript(() => {
+    window.__promptResponses = ["Avery", "Ben", "Ben"];
+    window.prompt = () => window.__promptResponses.shift() ?? null;
+    window.confirm = () => true;
+  });
+
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  await page.click("#admin-tab-profiles");
+  await expect(page.locator("#admin-panel-profiles")).toBeVisible();
+  await expect(page.locator("#profilesBody tr")).toHaveCount(2);
+
+  // Rename Ava -> Avery (first prompt response).
+  await page.locator("#profilesBody tr[data-profile-id='ava'] button[data-action='rename-profile']").click();
+  await expect(page.locator("#profilesStatus")).toContainText("Renamed to \"Avery\".");
+  expect(renameRequest).toEqual({ name: "Avery" });
+  await expect(page.locator("#profilesBody tr[data-profile-id='ava'] td").first()).toHaveText("Avery");
+
+  // Merge Avery -> Ben (second prompt response = target name).
+  await page.locator("#profilesBody tr[data-profile-id='ava'] button[data-action='merge-profile']").click();
+  await expect(page.locator("#profilesStatus")).toContainText("Merged \"Avery\" into \"Ben\".");
+  expect(mergeRequest).toEqual({ targetProfileId: "ben", confirmed: true });
+  await expect(page.locator("#profilesBody tr")).toHaveCount(1);
+
+  // Delete Ben (third prompt response = exact name match).
+  await page.locator("#profilesBody tr[data-profile-id='ben'] button[data-action='delete-profile']").click();
+  await expect(page.locator("#profilesStatus")).toContainText("Deleted \"Ben\".");
+  expect(deleteRequest).toEqual({ profileId: "ben", body: { confirmName: "Ben", confirmed: true } });
+  await expect(page.locator("#profilesBody td")).toHaveText("No player profiles yet.");
 });
 
 test("admin shell passes axe checks in locked and unlocked states", async ({ page }) => {
