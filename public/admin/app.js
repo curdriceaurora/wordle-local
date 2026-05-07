@@ -83,6 +83,16 @@ const backupRestoreFileEl = document.getElementById("backupRestoreFile");
 const backupRestorePreviewBtnEl = document.getElementById("backupRestorePreviewBtn");
 const backupRestoreStatusEl = document.getElementById("backupRestoreStatus");
 const backupRestoreDialogEl = document.getElementById("backupRestoreDialog");
+const backupRestoreDialogFormEl = document.getElementById("backupRestoreDialogForm");
+if (backupRestoreDialogFormEl) {
+  // Helmet's CSP (script-src-attr 'none') blocks inline event handlers,
+  // so we wire the submit preventDefault here. Pressing Enter in the
+  // confirmation field would otherwise close the dialog and bypass the
+  // typed-confirmation gate.
+  backupRestoreDialogFormEl.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+}
 const backupRestorePreviewSummaryEl = document.getElementById("backupRestorePreviewSummary");
 const backupRestoreConfirmInputEl = document.getElementById("backupRestoreConfirmInput");
 const backupRestoreCancelBtnEl = document.getElementById("backupRestoreCancelBtn");
@@ -2088,20 +2098,35 @@ function renderBackupPreviewSummary(payload) {
   if (!backupRestorePreviewSummaryEl) return;
   const fileCount = Array.isArray(payload.files) ? payload.files.length : 0;
   const total = formatBytes(payload.totalBytes);
-  const lines = [
-    `Manifest version: ${payload.manifestVersion}`,
-    `App version: ${payload.appVersion}`,
-    `Created: ${payload.createdAt}`,
-    `Node id: ${payload.nodeId}`,
-    `Files: ${fileCount} (${total} total)`
+  const rows = [
+    ["Manifest version", payload.manifestVersion],
+    ["App version", payload.appVersion],
+    ["Created", payload.createdAt],
+    ["Node id", payload.nodeId],
+    ["Files", `${fileCount} (${total} total)`]
   ];
-  backupRestorePreviewSummaryEl.textContent = lines.join("\n");
+  // Render as a definition list so the entries lay out one-per-row
+  // without depending on whitespace CSS for the line breaks. Plain
+  // textContent collapses newlines because the .message class
+  // doesn't set white-space: pre-wrap.
+  backupRestorePreviewSummaryEl.innerHTML = "";
+  const list = document.createElement("dl");
+  list.className = "backup-preview-summary";
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = String(value);
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
+  backupRestorePreviewSummaryEl.appendChild(list);
 }
 
 function resetRestoreDialog() {
   if (backupRestoreConfirmInputEl) backupRestoreConfirmInputEl.value = "";
   if (backupRestoreApplyBtnEl) backupRestoreApplyBtnEl.disabled = true;
-  if (backupRestorePreviewSummaryEl) backupRestorePreviewSummaryEl.textContent = "";
+  if (backupRestorePreviewSummaryEl) backupRestorePreviewSummaryEl.innerHTML = "";
   pendingRestoreFile = null;
 }
 

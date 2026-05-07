@@ -2466,7 +2466,24 @@ function limitAdminWrites(req, res, next) {
 // during export would tear the archive. The window is short (seconds)
 // and admin-initiated. The backup endpoints themselves are exempt
 // because they are the operations holding the lock.
-const DATA_LOCK_EXEMPT_PATHS = ["/api/admin/backup", "/api/admin/restore"];
+// Paths that should NOT be 503'd while the data lock is held. Two
+// categories:
+//   1. The backup/restore endpoints themselves (they own the lock).
+//   2. Stateless gameplay POSTs that compute responses without
+//      writing to data/. Without these exemptions, players see
+//      failed guesses during long provider-inclusive exports — even
+//      though the gameplay calls don't touch the files restore is
+//      swapping. /api/stats/result IS NOT exempt: it persists the
+//      day's result via leaderboardStore.mutate which honors the
+//      mutate barrier already.
+const DATA_LOCK_EXEMPT_PATHS = [
+  "/api/admin/backup",
+  "/api/admin/restore",
+  "/api/encode",
+  "/api/random",
+  "/api/puzzle",
+  "/api/guess"
+];
 function isDataLockExemptPath(reqUrl) {
   if (typeof reqUrl !== "string") return false;
   // Strip query string if present.

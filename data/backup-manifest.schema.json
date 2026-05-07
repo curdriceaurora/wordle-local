@@ -65,7 +65,8 @@
         "schemaPath": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 256
+          "maxLength": 256,
+          "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"
         },
         "sha256": {
           "$ref": "#/$defs/sha256Hex"

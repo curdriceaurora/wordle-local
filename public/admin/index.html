@@ -621,8 +621,10 @@
               <!-- No method="dialog": pressing Enter in the confirmation
                    field would otherwise submit the form, close the dialog,
                    and bypass the typed-confirmation gate. The apply button
-                   handler runs explicitly on click. -->
-              <form id="backupRestoreDialogForm" onsubmit="return false;">
+                   handler runs explicitly on click. The submit
+                   preventDefault is wired via app.js (Helmet's
+                   script-src-attr 'none' blocks inline handlers). -->
+              <form id="backupRestoreDialogForm">
                 <h3 id="backupRestoreDialogTitle">Confirm restore</h3>
                 <div id="backupRestorePreviewSummary" class="message"></div>
                 <p>

@@ -138,7 +138,10 @@ test("admin Data tab supports export, preview, typed-confirm gate, and apply", a
   });
   await page.click("#backupRestorePreviewBtn");
   await expect(page.locator("#backupRestoreDialog")).toBeVisible();
-  await expect(page.locator("#backupRestorePreviewSummary")).toContainText("Manifest version: 1");
+  // Summary now renders as a definition list; assert label + value
+  // appear together in the panel text without being colon-joined.
+  await expect(page.locator("#backupRestorePreviewSummary")).toContainText("Manifest version");
+  await expect(page.locator("#backupRestorePreviewSummary dd").first()).toHaveText("1");
   await expect(page.locator("#backupRestoreApplyBtn")).toBeDisabled();
 
   // Typed-confirm gate — wrong text leaves it disabled.
