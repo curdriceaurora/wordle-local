@@ -380,6 +380,14 @@ function createAdminRouter(deps) {
       if (err instanceof AppConfigStoreError && err.code === "INVALID_OVERRIDES") {
         return res.status(400).json({ error: err.message });
       }
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "MAX_PROFILES_TOO_LOW") {
+          return res.status(409).json({ error: err.message });
+        }
+        if (err.code === "INVALID_REQUEST") {
+          return res.status(400).json({ error: err.message });
+        }
+      }
       console.error("Runtime config update failed.", err);
       return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });
     }

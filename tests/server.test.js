@@ -143,6 +143,8 @@ function loadApp(options = {}) {
     delete process.env.DEFINITION_CACHE_TTL_MS;
     delete process.env.DEFINITION_SHARD_CACHE_SIZE;
     delete process.env.PROVIDER_MANUAL_MAX_FILE_BYTES;
+    delete process.env.LEADERBOARD_MAX_PROFILES;
+    delete process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE;
     delete process.env.PERF_LOGGING;
   }
 
