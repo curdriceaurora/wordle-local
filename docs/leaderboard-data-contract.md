@@ -68,6 +68,7 @@ Why this exists:
 - `dailyKey` format is contract-mandatory and must be enforced in server normalization logic.
 - The JSON schema uses `additionalProperties` for daily result maps and therefore does not fully enforce `dailyKey` format by itself.
 - Max retained daily entries per profile: `400`.
+- Default profile cap: `50` (raised from `20` for classroom-mode rosters). Override via env `LEADERBOARD_MAX_PROFILES` or persisted `overrides.limits.leaderboardMaxProfiles`. Profiles are referenced by ID from `data/classes.json` (see `docs/classroom-mode.md`); class membership does not duplicate or own profile records.
 
 ### Result Entry
 - `date`: `YYYY-MM-DD` in server-local calendar; must match the `YYYY-MM-DD` prefix in its `dailyKey`.

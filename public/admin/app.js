@@ -35,6 +35,29 @@ const profilesMaxProfilesEl = document.getElementById("profilesMaxProfiles");
 const profilesMaxResultsEl = document.getElementById("profilesMaxResults");
 const profilesLimitsStatusEl = document.getElementById("profilesLimitsStatus");
 
+const classesBodyEl = document.getElementById("classesBody");
+const classesStatusEl = document.getElementById("classesStatus");
+const classesIncludeArchivedEl = document.getElementById("classesIncludeArchived");
+const refreshClassesBtnEl = document.getElementById("refreshClassesBtn");
+const classCreateFormEl = document.getElementById("classCreateForm");
+const classCreateNameEl = document.getElementById("classCreateName");
+const classDetailPanelEl = document.getElementById("classDetailPanel");
+const classDetailHeadingEl = document.getElementById("classDetailHeading");
+const classDetailStatusEl = document.getElementById("classDetailStatus");
+const closeClassDetailBtnEl = document.getElementById("closeClassDetailBtn");
+const classBulkAddFormEl = document.getElementById("classBulkAddForm");
+const classBulkAddNamesEl = document.getElementById("classBulkAddNames");
+const classMembersBodyEl = document.getElementById("classMembersBody");
+const classReportFormEl = document.getElementById("classReportForm");
+const classReportFromEl = document.getElementById("classReportFrom");
+const classReportToEl = document.getElementById("classReportTo");
+const classReportLangEl = document.getElementById("classReportLang");
+const classReportCsvBtnEl = document.getElementById("classReportCsvBtn");
+const classReportBomEl = document.getElementById("classReportBom");
+const classReportPrintBtnEl = document.getElementById("classReportPrintBtn");
+const classReportStatusEl = document.getElementById("classReportStatus");
+const classReportRenderedEl = document.getElementById("classReportRendered");
+
 const runtimeFormEl = document.getElementById("runtimeForm");
 const runtimeDefinitionsModeEl = document.getElementById("runtimeDefinitionsMode");
 const runtimeDefinitionCacheSizeEl = document.getElementById("runtimeDefinitionCacheSize");
@@ -84,6 +107,12 @@ const state = {
   runtimeConfig: null,
   profiles: [],
   profilesLoading: false,
+  classes: [],
+  classesLoading: false,
+  classesIncludeArchived: false,
+  activeClassId: null,
+  activeClassDetail: null,
+  classMembersLoading: false,
   activeTab: "providers"
 };
 
@@ -245,6 +274,9 @@ function activateTab(nextTab, focus = false) {
   }
   if (tabId === "profiles" && state.unlocked && !state.profilesLoading) {
     loadProfiles({ announce: true }).catch(() => {});
+  }
+  if (tabId === "classes" && state.unlocked && !state.classesLoading) {
+    loadClasses({ announce: true }).catch(() => {});
   }
 }
 
@@ -1054,6 +1086,511 @@ async function saveProfilesLimits() {
   }
 }
 
+function findClassById(id) {
+  const key = String(id || "").trim();
+  if (!key) return null;
+  return state.classes.find((entry) => entry.id === key) || null;
+}
+
+async function loadClasses(options = {}) {
+  if (!state.unlocked || !classesBodyEl) return;
+  state.classesLoading = true;
+  if (options.announce !== false) {
+    setStatus(classesStatusEl, "Loading classes…", "");
+  }
+  try {
+    const includeArchived = state.classesIncludeArchived ? "?includeArchived=true" : "";
+    const payload = await requestAdminJson(`/api/admin/classes${includeArchived}`);
+    state.classes = Array.isArray(payload?.classes) ? payload.classes : [];
+    renderClasses();
+    if (options.announce !== false) {
+      setStatus(
+        classesStatusEl,
+        `Loaded ${state.classes.length} class${state.classes.length === 1 ? "" : "es"}.`,
+        "admin-status-ok"
+      );
+    }
+    return payload;
+  } catch (err) {
+    if (options.announce !== false) {
+      setStatus(classesStatusEl, `Class list failed: ${err.message}`, "admin-status-missing");
+    }
+    throw err;
+  } finally {
+    state.classesLoading = false;
+  }
+}
+
+function renderClasses() {
+  if (!classesBodyEl) return;
+  classesBodyEl.innerHTML = "";
+  if (!state.classes.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = state.classesIncludeArchived
+      ? "No classes yet."
+      : "No active classes. Toggle \"Show archived\" to see archived ones.";
+    row.appendChild(cell);
+    classesBodyEl.appendChild(row);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  state.classes.forEach((classRecord) => {
+    const row = document.createElement("tr");
+    row.dataset.classId = classRecord.id;
+
+    const nameCell = document.createElement("td");
+    nameCell.textContent = classRecord.name;
+    row.appendChild(nameCell);
+
+    const memberCell = document.createElement("td");
+    memberCell.textContent = String(classRecord.memberCount ?? 0);
+    row.appendChild(memberCell);
+
+    const statusCell = document.createElement("td");
+    statusCell.textContent = classRecord.archivedAt ? "archived" : "active";
+    if (classRecord.archivedAt) {
+      statusCell.classList.add("admin-status-off");
+    } else {
+      statusCell.classList.add("admin-status-ok");
+    }
+    row.appendChild(statusCell);
+
+    const createdCell = document.createElement("td");
+    createdCell.textContent = formatTimestamp(classRecord.createdAt);
+    row.appendChild(createdCell);
+
+    const actionsCell = document.createElement("td");
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "admin-action-stack";
+
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "ghost";
+    openBtn.dataset.action = "open-class";
+    openBtn.dataset.classId = classRecord.id;
+    openBtn.textContent = "Open";
+    openBtn.setAttribute("aria-label", `Open class ${classRecord.name}`);
+    actionsWrap.appendChild(openBtn);
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "ghost";
+    renameBtn.dataset.action = "rename-class";
+    renameBtn.dataset.classId = classRecord.id;
+    renameBtn.textContent = "Rename";
+    renameBtn.setAttribute("aria-label", `Rename class ${classRecord.name}`);
+    actionsWrap.appendChild(renameBtn);
+
+    const archiveBtn = document.createElement("button");
+    archiveBtn.type = "button";
+    archiveBtn.className = "ghost";
+    archiveBtn.dataset.action = classRecord.archivedAt ? "unarchive-class" : "archive-class";
+    archiveBtn.dataset.classId = classRecord.id;
+    archiveBtn.textContent = classRecord.archivedAt ? "Unarchive" : "Archive";
+    archiveBtn.setAttribute(
+      "aria-label",
+      `${classRecord.archivedAt ? "Unarchive" : "Archive"} class ${classRecord.name}`
+    );
+    actionsWrap.appendChild(archiveBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ghost admin-action-destructive";
+    deleteBtn.dataset.action = "delete-class";
+    deleteBtn.dataset.classId = classRecord.id;
+    deleteBtn.textContent = "Delete";
+    deleteBtn.setAttribute("aria-label", `Delete class ${classRecord.name}`);
+    actionsWrap.appendChild(deleteBtn);
+
+    actionsCell.appendChild(actionsWrap);
+    row.appendChild(actionsCell);
+    fragment.appendChild(row);
+  });
+  classesBodyEl.appendChild(fragment);
+}
+
+async function createClass(name) {
+  try {
+    await requestAdminJson("/api/admin/classes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name })
+    });
+  } catch (err) {
+    setStatus(classesStatusEl, `Create failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(classesStatusEl, `Created "${name.trim()}".`, "admin-status-ok");
+  classCreateNameEl.value = "";
+  await loadClasses({ announce: false }).catch((refreshErr) => {
+    setStatus(
+      classesStatusEl,
+      `Created "${name.trim()}". Could not refresh list: ${refreshErr.message}`,
+      "admin-status-off"
+    );
+  });
+}
+
+async function renameClass(classId) {
+  const target = findClassById(classId);
+  if (!target) return;
+  const next = window.prompt(`Rename class "${target.name}" to:`, target.name);
+  if (next === null) return;
+  const trimmed = String(next).trim();
+  if (!trimmed) {
+    setStatus(classesStatusEl, "Rename cancelled — name is empty.", "admin-status-off");
+    return;
+  }
+  if (trimmed === target.name) return;
+  try {
+    await requestAdminJson(`/api/admin/classes/${encodeURIComponent(classId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed })
+    });
+  } catch (err) {
+    setStatus(classesStatusEl, `Rename failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(classesStatusEl, `Renamed to "${trimmed}".`, "admin-status-ok");
+  await loadClasses({ announce: false }).catch(() => {});
+  if (state.activeClassId === classId) {
+    await loadClassDetail(classId).catch(() => {});
+  }
+}
+
+async function setClassArchived(classId, archived) {
+  try {
+    await requestAdminJson(`/api/admin/classes/${encodeURIComponent(classId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived })
+    });
+  } catch (err) {
+    setStatus(classesStatusEl, `Update failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(
+    classesStatusEl,
+    archived ? "Class archived." : "Class unarchived.",
+    "admin-status-ok"
+  );
+  await loadClasses({ announce: false }).catch(() => {});
+  if (state.activeClassId === classId) {
+    await loadClassDetail(classId).catch(() => {});
+  }
+}
+
+async function deleteClassFlow(classId) {
+  const target = findClassById(classId);
+  if (!target) return;
+  const typed = window.prompt(
+    `Type the class name "${target.name}" to confirm deletion. This cannot be undone.`
+  );
+  if (typed === null) return;
+  if (typed.trim() !== target.name) {
+    setStatus(classesStatusEl, "Delete cancelled — name did not match.", "admin-status-off");
+    return;
+  }
+  const cleanProfiles = window.confirm(
+    "Also delete profiles that are members of this class only? Members shared with other active classes will be preserved."
+  );
+  try {
+    const result = await requestAdminJson(
+      `/api/admin/classes/${encodeURIComponent(classId)}`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmed: true, deleteProfiles: cleanProfiles })
+      }
+    );
+    const carved = Array.isArray(result.deletedProfileIds) ? result.deletedProfileIds.length : 0;
+    setStatus(
+      classesStatusEl,
+      cleanProfiles
+        ? `Deleted "${target.name}". Removed ${carved} profile${carved === 1 ? "" : "s"}.`
+        : `Deleted "${target.name}". Profiles preserved.`,
+      "admin-status-ok"
+    );
+  } catch (err) {
+    setStatus(classesStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  if (state.activeClassId === classId) closeClassDetail();
+  await loadClasses({ announce: false }).catch(() => {});
+}
+
+function closeClassDetail() {
+  state.activeClassId = null;
+  state.activeClassDetail = null;
+  if (classDetailPanelEl) {
+    classDetailPanelEl.classList.add("hidden");
+    classDetailPanelEl.hidden = true;
+  }
+  if (classMembersBodyEl) classMembersBodyEl.innerHTML = "";
+  if (classReportRenderedEl) classReportRenderedEl.innerHTML = "";
+  setStatus(classDetailStatusEl, "");
+  setStatus(classReportStatusEl, "");
+}
+
+async function loadClassDetail(classId) {
+  if (!classDetailPanelEl) return;
+  state.classMembersLoading = true;
+  setStatus(classDetailStatusEl, "Loading class…", "");
+  try {
+    const payload = await requestAdminJson(`/api/admin/classes/${encodeURIComponent(classId)}`);
+    state.activeClassId = classId;
+    state.activeClassDetail = payload;
+    if (classDetailHeadingEl) {
+      classDetailHeadingEl.textContent = `Class: ${payload.class.name}${payload.class.archivedAt ? " (archived)" : ""}`;
+    }
+    classDetailPanelEl.classList.remove("hidden");
+    classDetailPanelEl.hidden = false;
+    renderClassMembers();
+    setStatus(
+      classDetailStatusEl,
+      `${payload.members.length} member${payload.members.length === 1 ? "" : "s"}.`,
+      "admin-status-ok"
+    );
+  } catch (err) {
+    setStatus(classDetailStatusEl, `Load failed: ${err.message}`, "admin-status-missing");
+    throw err;
+  } finally {
+    state.classMembersLoading = false;
+  }
+}
+
+function renderClassMembers() {
+  if (!classMembersBodyEl) return;
+  classMembersBodyEl.innerHTML = "";
+  const members = state.activeClassDetail?.members || [];
+  if (!members.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 3;
+    cell.textContent = "No members yet. Add some via the form above.";
+    row.appendChild(cell);
+    classMembersBodyEl.appendChild(row);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const member of members) {
+    const row = document.createElement("tr");
+    row.dataset.profileId = member.profileId;
+
+    const nameCell = document.createElement("td");
+    nameCell.textContent = member.missing ? "(missing profile)" : member.name;
+    if (member.missing) nameCell.classList.add("admin-status-missing");
+    row.appendChild(nameCell);
+
+    const idCell = document.createElement("td");
+    idCell.textContent = member.profileId;
+    row.appendChild(idCell);
+
+    const actionsCell = document.createElement("td");
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "ghost";
+    removeBtn.dataset.action = "remove-member";
+    removeBtn.dataset.profileId = member.profileId;
+    removeBtn.textContent = "Remove from class";
+    removeBtn.setAttribute(
+      "aria-label",
+      `Remove ${member.name || member.profileId} from class`
+    );
+    actionsCell.appendChild(removeBtn);
+    row.appendChild(actionsCell);
+
+    fragment.appendChild(row);
+  }
+  classMembersBodyEl.appendChild(fragment);
+}
+
+async function bulkAddMembers(rawText) {
+  const classId = state.activeClassId;
+  if (!classId) return;
+  const text = String(rawText || "").trim();
+  if (!text) {
+    setStatus(classDetailStatusEl, "Add at least one name.", "admin-status-off");
+    return;
+  }
+  try {
+    const result = await requestAdminJson(
+      `/api/admin/classes/${encodeURIComponent(classId)}/members/bulk`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: text })
+      }
+    );
+    const added = Array.isArray(result.addedToClass) ? result.addedToClass.length : 0;
+    const created = Array.isArray(result.createdProfileIds) ? result.createdProfileIds.length : 0;
+    const reused = Array.isArray(result.reusedProfileIds) ? result.reusedProfileIds.length : 0;
+    classBulkAddNamesEl.value = "";
+    await loadClassDetail(classId).catch(() => {});
+    await loadClasses({ announce: false }).catch(() => {});
+    // Set the success message last so it's not overwritten by the refresh's
+    // own status updates.
+    setStatus(
+      classDetailStatusEl,
+      `Added ${added} new member${added === 1 ? "" : "s"} (${created} new profile${created === 1 ? "" : "s"}, ${reused} reused).`,
+      "admin-status-ok"
+    );
+  } catch (err) {
+    setStatus(classDetailStatusEl, `Bulk add failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function removeClassMember(profileId) {
+  const classId = state.activeClassId;
+  if (!classId) return;
+  if (!window.confirm("Remove this member from the class? The profile remains on the host.")) {
+    return;
+  }
+  try {
+    await requestAdminJson(
+      `/api/admin/classes/${encodeURIComponent(classId)}/members/${encodeURIComponent(profileId)}`,
+      { method: "DELETE" }
+    );
+    setStatus(classDetailStatusEl, "Member removed from class.", "admin-status-ok");
+    await loadClassDetail(classId).catch(() => {});
+    await loadClasses({ announce: false }).catch(() => {});
+  } catch (err) {
+    setStatus(classDetailStatusEl, `Remove failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+function buildReportQuery({ format } = {}) {
+  const classId = state.activeClassId;
+  if (!classId) return null;
+  const params = new URLSearchParams();
+  params.set("lang", String(classReportLangEl?.value || "en").trim() || "en");
+  if (classReportFromEl?.value) params.set("from", classReportFromEl.value);
+  if (classReportToEl?.value) params.set("to", classReportToEl.value);
+  if (format) params.set("format", format);
+  if (format === "csv" && classReportBomEl?.checked) {
+    params.set("bom", "true");
+  }
+  return { classId, query: params.toString() };
+}
+
+function renderReportRows(payload) {
+  if (!classReportRenderedEl) return;
+  classReportRenderedEl.innerHTML = "";
+  if (!payload || !Array.isArray(payload.rows)) return;
+  const table = document.createElement("table");
+  table.className = "leaderboard-table";
+  table.setAttribute("aria-label", "Class participation report");
+  const caption = document.createElement("caption");
+  caption.className = "admin-table-caption";
+  caption.textContent = `${payload.class.name} · ${payload.from} → ${payload.to} · ${payload.lang}`;
+  table.appendChild(caption);
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Name", "Status overview", "Wins", "Played", "Win rate", "Last played"].forEach((label) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const row of payload.rows) {
+    const tr = document.createElement("tr");
+    const nameTd = document.createElement("td");
+    nameTd.textContent = row.missing ? "(missing profile)" : row.name;
+    if (row.missing) nameTd.classList.add("admin-status-missing");
+    tr.appendChild(nameTd);
+
+    const statusTd = document.createElement("td");
+    statusTd.textContent = row.days
+      .map((day) => `${day.date}: ${day.status}${day.attempts ? ` (${day.attempts})` : ""}`)
+      .join("  •  ");
+    tr.appendChild(statusTd);
+
+    tr.appendChild(createCell(row.missing ? "" : String(row.wins ?? 0)));
+    tr.appendChild(createCell(row.missing ? "" : String(row.playedCount ?? 0)));
+    tr.appendChild(
+      createCell(
+        row.missing
+          ? ""
+          : (row.winRate !== null && row.winRate !== undefined
+            ? `${(row.winRate * 100).toFixed(1)}%`
+            : "")
+      )
+    );
+    tr.appendChild(createCell(row.lastPlayedAt ? formatTimestamp(row.lastPlayedAt) : "-"));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  classReportRenderedEl.appendChild(table);
+}
+
+function createCell(text) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  return td;
+}
+
+async function fetchReport() {
+  const target = buildReportQuery();
+  if (!target) return;
+  setStatus(classReportStatusEl, "Loading report…", "");
+  try {
+    const payload = await requestAdminJson(
+      `/api/admin/classes/${encodeURIComponent(target.classId)}/report?${target.query}`
+    );
+    renderReportRows(payload);
+    setStatus(
+      classReportStatusEl,
+      `Report ${payload.from} → ${payload.to} (${payload.dates.length} day${payload.dates.length === 1 ? "" : "s"}).`,
+      "admin-status-ok"
+    );
+  } catch (err) {
+    setStatus(classReportStatusEl, `Report failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function downloadReportCsv() {
+  const target = buildReportQuery({ format: "csv" });
+  if (!target) return;
+  setStatus(classReportStatusEl, "Downloading CSV…", "");
+  try {
+    const headers = new Headers({ "x-admin-key": state.adminKey });
+    const response = await fetch(
+      `/api/admin/classes/${encodeURIComponent(target.classId)}/report?${target.query}`,
+      { headers }
+    );
+    if (!response.ok) {
+      const message = await response.text().catch(() => "");
+      throw new Error(message || `Request failed with status ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const today = new Date().toISOString().slice(0, 10);
+    link.download = `class-${target.classId}-report-${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    setStatus(classReportStatusEl, "CSV download started.", "admin-status-ok");
+  } catch (err) {
+    setStatus(classReportStatusEl, `CSV failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+function openPrintReport() {
+  const target = buildReportQuery();
+  if (!target) return;
+  const url = `/admin/classroom-report.html?classId=${encodeURIComponent(target.classId)}&${target.query}`;
+  window.open(url, "_blank", "noopener");
+}
+
 async function checkProviderUpdateStatus(variant) {
   const provider = findProviderByVariant(variant);
   if (!provider) {
@@ -1394,9 +1931,24 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.providerUpdates = Object.create(null);
   state.profiles = [];
   state.profilesLoading = false;
+  state.classes = [];
+  state.classesLoading = false;
+  state.activeClassId = null;
+  state.activeClassDetail = null;
+  state.classMembersLoading = false;
   if (profilesBodyEl) profilesBodyEl.innerHTML = "";
+  if (classesBodyEl) classesBodyEl.innerHTML = "";
+  if (classDetailPanelEl) {
+    classDetailPanelEl.classList.add("hidden");
+    classDetailPanelEl.hidden = true;
+  }
+  if (classMembersBodyEl) classMembersBodyEl.innerHTML = "";
+  if (classReportRenderedEl) classReportRenderedEl.innerHTML = "";
   setStatus(profilesStatusEl, "");
   setStatus(profilesLimitsStatusEl, "");
+  setStatus(classesStatusEl, "");
+  setStatus(classDetailStatusEl, "");
+  setStatus(classReportStatusEl, "");
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
   setStatus(jobsStatusEl, "", "");
@@ -1469,6 +2021,102 @@ if (profilesLimitsFormEl) {
   profilesLimitsFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
     await saveProfilesLimits();
+  });
+}
+
+if (refreshClassesBtnEl) {
+  refreshClassesBtnEl.addEventListener("click", async () => {
+    if (!state.unlocked) return;
+    await loadClasses({ announce: true }).catch(() => {});
+  });
+}
+
+if (classesIncludeArchivedEl) {
+  classesIncludeArchivedEl.addEventListener("change", async () => {
+    state.classesIncludeArchived = Boolean(classesIncludeArchivedEl.checked);
+    if (state.unlocked) {
+      await loadClasses({ announce: false }).catch(() => {});
+    }
+  });
+}
+
+if (classCreateFormEl) {
+  classCreateFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const raw = String(classCreateNameEl?.value || "").trim();
+    if (!raw) {
+      setStatus(classesStatusEl, "Class name is required.", "admin-status-missing");
+      return;
+    }
+    await createClass(raw);
+  });
+}
+
+if (classesBodyEl) {
+  classesBodyEl.addEventListener("click", async (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-action]")
+      : null;
+    if (!target) return;
+    const action = String(target.dataset.action || "").trim();
+    const classId = String(target.dataset.classId || "").trim();
+    if (!action || !classId) return;
+
+    if (action === "open-class") {
+      await loadClassDetail(classId).catch(() => {});
+    } else if (action === "rename-class") {
+      await renameClass(classId);
+    } else if (action === "archive-class") {
+      await setClassArchived(classId, true);
+    } else if (action === "unarchive-class") {
+      await setClassArchived(classId, false);
+    } else if (action === "delete-class") {
+      await deleteClassFlow(classId);
+    }
+  });
+}
+
+if (closeClassDetailBtnEl) {
+  closeClassDetailBtnEl.addEventListener("click", () => {
+    closeClassDetail();
+  });
+}
+
+if (classBulkAddFormEl) {
+  classBulkAddFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await bulkAddMembers(classBulkAddNamesEl?.value || "");
+  });
+}
+
+if (classMembersBodyEl) {
+  classMembersBodyEl.addEventListener("click", async (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-action='remove-member']")
+      : null;
+    if (!target) return;
+    const profileId = String(target.dataset.profileId || "").trim();
+    if (!profileId) return;
+    await removeClassMember(profileId);
+  });
+}
+
+if (classReportFormEl) {
+  classReportFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await fetchReport();
+  });
+}
+
+if (classReportCsvBtnEl) {
+  classReportCsvBtnEl.addEventListener("click", async () => {
+    await downloadReportCsv();
+  });
+}
+
+if (classReportPrintBtnEl) {
+  classReportPrintBtnEl.addEventListener("click", () => {
+    openPrintReport();
   });
 }
 

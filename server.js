@@ -12,6 +12,8 @@ const {
   PROFILE_NAME_PATTERN
 } = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
+const { ClassesStore, ClassesStoreError } = require("./lib/classes-store");
+const { buildCsv, parseBulkNames, UTF8_BOM } = require("./lib/csv-format");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
@@ -132,6 +134,9 @@ const ADMIN_JOBS_STAGING_ROOT = path.join(ADMIN_JOBS_ROOT, "staging");
 const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
   ? path.resolve(process.env.APP_CONFIG_PATH)
   : path.join(__dirname, "data", "app-config.json");
+const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
+  ? path.resolve(process.env.CLASSES_STORE_PATH)
+  : path.join(__dirname, "data", "classes.json");
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -992,6 +997,10 @@ const appConfigStore = new AppConfigStore({
 });
 const adminJobsStore = new AdminJobsStore({
   filePath: ADMIN_JOBS_DATA_PATH,
+  logger: console
+});
+const classesStore = new ClassesStore({
+  filePath: CLASSES_DATA_PATH,
   logger: console
 });
 let registeredLanguageCatalog = new Map();
@@ -2301,6 +2310,7 @@ app.use(
     leaderboardStore,
     languageRegistryStore,
     adminJobsStore,
+    classesStore,
     appConfigStore,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
@@ -2332,9 +2342,13 @@ app.use(
     isLeaderboardMaxResultsPerProfileEnvLocked: () =>
       ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile,
     LeaderboardStoreError,
+    ClassesStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
-    AppConfigStoreError
+    AppConfigStoreError,
+    buildCsv,
+    parseBulkNames,
+    UTF8_BOM
   })
 );
 

@@ -52,6 +52,7 @@ function loadApp(options = {}) {
           adminJobsStorePath: options.adminJobsStorePath,
           appConfigPath: options.appConfigPath,
           providersRoot: options.providersRoot,
+          classesStorePath: options.classesStorePath,
           leaderboardMaxProfiles: options.leaderboardMaxProfiles,
           leaderboardMaxResultsPerProfile: options.leaderboardMaxResultsPerProfile,
           clearRuntimeEnv: options.clearRuntimeEnv
@@ -126,6 +127,11 @@ function loadApp(options = {}) {
   } else {
     delete process.env.PROVIDERS_ROOT;
   }
+  if (opts.classesStorePath !== undefined) {
+    process.env.CLASSES_STORE_PATH = opts.classesStorePath;
+  } else {
+    delete process.env.CLASSES_STORE_PATH;
+  }
   if (opts.leaderboardMaxProfiles !== undefined) {
     process.env.LEADERBOARD_MAX_PROFILES = String(opts.leaderboardMaxProfiles);
   } else {
@@ -183,6 +189,7 @@ function createTempAdminState() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-admin-"));
   const jobsPath = path.join(dir, "admin-jobs.json");
   const configPath = path.join(dir, "app-config.json");
+  const classesPath = path.join(dir, "classes.json");
   fs.writeFileSync(
     jobsPath,
     `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), jobs: [] }, null, 2)}\n`,
@@ -193,9 +200,15 @@ function createTempAdminState() {
     `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), overrides: {} }, null, 2)}\n`,
     "utf8"
   );
+  fs.writeFileSync(
+    classesPath,
+    `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), classes: [] }, null, 2)}\n`,
+    "utf8"
+  );
   return {
     jobsPath,
     configPath,
+    classesPath,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
 }

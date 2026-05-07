@@ -30,6 +30,7 @@ Out of scope:
 | `data/languages.json` | Active language registry used by runtime/meta APIs | Active | `data/languages.schema.json` |
 | `data/admin-jobs.json` | Persisted queue/job ledger for admin processing (deferred implementation) | Contract locked, runtime deferred | `data/admin-jobs.schema.json` |
 | `data/app-config.json` | Persisted runtime-safe override layer for admin settings (deferred implementation) | Contract locked, runtime deferred | `data/app-config.schema.json` |
+| `data/classes.json` | Classroom-mode classes (named containers of profile IDs) | Active | `data/classes.schema.json` |
 
 Examples are provided for tooling validation:
 - `data/admin-jobs.example.json`

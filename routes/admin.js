@@ -82,6 +82,7 @@ function createAdminRouter(deps) {
     leaderboardStore,
     languageRegistryStore,
     adminJobsStore,
+    classesStore,
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
@@ -111,9 +112,13 @@ function createAdminRouter(deps) {
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
     isLeaderboardMaxProfilesEnvLocked,
     LeaderboardStoreError,
+    ClassesStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
-    AppConfigStoreError
+    AppConfigStoreError,
+    buildCsv,
+    parseBulkNames,
+    UTF8_BOM
   } = deps;
 
   const router = express.Router();
@@ -706,6 +711,534 @@ function createAdminRouter(deps) {
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
     }
+  });
+
+  // ============================================================================
+  // CLASSROOM (CLASSES) ROUTES
+  // ============================================================================
+
+  function classesStoreErrorToStatus(err) {
+    switch (err?.code) {
+      case "CLASS_NOT_FOUND":
+      case "MEMBER_NOT_FOUND":
+        return 404;
+      case "DUPLICATE_NAME":
+      case "MAX_CLASSES_REACHED":
+      case "MAX_MEMBERS_REACHED":
+      case "CLASS_ARCHIVED":
+        return 409;
+      default:
+        return 400;
+    }
+  }
+
+  function handleClassesStoreError(res, err, fallbackLogContext) {
+    if (err instanceof ClassesStoreError) {
+      return res.status(classesStoreErrorToStatus(err)).json({ error: err.message });
+    }
+    if (err instanceof StatsApiError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (err instanceof LeaderboardStoreError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error(fallbackLogContext, err);
+    return res.status(503).json({ error: "Class operation unavailable right now. Try again soon." });
+  }
+
+  function parseDateString(value) {
+    if (typeof value !== "string") return null;
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year
+      || date.getMonth() !== month - 1
+      || date.getDate() !== day
+    ) {
+      return null;
+    }
+    return value;
+  }
+
+  function eachDateInRange(fromDate, toDate) {
+    const dates = [];
+    const start = new Date(`${fromDate}T00:00:00`);
+    const end = new Date(`${toDate}T00:00:00`);
+    const cursor = new Date(start.getTime());
+    while (cursor <= end) {
+      const yyyy = cursor.getFullYear();
+      const mm = String(cursor.getMonth() + 1).padStart(2, "0");
+      const dd = String(cursor.getDate()).padStart(2, "0");
+      dates.push(`${yyyy}-${mm}-${dd}`);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  }
+
+  const REPORT_MAX_DAYS = 90;
+  const SUPPORTED_BULK_LIMIT = 500;
+
+  function buildReportSummary({ classRecord, profiles, results, dates, lang }) {
+    const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
+    const rows = [];
+    for (const profileId of classRecord.memberProfileIds) {
+      const profile = profileMap.get(profileId);
+      if (!profile) {
+        rows.push({
+          profileId,
+          name: null,
+          missing: true,
+          days: dates.map((date) => ({ date, status: "no-profile" }))
+        });
+        continue;
+      }
+      const profileResults = results[profileId] || {};
+      const days = dates.map((date) => {
+        let entry = null;
+        for (const [key, value] of Object.entries(profileResults)) {
+          if (key.startsWith(`${date}|${lang}|`)) {
+            entry = value;
+            break;
+          }
+        }
+        if (!entry) {
+          return { date, status: "not-started" };
+        }
+        return {
+          date,
+          status: entry.won ? "won" : "lost",
+          attempts: entry.won ? entry.attempts : null,
+          maxGuesses: entry.maxGuesses,
+          submissionCount: entry.submissionCount,
+          updatedAt: entry.updatedAt
+        };
+      });
+      const wins = days.filter((day) => day.status === "won").length;
+      const playedCount = days.filter((day) => day.status === "won" || day.status === "lost").length;
+      rows.push({
+        profileId,
+        name: profile.name,
+        missing: false,
+        wins,
+        playedCount,
+        winRate: playedCount > 0 ? wins / playedCount : 0,
+        lastPlayedAt: days.reduce((latest, day) => {
+          if (!day.updatedAt) return latest;
+          if (!latest || day.updatedAt > latest) return day.updatedAt;
+          return latest;
+        }, null),
+        days
+      });
+    }
+    return rows;
+  }
+
+  function rowsToCsv({ dates, rows, lang }) {
+    const header = ["profile_id", "profile_name", "lang"];
+    for (const date of dates) {
+      header.push(`${date}_status`, `${date}_attempts`);
+    }
+    header.push("wins_in_range", "played_in_range", "win_rate_in_range", "last_played_at");
+    const csvRows = [header];
+    for (const row of rows) {
+      const flat = [row.profileId, row.name || "", lang];
+      for (const day of row.days) {
+        flat.push(day.status, day.attempts === null || day.attempts === undefined ? "" : String(day.attempts));
+      }
+      flat.push(
+        row.missing ? "" : String(row.wins ?? 0),
+        row.missing ? "" : String(row.playedCount ?? 0),
+        row.missing
+          ? ""
+          : (row.winRate !== null && row.winRate !== undefined ? row.winRate.toFixed(4) : ""),
+        row.lastPlayedAt || ""
+      );
+      csvRows.push(flat);
+    }
+    return buildCsv(csvRows);
+  }
+
+  router.get("/api/admin/classes", async (req, res) => {
+    try {
+      const includeArchived = String(req.query?.includeArchived || "").toLowerCase() === "true";
+      const list = await classesStore.listClasses({ includeArchived });
+      return res.json({
+        ok: true,
+        classes: list.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+          archivedAt: entry.archivedAt,
+          memberCount: entry.memberProfileIds.length
+        }))
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class list failed.");
+    }
+  });
+
+  router.post("/api/admin/classes", async (req, res) => {
+    const name = req.body?.name;
+    try {
+      const created = await classesStore.createClass(name);
+      return res.status(201).json({
+        ok: true,
+        class: {
+          id: created.id,
+          name: created.name,
+          createdAt: created.createdAt,
+          updatedAt: created.updatedAt,
+          archivedAt: created.archivedAt,
+          memberCount: 0
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class create failed.");
+    }
+  });
+
+  router.get("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    try {
+      const classRecord = await classesStore.getClass(classId);
+      if (!classRecord) {
+        return res.status(404).json({ error: "Class not found." });
+      }
+      const leaderboard = await leaderboardStore.getSnapshot();
+      const profileMap = new Map(leaderboard.profiles.map((profile) => [profile.id, profile]));
+      const members = classRecord.memberProfileIds.map((profileId) => {
+        const profile = profileMap.get(profileId);
+        return {
+          profileId,
+          name: profile?.name ?? null,
+          missing: !profile
+        };
+      });
+      return res.json({
+        ok: true,
+        class: {
+          ...classRecord,
+          memberCount: classRecord.memberProfileIds.length
+        },
+        members
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class detail failed.");
+    }
+  });
+
+  router.patch("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    const patch = {};
+    if (req.body?.name !== undefined) patch.name = req.body.name;
+    if (req.body?.archived !== undefined) patch.archived = req.body.archived;
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "Provide at least one of: name, archived." });
+    }
+    try {
+      const updated = await classesStore.updateClass(classId, patch);
+      return res.json({
+        ok: true,
+        class: {
+          id: updated.id,
+          name: updated.name,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+          archivedAt: updated.archivedAt,
+          memberCount: updated.memberProfileIds.length
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class update failed.");
+    }
+  });
+
+  router.delete("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ error: "confirmed=true is required to delete a class." });
+    }
+    const deleteProfilesFlag = req.body?.deleteProfiles === true;
+
+    try {
+      const target = await classesStore.getClass(classId);
+      if (!target) {
+        return res.status(404).json({ error: "Class not found." });
+      }
+
+      let removedProfileIds = [];
+      if (deleteProfilesFlag) {
+        const allClasses = await classesStore.listClasses({ includeArchived: true });
+        const otherActiveMemberships = new Set();
+        for (const entry of allClasses) {
+          if (entry.id === classId) continue;
+          if (entry.archivedAt) continue;
+          for (const memberId of entry.memberProfileIds) {
+            otherActiveMemberships.add(memberId);
+          }
+        }
+        const candidateIds = target.memberProfileIds.filter(
+          (memberId) => !otherActiveMemberships.has(memberId)
+        );
+        if (candidateIds.length > 0) {
+          await leaderboardStore.mutate((draft) => {
+            for (const memberId of candidateIds) {
+              const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
+              if (idx !== -1) {
+                draft.profiles.splice(idx, 1);
+                if (
+                  draft.resultsByProfile
+                  && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
+                ) {
+                  delete draft.resultsByProfile[memberId];
+                }
+                removedProfileIds.push(memberId);
+              }
+            }
+          });
+        }
+        // Make sure those profile ids are also pulled from any other classes
+        // (archived ones, where the profile might still be referenced).
+        for (const memberId of removedProfileIds) {
+          await classesStore.removeMemberEverywhere(memberId);
+        }
+      }
+
+      await classesStore.deleteClass(classId);
+      return res.json({
+        ok: true,
+        deletedClassId: classId,
+        deletedProfileIds: removedProfileIds
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class delete failed.");
+    }
+  });
+
+  router.post("/api/admin/classes/:id/members/bulk", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    const target = await classesStore.getClass(classId).catch(() => null);
+    if (!target) {
+      return res.status(404).json({ error: "Class not found." });
+    }
+    if (target.archivedAt) {
+      return res.status(409).json({
+        error: "Cannot bulk-add to an archived class. Unarchive it first."
+      });
+    }
+
+    let candidateNames = [];
+    let parseErrors = [];
+    if (Array.isArray(req.body?.names)) {
+      candidateNames = req.body.names;
+    } else if (typeof req.body?.csv === "string") {
+      const parsed = parseBulkNames(req.body.csv, { lineLimit: SUPPORTED_BULK_LIMIT });
+      candidateNames = parsed.names;
+      parseErrors = parsed.errors;
+    } else {
+      return res.status(400).json({
+        error: "Provide either { names: string[] } or { csv: string }."
+      });
+    }
+
+    if (parseErrors.length > 0) {
+      return res.status(400).json({
+        error: "Bulk input could not be parsed.",
+        parseErrors
+      });
+    }
+
+    if (candidateNames.length === 0) {
+      return res.json({ ok: true, addedProfiles: [], skippedDuplicates: [], reused: [] });
+    }
+    if (candidateNames.length > SUPPORTED_BULK_LIMIT) {
+      return res.status(413).json({
+        error: `Bulk input exceeded ${SUPPORTED_BULK_LIMIT} names per request.`
+      });
+    }
+
+    const normalizedNames = [];
+    const invalidNames = [];
+    for (const candidate of candidateNames) {
+      try {
+        const next = normalizeProfileNameInput(candidate);
+        normalizedNames.push(next);
+      } catch (err) {
+        invalidNames.push({ raw: candidate, error: err?.message || "Invalid name." });
+      }
+    }
+    if (invalidNames.length > 0) {
+      return res.status(400).json({
+        error: "One or more names did not pass validation.",
+        invalidNames
+      });
+    }
+
+    // Resolve each name to an existing profile (case-insensitive match) or create
+    // a new profile inside a single mutate so we never half-write.
+    const resolvedProfileIds = [];
+    const reusedProfileIds = [];
+    const createdProfileIds = [];
+    const { randomUUID } = require("node:crypto");
+    try {
+      await leaderboardStore.mutate((draft) => {
+        const nowIso = new Date().toISOString();
+        const existingByLowerName = new Map(
+          draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
+        );
+        const seenInBatch = new Set();
+        for (const name of normalizedNames) {
+          const key = name.toLowerCase();
+          if (seenInBatch.has(key)) {
+            continue;
+          }
+          seenInBatch.add(key);
+          const existing = existingByLowerName.get(key);
+          if (existing) {
+            resolvedProfileIds.push(existing.id);
+            reusedProfileIds.push(existing.id);
+            continue;
+          }
+          const created = {
+            id: randomUUID(),
+            name,
+            createdAt: nowIso,
+            updatedAt: nowIso
+          };
+          draft.profiles.push(created);
+          existingByLowerName.set(key, created);
+          resolvedProfileIds.push(created.id);
+          createdProfileIds.push(created.id);
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
+    }
+
+    let addOutcome;
+    try {
+      addOutcome = await classesStore.addMembers(classId, resolvedProfileIds);
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Bulk class add failed.");
+    }
+
+    return res.json({
+      ok: true,
+      addedToClass: addOutcome.added,
+      createdProfileIds,
+      reusedProfileIds,
+      classMemberCount: addOutcome.class.memberProfileIds.length
+    });
+  });
+
+  router.delete("/api/admin/classes/:id/members/:profileId", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    const profileId = String(req.params.profileId || "").trim();
+    if (!classId || !profileId) {
+      return res.status(400).json({ error: "Class id and profile id are required." });
+    }
+    try {
+      const updated = await classesStore.removeMember(classId, profileId);
+      return res.json({
+        ok: true,
+        class: {
+          id: updated.id,
+          memberCount: updated.memberProfileIds.length
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class member removal failed.");
+    }
+  });
+
+  router.get("/api/admin/classes/:id/report", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    const lang = String(req.query?.lang || "").trim();
+    if (!lang) {
+      return res.status(400).json({ error: "lang query parameter is required." });
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const fromDate = parseDateString(req.query?.from) || todayIso;
+    const toDate = parseDateString(req.query?.to) || fromDate;
+    if (fromDate > toDate) {
+      return res.status(400).json({ error: "`from` must be on or before `to`." });
+    }
+    const dates = eachDateInRange(fromDate, toDate);
+    if (dates.length > REPORT_MAX_DAYS) {
+      return res.status(400).json({
+        error: `Date range exceeds the ${REPORT_MAX_DAYS}-day cap.`
+      });
+    }
+
+    const format = String(req.query?.format || "json").trim().toLowerCase();
+    if (format !== "json" && format !== "csv") {
+      return res.status(400).json({ error: "format must be \"json\" or \"csv\"." });
+    }
+    const wantBom = String(req.query?.bom || "").toLowerCase() === "true";
+
+    let classRecord;
+    let leaderboardSnapshot;
+    try {
+      classRecord = await classesStore.getClass(classId);
+      if (!classRecord) {
+        return res.status(404).json({ error: "Class not found." });
+      }
+      leaderboardSnapshot = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class report failed.");
+    }
+
+    const rows = buildReportSummary({
+      classRecord,
+      profiles: leaderboardSnapshot.profiles,
+      results: leaderboardSnapshot.resultsByProfile || {},
+      dates,
+      lang
+    });
+
+    if (format === "csv") {
+      const csv = rowsToCsv({ dates, rows, lang });
+      const filename = `class-${classRecord.id}-report-${fromDate}-${toDate}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      const body = wantBom ? `${UTF8_BOM}${csv}` : csv;
+      return res.send(body);
+    }
+
+    return res.json({
+      ok: true,
+      class: {
+        id: classRecord.id,
+        name: classRecord.name
+      },
+      lang,
+      from: fromDate,
+      to: toDate,
+      dates,
+      rows
+    });
   });
 
   return router;

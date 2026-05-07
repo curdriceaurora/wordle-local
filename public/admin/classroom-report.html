@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Class participation report</title>
+    <link rel="stylesheet" href="/admin/admin.css" />
+    <style>
+      body {
+        margin: 1.5rem;
+        font-family: system-ui, sans-serif;
+      }
+      .report-meta {
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        border: 1px solid #888;
+        padding: 0.4rem 0.6rem;
+        text-align: left;
+      }
+      thead {
+        background: #eee;
+      }
+      .status-won { color: #1a7f37; }
+      .status-lost { color: #b32a2a; }
+      .status-not-started { color: #666; }
+      .key-input {
+        margin-bottom: 1rem;
+      }
+      @media print {
+        .key-input { display: none; }
+        button { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 id="reportTitle">Class participation report</h1>
+      <p class="report-meta" id="reportMeta"></p>
+    </header>
+
+    <section class="key-input" id="keyPanel">
+      <label for="adminKeyInput">Admin key</label>
+      <input id="adminKeyInput" type="password" autocomplete="off" />
+      <button id="loadBtn" type="button">Load report</button>
+      <button id="printBtn" type="button">Print</button>
+      <p id="reportStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <main>
+      <table id="reportTable" aria-describedby="reportTitle">
+        <caption id="reportCaption" class="admin-table-caption">No report loaded yet.</caption>
+        <thead id="reportHead"></thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+    </main>
+
+    <script>
+      (function () {
+        const params = new URLSearchParams(window.location.search);
+        const classId = params.get("classId") || "";
+        const keyInput = document.getElementById("adminKeyInput");
+        const loadBtn = document.getElementById("loadBtn");
+        const printBtn = document.getElementById("printBtn");
+        const statusEl = document.getElementById("reportStatus");
+        const titleEl = document.getElementById("reportTitle");
+        const metaEl = document.getElementById("reportMeta");
+        const captionEl = document.getElementById("reportCaption");
+        const headEl = document.getElementById("reportHead");
+        const bodyEl = document.getElementById("reportBody");
+
+        if (!classId) {
+          statusEl.textContent = "Missing classId in URL.";
+          loadBtn.disabled = true;
+        }
+
+        async function loadReport() {
+          const adminKey = keyInput.value.trim();
+          if (!adminKey) {
+            statusEl.textContent = "Enter the admin key first.";
+            return;
+          }
+          statusEl.textContent = "Loading…";
+          const reportParams = new URLSearchParams();
+          ["from", "to", "lang", "format"].forEach((key) => {
+            const value = params.get(key);
+            if (value) reportParams.set(key, value);
+          });
+          reportParams.set("format", "json");
+          try {
+            const response = await fetch(
+              `/api/admin/classes/${encodeURIComponent(classId)}/report?${reportParams.toString()}`,
+              { headers: { "x-admin-key": adminKey } }
+            );
+            if (!response.ok) {
+              throw new Error(`Request failed (${response.status})`);
+            }
+            const payload = await response.json();
+            renderReport(payload);
+            statusEl.textContent = "Loaded.";
+          } catch (err) {
+            statusEl.textContent = `Failed: ${err.message}`;
+          }
+        }
+
+        function renderReport(payload) {
+          if (!payload || !payload.class) return;
+          titleEl.textContent = `Class participation report — ${payload.class.name}`;
+          metaEl.textContent = `${payload.from} → ${payload.to} · language: ${payload.lang} · ${payload.dates.length} day${payload.dates.length === 1 ? "" : "s"}`;
+          captionEl.textContent = `${payload.rows.length} member${payload.rows.length === 1 ? "" : "s"} in the class.`;
+
+          headEl.innerHTML = "";
+          const headerRow = document.createElement("tr");
+          ["Name", "Profile id", ...payload.dates, "Wins", "Played", "Win rate", "Last played"].forEach((label) => {
+            const th = document.createElement("th");
+            th.scope = "col";
+            th.textContent = label;
+            headerRow.appendChild(th);
+          });
+          headEl.appendChild(headerRow);
+
+          bodyEl.innerHTML = "";
+          for (const row of payload.rows) {
+            const tr = document.createElement("tr");
+            const nameTd = document.createElement("td");
+            nameTd.textContent = row.missing ? "(missing)" : row.name;
+            tr.appendChild(nameTd);
+            const idTd = document.createElement("td");
+            idTd.textContent = row.profileId;
+            tr.appendChild(idTd);
+            for (const day of row.days) {
+              const td = document.createElement("td");
+              td.textContent = day.attempts ? `${day.status} (${day.attempts})` : day.status;
+              td.classList.add(`status-${day.status}`);
+              tr.appendChild(td);
+            }
+            const winsTd = document.createElement("td");
+            winsTd.textContent = row.missing ? "" : String(row.wins ?? 0);
+            tr.appendChild(winsTd);
+            const playedTd = document.createElement("td");
+            playedTd.textContent = row.missing ? "" : String(row.playedCount ?? 0);
+            tr.appendChild(playedTd);
+            const rateTd = document.createElement("td");
+            rateTd.textContent = row.missing
+              ? ""
+              : (row.winRate !== null && row.winRate !== undefined
+                ? `${(row.winRate * 100).toFixed(1)}%`
+                : "");
+            tr.appendChild(rateTd);
+            const lastTd = document.createElement("td");
+            lastTd.textContent = row.lastPlayedAt
+              ? new Date(row.lastPlayedAt).toLocaleString()
+              : "—";
+            tr.appendChild(lastTd);
+            bodyEl.appendChild(tr);
+          }
+        }
+
+        loadBtn.addEventListener("click", loadReport);
+        printBtn.addEventListener("click", () => window.print());
+      })();
+    </script>
+  </body>
+</html>
