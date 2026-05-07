@@ -197,6 +197,7 @@ function createBackupRouter(deps) {
     reloadWordData,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
     backupMaxBytes,
@@ -259,6 +260,7 @@ function createBackupRouter(deps) {
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
+      || providerImportEnqueueActiveRef?.value
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
     ) {
@@ -452,6 +454,7 @@ function createBackupRouter(deps) {
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
+      || providerImportEnqueueActiveRef?.value
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
     ) {
@@ -479,12 +482,13 @@ function createBackupRouter(deps) {
     // though restoreInProgressRef has been claimed since the busy
     // check, a provider import that started AFTER restoreInProgressRef
     // was set but BEFORE we updated the import-side guards (older
-    // build) could be in flight. If either ref is now true, abort and
+    // build) could be in flight. If any ref is now true, abort and
     // tell the operator to retry — we don't want to take the data
     // lock and race a running import.
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
+      || providerImportEnqueueActiveRef?.value
     ) {
       restoreInProgressRef.value = false;
       try {

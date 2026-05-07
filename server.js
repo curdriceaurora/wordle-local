@@ -1082,6 +1082,13 @@ let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
+// Set by the async provider-import endpoint while it's staging the
+// upload and enqueuing the job into data/admin-jobs.json. Without
+// this, a restore could squeeze between the import's busy check and
+// its enqueue, write the archive over admin-jobs.json, and leave the
+// staged upload + queued job orphaned. The restore busy check
+// observes this ref and 409s the restore in that window.
+const providerImportEnqueueActiveRef = { value: false };
 // Marks the restore route as "claiming" the restore slot — set
 // synchronously after the busy-check, before the multipart upload
 // starts. Separate from dataMutationLockRef so we don't hold the
@@ -2190,6 +2197,7 @@ async function startProviderImportQueueIfNeeded() {
   if (
     providerImportQueueActiveRef.value
     || providerImportSyncActiveRef.value
+    || providerImportEnqueueActiveRef.value
     || dataMutationLockRef.value
     || restoreInProgressRef.value
   ) {
@@ -2497,6 +2505,7 @@ app.use(
     },
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
     backupMaxBytes: ENV_BACKUP_MAX_BYTES,
@@ -2546,6 +2555,7 @@ app.use(
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
     waitForDataMutationLock,

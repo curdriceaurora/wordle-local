@@ -86,6 +86,7 @@ function createAdminRouter(deps) {
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
     waitForDataMutationLock,
@@ -609,7 +610,14 @@ function createAdminRouter(deps) {
       }
     }
 
-    // Async path: enqueue job
+    // Async path: enqueue job. Claim the enqueue slot synchronously
+    // so a restore that fires during the staging+enqueue window can't
+    // race past us — the restore busy check observes
+    // providerImportEnqueueActiveRef and will 409. The flag clears in
+    // the finally below regardless of success/failure.
+    if (providerImportEnqueueActiveRef) {
+      providerImportEnqueueActiveRef.value = true;
+    }
     let queuedJob = null;
     let stagedManualUpload = null;
     try {
@@ -638,7 +646,16 @@ function createAdminRouter(deps) {
         await adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err)).catch(() => {});
       }
       await cleanupManualUploadStaging(stagedManualUpload).catch(() => {});
+      if (providerImportEnqueueActiveRef) {
+        providerImportEnqueueActiveRef.value = false;
+      }
       return providerAdminError(res, err instanceof StatsApiError ? err : mapProviderPipelineError(err));
+    }
+    // Job is durably enqueued; release the enqueue guard. The queue
+    // starter below claims providerImportQueueActiveRef before
+    // processing the job.
+    if (providerImportEnqueueActiveRef) {
+      providerImportEnqueueActiveRef.value = false;
     }
 
     startProviderImportQueueIfNeeded().catch((err) => {
