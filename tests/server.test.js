@@ -2646,6 +2646,53 @@ describe("Stats API", () => {
     }
   });
 
+  test("PUT runtime-config returns 503 when post-cap-lower normalize fails", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/result").send({
+        profileId: profile.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: profile.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      // Force the next mutate to fail by making the leaderboard file path
+      // unwritable. The store opens its own descriptor each persist, so
+      // chmod-ing the directory is the cleanest cross-platform-ish trick.
+      const dir = path.dirname(tempStore.filePath);
+      fs.chmodSync(dir, 0o500);
+
+      try {
+        const response = await request(app)
+          .put("/api/admin/runtime-config")
+          .set("x-admin-key", "secret")
+          .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 1 } } });
+        expect(response.status).toBe(503);
+      } finally {
+        fs.chmodSync(dir, 0o700);
+      }
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
   test("PUT runtime-config validates leaderboardMaxProfiles bounds and integer type", async () => {
     const tempStore = createTempStatsStore();
     const tempAdminState = createTempAdminState();

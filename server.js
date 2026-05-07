@@ -493,18 +493,15 @@ function applyRuntimeConfig(overrides) {
 
   // If the per-profile result cap was lowered, force a noop mutate so existing
   // in-memory results past the new cap are pruned-and-persisted right away.
-  // Return the promise so callers (admin PUT) can await it before reporting
-  // the new cap as applied; boot paths can ignore the return value safely.
+  // Return the unhandled promise so callers can decide: admin PUT awaits it
+  // and lets a rejection surface as 503; boot wraps its own .catch so a
+  // pruning failure logs but doesn't crash the process.
   if (
     limitsApplied
     && runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
       < previousMaxResultsPerProfile
   ) {
-    return leaderboardStore.mutate(() => {}).catch((err) => {
-      console.warn(
-        `[runtime-config] Could not normalize leaderboard after lowering result cap: ${err?.message || String(err)}`
-      );
-    });
+    return leaderboardStore.mutate(() => {});
   }
 
   return undefined;
@@ -1003,12 +1000,20 @@ const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
 
 function initializeRuntimeConfig() {
+  let normalizePromise;
   try {
     const snapshot = appConfigStore.loadSync();
-    applyRuntimeConfig(snapshot.overrides || {});
+    normalizePromise = applyRuntimeConfig(snapshot.overrides || {});
   } catch (err) {
     console.error("Failed to load app config overrides. Falling back to environment defaults.", err);
-    applyRuntimeConfig({});
+    normalizePromise = applyRuntimeConfig({});
+  }
+  if (normalizePromise && typeof normalizePromise.catch === "function") {
+    normalizePromise.catch((err) => {
+      console.warn(
+        `[runtime-config] Could not normalize leaderboard at boot: ${err?.message || String(err)}`
+      );
+    });
   }
 }
 
