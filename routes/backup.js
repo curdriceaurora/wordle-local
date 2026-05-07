@@ -37,6 +37,9 @@ function backupErrorStatus(err) {
     case "MANIFEST_PARSE_FAILED":
     case "MANIFEST_MISMATCH":
     case "MANIFEST_MISSING":
+    case "MANIFEST_DUPLICATE_PATH":
+    case "ARCHIVE_DUPLICATE_PATH":
+    case "OPTIONAL_SET_PATH_INVALID":
     case "ENTRY_MISSING":
     case "BYTES_MISMATCH":
     case "SHA256_MISMATCH":
@@ -199,6 +202,23 @@ function createBackupRouter(deps) {
     backupRateLimiter
   } = deps;
 
+  // Wait for every async store's write queue to drain. Called AFTER
+  // restoreActiveRef is set (so the /api gate has already started
+  // refusing new mutations) and BEFORE buildManifest/applyRestore reads
+  // or swaps any files. Without this, a mutation that passed the gate
+  // moments before the lock was taken could complete its atomic-rename
+  // step after we've hashed/swapped, overwriting the just-restored
+  // file with stale bytes.
+  async function drainStoreWriteQueues() {
+    const queues = [
+      leaderboardStore?.writeQueue,
+      adminJobsStore?.writeQueue,
+      classesStore?.writeQueue
+    ].filter(Boolean);
+    if (queues.length === 0) return;
+    await Promise.allSettled(queues);
+  }
+
   if (!projectRoot) {
     throw new Error("createBackupRouter requires projectRoot.");
   }
@@ -237,6 +257,12 @@ function createBackupRouter(deps) {
     };
 
     try {
+      // Drain in-flight writers that already passed the gate before we
+      // took the lock. Without this, an in-progress leaderboard mutation
+      // could complete its rename mid-build and produce an archive
+      // whose hashed bytes don't match its streamed bytes.
+      await drainStoreWriteQueues();
+
       // Pre-check uncompressed total size before piping. Without this, an
       // export of an over-cap data tree would stream past the operator's
       // configured limit; for the import path, busboy guards uploads.
@@ -400,6 +426,12 @@ function createBackupRouter(deps) {
     logEvent(req, "backup.restore.start", { bytes: upload.bytes, originalName: upload.originalName });
 
     try {
+      // Drain in-flight writers that already passed the gate before we
+      // took the lock. Without this, an in-progress mutation could
+      // rename its stale JSON over the just-swapped restored file
+      // after applyRestore returns success.
+      await drainStoreWriteQueues();
+
       const result = await applyRestore({ archivePath: upload.tempPath, projectRoot });
 
       // Reload in-memory caches so consumers see the restored state.
