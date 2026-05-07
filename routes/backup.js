@@ -198,10 +198,25 @@ function createBackupRouter(deps) {
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    restoreInProgressRef,
     backupMaxBytes,
     backupIncludeProvidersDefault,
     backupRateLimiter
   } = deps;
+
+  // Touch every in-scope store so its file exists on disk before
+  // buildManifest runs. On a fresh node where a store hasn't been read
+  // yet, its data file doesn't exist; without this, buildManifest
+  // would throw INSCOPE_FILE_MISSING. Each store's load() / loadSync()
+  // is idempotent and creates the file with its default state on first
+  // call.
+  async function warmInScopeStores() {
+    if (leaderboardStore?.load) await leaderboardStore.load();
+    if (adminJobsStore?.load) await adminJobsStore.load();
+    if (classesStore?.load) await classesStore.load();
+    if (appConfigStore?.loadSync) appConfigStore.loadSync();
+    if (languageRegistryStore?.loadSync) languageRegistryStore.loadSync();
+  }
 
   // Wait for every async store's write queue to drain. Called AFTER
   // dataMutationLockRef is set (so the /api gate has already started
@@ -245,6 +260,7 @@ function createBackupRouter(deps) {
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
       || dataMutationLockRef?.value
+      || restoreInProgressRef?.value
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
@@ -258,6 +274,11 @@ function createBackupRouter(deps) {
     };
 
     try {
+      // Make sure every in-scope store's file exists on disk before
+      // hashing. On a fresh node, an unread store's data file may not
+      // exist yet — buildManifest would otherwise throw.
+      await warmInScopeStores();
+
       // Drain in-flight writers that already passed the gate before we
       // took the lock. Without this, an in-progress leaderboard mutation
       // could complete its rename mid-build and produce an archive
@@ -300,10 +321,14 @@ function createBackupRouter(deps) {
 
       let archive;
       try {
+        // Reuse the manifest we just built for the size check so
+        // createArchive doesn't re-walk and re-hash every file under
+        // the lock.
         const result = createArchive({
           projectRoot,
           includeProviders,
-          includeDictionaries
+          includeDictionaries,
+          manifest
         });
         archive = result.archive;
       } catch (err) {
@@ -398,20 +423,25 @@ function createBackupRouter(deps) {
         code: "RESTORE_CONFIRM_MISSING"
       });
     }
-    // Atomic check-and-set: must be synchronous (no await between the
-    // check and the assignment) so two simultaneous requests can't both
-    // pass the check before either one sets the flag.
+    // Atomic check-and-set for single-flight: claims the restore slot
+    // synchronously so two simultaneous requests can't both proceed.
+    // restoreInProgressRef is separate from dataMutationLockRef — we
+    // don't take the data-mutation lock yet because that would hold the
+    // /api gate closed for the full upload duration (potentially many
+    // seconds for large archives over slow connections). The data lock
+    // is acquired later, right before the actual swap.
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
       || dataMutationLockRef?.value
+      || restoreInProgressRef?.value
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
         code: "RESTORE_BUSY"
       });
     }
-    dataMutationLockRef.value = true;
+    restoreInProgressRef.value = true;
 
     let upload;
     try {
@@ -420,11 +450,16 @@ function createBackupRouter(deps) {
         tempDir: uploadsTempDir
       });
     } catch (err) {
-      dataMutationLockRef.value = false;
+      restoreInProgressRef.value = false;
       return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
     }
 
     logEvent(req, "backup.restore.start", { bytes: upload.bytes, originalName: upload.originalName });
+
+    // NOW take the data-mutation lock — upload is done, we're about to
+    // start touching live data/. Other /api mutations are 503'd from
+    // here until the apply + reload completes.
+    dataMutationLockRef.value = true;
 
     try {
       // Drain in-flight writers that already passed the gate before we
@@ -480,6 +515,7 @@ function createBackupRouter(deps) {
       return res.status(status).json(body);
     } finally {
       dataMutationLockRef.value = false;
+      restoreInProgressRef.value = false;
       try {
         await fsp.rm(upload.tempPath, { force: true });
       } catch {

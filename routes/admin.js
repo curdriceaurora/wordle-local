@@ -361,6 +361,15 @@ function createAdminRouter(deps) {
 
   router.put("/api/admin/runtime-config", async (req, res) => {
     try {
+      // Honor the data-mutation lock at the very start so the cap
+      // validations below see the same leaderboard the handler will
+      // eventually persist against. Without this, a PUT that arrived
+      // during a restore could validate against the pre-restore
+      // snapshot, wait at the barrier, then persist a cap that's
+      // smaller than the just-restored profile count.
+      if (typeof waitForDataMutationLock === "function") {
+        await waitForDataMutationLock();
+      }
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
         const parsedRequestedMaxBytes = Number(requestedManualUploadMaxBytes);
@@ -416,11 +425,6 @@ function createAdminRouter(deps) {
       // Snapshot the current overrides so a failed normalize can roll back
       // both disk and in-memory state, keeping GET /api/admin/runtime-config
       // honest about what the store is actually enforcing.
-      // Honor the data-mutation lock: a handler past the gate could
-      // otherwise write data/app-config.json on top of just-restored bytes.
-      if (typeof waitForDataMutationLock === "function") {
-        await waitForDataMutationLock();
-      }
       const previousOverrides = appConfigStore.getOverridesSync();
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
       try {

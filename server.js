@@ -1082,6 +1082,13 @@ let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
+// Marks the restore route as "claiming" the restore slot — set
+// synchronously after the busy-check, before the multipart upload
+// starts. Separate from dataMutationLockRef so we don't hold the
+// data-mutation barrier (which 503s every other admin write) for the
+// entire upload window. dataMutationLockRef is acquired later, just
+// before the actual swap.
+const restoreInProgressRef = { value: false };
 // dataMutationLockRef and waitForDataMutationLock are defined earlier
 // next to leaderboardStore so the constructor can wire the barrier.
 
@@ -2488,6 +2495,7 @@ app.use(
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    restoreInProgressRef,
     backupMaxBytes: ENV_BACKUP_MAX_BYTES,
     backupIncludeProvidersDefault: ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT,
     backupRateLimiter
