@@ -259,6 +259,29 @@ const dataMutationLockRef = {
 };
 const waitForDataMutationLock = () => dataMutationLockRef.waitForRelease();
 
+// Atomic claim helper for direct data writers. Loops: wait for the
+// lock, then synchronously verify no restore is in flight and bump
+// the counter. Returns a release fn to call in finally. Without this,
+// a writer that simply awaits waitForDataMutationLock() can race a
+// new restore that claims the lock during the next event-loop tick.
+async function claimDirectDataWriteSlot() {
+  while (true) {
+    await waitForDataMutationLock();
+    // Synchronous check + increment — no awaits in between, so no
+    // other handler can run.
+    if (
+      dataMutationLockRef.value
+      || restoreInProgressRef.value
+    ) {
+      continue;
+    }
+    directDataWriteActiveRef.value += 1;
+    return () => {
+      directDataWriteActiveRef.value -= 1;
+    };
+  }
+}
+
 const leaderboardStore = new LeaderboardStore({
   filePath: LEADERBOARD_DATA_PATH,
   maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
@@ -1089,6 +1112,17 @@ const providerImportSyncActiveRef = { value: false };
 // staged upload + queued job orphaned. The restore busy check
 // observes this ref and 409s the restore in that window.
 const providerImportEnqueueActiveRef = { value: false };
+// Counter incremented by direct (non-store-mutate) data writers —
+// PUT /api/admin/runtime-config and POST /api/word — for the duration
+// of their validation+persist sequence. The restore busy check
+// observes this counter so a new restore can't slip in between a
+// direct writer's lock-wait return and its actual write, which would
+// validate against pre-restore state and persist over the swap.
+// The writer claims the slot atomically: loop awaiting
+// waitForDataMutationLock() then synchronously check restore flags
+// and increment the counter (no awaits between the check and
+// increment).
+const directDataWriteActiveRef = { value: 0 };
 // Marks the restore route as "claiming" the restore slot — set
 // synchronously after the busy-check, before the multipart upload
 // starts. Separate from dataMutationLockRef so we don't hold the
@@ -2508,6 +2542,7 @@ app.use(
     providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
+    directDataWriteActiveRef,
     backupMaxBytes: ENV_BACKUP_MAX_BYTES,
     backupIncludeProvidersDefault: ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT,
     backupRateLimiter
@@ -2558,7 +2593,7 @@ app.use(
     providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
-    waitForDataMutationLock,
+    claimDirectDataWriteSlot,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
@@ -2726,14 +2761,19 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  // Honor the data-mutation lock: a handler that already passed the gate
-  // could otherwise write data/word.json on top of a just-restored value.
-  await waitForDataMutationLock();
+  // Atomic claim: wait for the data-mutation lock, then increment the
+  // direct-write counter under one synchronous tick so a restore that
+  // claims the lock immediately after our wait can't race past us
+  // before saveWordDataAtomic runs. Restore busy check observes the
+  // counter and 409s while it's > 0.
+  const releaseSlot = await claimDirectDataWriteSlot();
   try {
     await saveWordDataAtomic(data);
   } catch (err) {
     console.error("Failed to persist daily word data.", err);
     return res.status(500).json({ error: "Could not save daily word right now." });
+  } finally {
+    releaseSlot();
   }
   wordDataCache = data;
   res.json({ ok: true, data });

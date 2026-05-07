@@ -89,7 +89,7 @@ function createAdminRouter(deps) {
     providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
-    waitForDataMutationLock,
+    claimDirectDataWriteSlot,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -362,16 +362,16 @@ function createAdminRouter(deps) {
   });
 
   router.put("/api/admin/runtime-config", async (req, res) => {
+    // Atomic claim: wait for the data-mutation lock, then bump the
+    // direct-write counter under one synchronous tick so a restore
+    // can't race in between our lock-wait and the cap validation +
+    // persist. Restore observes the counter and 409s while we hold
+    // the slot. The slot is released in the finally below regardless
+    // of success/failure.
+    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
+      ? await claimDirectDataWriteSlot()
+      : (() => {});
     try {
-      // Honor the data-mutation lock at the very start so the cap
-      // validations below see the same leaderboard the handler will
-      // eventually persist against. Without this, a PUT that arrived
-      // during a restore could validate against the pre-restore
-      // snapshot, wait at the barrier, then persist a cap that's
-      // smaller than the just-restored profile count.
-      if (typeof waitForDataMutationLock === "function") {
-        await waitForDataMutationLock();
-      }
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
         const parsedRequestedMaxBytes = Number(requestedManualUploadMaxBytes);
@@ -458,6 +458,8 @@ function createAdminRouter(deps) {
       }
       console.error("Runtime config update failed.", err);
       return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });
+    } finally {
+      releaseSlot();
     }
   });
 

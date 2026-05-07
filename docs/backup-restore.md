@@ -108,10 +108,14 @@ mid-apply triggers a reverse rename from the rollback dir.
 
 Restore returns:
 
-- HTTP **200** with `{ ok: true, restored, filesRestored,
-  rolledBackOnError: false, warnings, reloads }` when every in-scope
-  file was swapped into place. `warnings` may contain non-fatal
-  reload notes (e.g. a single store's reload threw).
+- HTTP **200** with `{ ok: true, restored, removed, filesRestored,
+  rolledBackOnError: false, reloads, warnings }` when every in-scope
+  file was swapped into place. Per-store cache reload outcomes are
+  in `reloads` (an array of `{ name, ok, error? }` entries) — that's
+  where to look when a single store's reload throws after a
+  successful apply. `warnings` only carries archive/apply-time
+  warnings (e.g. `ROLLBACK_PARTIAL`); a successful apply normally
+  has an empty `warnings` array.
 - HTTP **400** for pre-apply validation failures (manifest invalid,
   manifest version unsupported, schema drift, malformed zip, sha256
   mismatch, path traversal). The body has

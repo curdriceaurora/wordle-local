@@ -2047,9 +2047,19 @@ if (backupExportFormEl) {
     backupExportBtnEl.disabled = true;
     setStatus(backupExportStatusEl, "Building backup archive…", "");
     try {
-      const includeProviders = backupIncludeProvidersEl?.checked ? "true" : "false";
-      const includeDictionaries = backupIncludeDictionariesEl?.checked ? "true" : "false";
-      const url = `/api/admin/backup?includeProviders=${includeProviders}&includeDictionaries=${includeDictionaries}`;
+      // Only set explicit `true` flags. Sending `false` would override
+      // server-side defaults like BACKUP_INCLUDE_PROVIDERS_DEFAULT and
+      // silently produce a narrower archive than the operator
+      // configured.
+      const params = new URLSearchParams();
+      if (backupIncludeProvidersEl?.checked) {
+        params.set("includeProviders", "true");
+      }
+      if (backupIncludeDictionariesEl?.checked) {
+        params.set("includeDictionaries", "true");
+      }
+      const query = params.toString();
+      const url = `/api/admin/backup${query ? `?${query}` : ""}`;
       const response = await fetchAdminBlob(url);
       const blob = await response.blob();
       const filename =

@@ -70,12 +70,18 @@ function backupErrorBody(err) {
   return body;
 }
 
-function parseBoolFlag(value, defaultValue) {
+function parseBoolFlag(value, defaultValue, fieldName) {
   if (value === undefined) return defaultValue;
-  const normalized = String(value).toLowerCase();
+  const normalized = String(value).trim().toLowerCase();
   if (normalized === "true") return true;
   if (normalized === "false") return false;
-  return defaultValue;
+  // Reject anything that isn't an explicit boolean — silently
+  // defaulting on a typo would silently exclude providers/dictionaries
+  // from the backup with no signal to the operator.
+  throw new BackupError(
+    "INVALID_REQUEST",
+    `${fieldName || "boolean flag"} must be 'true' or 'false'.`
+  );
 }
 
 function safeFilenameTimestamp(d = new Date()) {
@@ -131,8 +137,20 @@ async function receiveUpload(req, { maxBytes, tempDir }) {
     let bytesWritten = 0;
     let writeStream = null;
     let truncated = false;
+    // Once the promise resolves (caller has the tempPath and is using
+    // it), late events from busboy/writeStream must not delete the
+    // file. Track whether we've settled so cleanupAndReject becomes a
+    // no-op after success.
+    let settled = false;
 
+    const settleResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const cleanupAndReject = async (err) => {
+      if (settled) return;
+      settled = true;
       try {
         if (writeStream && !writeStream.destroyed) writeStream.destroy();
         await fsp.rm(tempPath, { force: true });
@@ -170,7 +188,7 @@ async function receiveUpload(req, { maxBytes, tempDir }) {
           ));
           return;
         }
-        resolve({ tempPath, bytes: bytesWritten, originalName });
+        settleResolve({ tempPath, bytes: bytesWritten, originalName });
       });
     });
 
@@ -200,6 +218,7 @@ function createBackupRouter(deps) {
     providerImportEnqueueActiveRef,
     dataMutationLockRef,
     restoreInProgressRef,
+    directDataWriteActiveRef,
     backupMaxBytes,
     backupIncludeProvidersDefault,
     backupRateLimiter
@@ -248,8 +267,22 @@ function createBackupRouter(deps) {
 
   // GET /api/admin/backup
   router.get("/api/admin/backup", limit, async (req, res) => {
-    const includeProviders = parseBoolFlag(req.query.includeProviders, backupIncludeProvidersDefault);
-    const includeDictionaries = parseBoolFlag(req.query.includeDictionaries, false);
+    let includeProviders;
+    let includeDictionaries;
+    try {
+      includeProviders = parseBoolFlag(
+        req.query.includeProviders,
+        backupIncludeProvidersDefault,
+        "includeProviders"
+      );
+      includeDictionaries = parseBoolFlag(
+        req.query.includeDictionaries,
+        false,
+        "includeDictionaries"
+      );
+    } catch (err) {
+      return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
+    }
     logEvent(req, "backup.create", { includeProviders, includeDictionaries });
 
     // Take the data-mutation lock for the entire export. Without it,
@@ -263,6 +296,7 @@ function createBackupRouter(deps) {
       || providerImportEnqueueActiveRef?.value
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
+      || (directDataWriteActiveRef && directDataWriteActiveRef.value > 0)
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
@@ -457,6 +491,7 @@ function createBackupRouter(deps) {
       || providerImportEnqueueActiveRef?.value
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
+      || (directDataWriteActiveRef && directDataWriteActiveRef.value > 0)
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
