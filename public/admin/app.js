@@ -899,7 +899,7 @@ async function deleteProfile(profileId) {
     await requestAdminJson(`/api/admin/stats/profile/${encodeURIComponent(profileId)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmName: profile.name })
+      body: JSON.stringify({ confirmName: profile.name, confirmed: true })
     });
     setStatus(profilesStatusEl, `Deleted "${profile.name}".`, "admin-status-ok");
     await loadProfiles({ announce: false });

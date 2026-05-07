@@ -221,6 +221,12 @@ function createAdminRouter(deps) {
       return res.status(400).json({ error: "Profile ID is required." });
     }
 
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "confirmed=true is required to delete a profile."
+      });
+    }
+
     const confirmName = typeof req.body?.confirmName === "string"
       ? req.body.confirmName.trim()
       : "";

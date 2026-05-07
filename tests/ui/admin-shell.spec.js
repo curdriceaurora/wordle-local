@@ -884,7 +884,7 @@ test("admin shell profiles tab supports rename, merge, and delete flows", async 
   // Delete Ben (third prompt response = exact name match).
   await page.locator("#profilesBody tr[data-profile-id='ben'] button[data-action='delete-profile']").click();
   await expect(page.locator("#profilesStatus")).toContainText("Deleted \"Ben\".");
-  expect(deleteRequest).toEqual({ profileId: "ben", body: { confirmName: "Ben" } });
+  expect(deleteRequest).toEqual({ profileId: "ben", body: { confirmName: "Ben", confirmed: true } });
   await expect(page.locator("#profilesBody td")).toHaveText("No player profiles yet.");
 });
 

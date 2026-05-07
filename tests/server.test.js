@@ -2378,30 +2378,37 @@ describe("Stats API", () => {
         maxGuesses: 6
       });
 
-      const noConfirm = await request(app)
+      const noConfirmedFlag = await request(app)
         .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
         .set("x-admin-key", "secret")
-        .send({});
-      expect(noConfirm.status).toBe(400);
-      expect(noConfirm.body.error).toMatch(/confirmName/);
+        .send({ confirmName: "Ava" });
+      expect(noConfirmedFlag.status).toBe(400);
+      expect(noConfirmedFlag.body.error).toMatch(/confirmed=true/);
+
+      const noConfirmName = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true });
+      expect(noConfirmName.status).toBe(400);
+      expect(noConfirmName.body.error).toMatch(/confirmName/);
 
       const wrongConfirm = await request(app)
         .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
         .set("x-admin-key", "secret")
-        .send({ confirmName: "Avery" });
+        .send({ confirmed: true, confirmName: "Avery" });
       expect(wrongConfirm.status).toBe(409);
       expect(wrongConfirm.body.error).toMatch(/Profile name has changed/);
 
       const missing = await request(app)
         .delete("/api/admin/stats/profile/missing")
         .set("x-admin-key", "secret")
-        .send({ confirmName: "anything" });
+        .send({ confirmed: true, confirmName: "anything" });
       expect(missing.status).toBe(404);
 
       const ok = await request(app)
         .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
         .set("x-admin-key", "secret")
-        .send({ confirmName: "Ava" });
+        .send({ confirmed: true, confirmName: "Ava" });
       expect(ok.status).toBe(200);
       expect(ok.body.deletedProfileId).toBe(ava.body.playerId);
 
