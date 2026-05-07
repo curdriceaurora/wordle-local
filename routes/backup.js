@@ -190,6 +190,7 @@ function createBackupRouter(deps) {
     appConfigStore,
     classesStore,
     rebuildLanguageRuntimeCatalog,
+    reloadWordData,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     restoreActiveRef,
@@ -214,66 +215,109 @@ function createBackupRouter(deps) {
     const includeDictionaries = parseBoolFlag(req.query.includeDictionaries, false);
     logEvent(req, "backup.create", { includeProviders, includeDictionaries });
 
-    // Pre-check uncompressed total size before piping. Without this, an
-    // export of an over-cap data tree would stream past the operator's
-    // configured limit; for the import path, busboy guards uploads.
-    let manifest;
+    // Take the data-mutation lock for the entire export. Without it,
+    // a write between hash-time (in buildManifest) and archive-time
+    // (the streaming archive.file reads) would produce an archive whose
+    // bytes don't match its own manifest sha256. Same flag the restore
+    // uses, so both ops are mutually exclusive and writers see 503s.
+    if (
+      providerImportQueueActiveRef?.value
+      || providerImportSyncActiveRef?.value
+      || restoreActiveRef?.value
+    ) {
+      return res.status(409).json({
+        error: "Another admin operation is in flight; retry shortly.",
+        code: "BACKUP_BUSY"
+      });
+    }
+    restoreActiveRef.value = true;
+
+    let releaseLock = () => {
+      restoreActiveRef.value = false;
+    };
+
     try {
-      manifest = await buildManifest({
-        projectRoot,
-        includeProviders,
-        includeDictionaries
-      });
-    } catch (err) {
-      logEvent(req, "backup.create.error", { error: err?.message || String(err) });
-      return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
-    }
-    const totalBytes = manifest.files.reduce((sum, entry) => sum + entry.bytes, 0);
-    if (totalBytes > backupMaxBytes) {
-      logEvent(req, "backup.create.too-large", { totalBytes, cap: backupMaxBytes });
-      return res.status(413).json({
-        error: `Archive uncompressed size ${totalBytes} bytes exceeds the cap of ${backupMaxBytes} bytes. ` +
-          "Disable optional sets, raise BACKUP_MAX_BYTES, or split the export.",
-        code: "ARCHIVE_TOO_LARGE",
-        totalBytes,
-        cap: backupMaxBytes
-      });
-    }
-
-    const stamp = safeFilenameTimestamp();
-    const nodeId = await readNodeIdSafe(projectRoot);
-    const filename = `wordle-backup-${stamp}-${nodeId}.zip`;
-
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Cache-Control", "no-store");
-
-    let archive;
-    try {
-      const result = createArchive({
-        projectRoot,
-        includeProviders,
-        includeDictionaries
-      });
-      archive = result.archive;
-    } catch (err) {
-      logEvent(req, "backup.create.error", { error: err?.message || String(err) });
-      return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
-    }
-
-    archive.on("error", (err) => {
-      logEvent(req, "backup.create.error", { error: err?.message || String(err) });
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to build archive.", code: "ARCHIVE_BUILD_FAILED" });
-      } else {
-        res.destroy(err);
+      // Pre-check uncompressed total size before piping. Without this, an
+      // export of an over-cap data tree would stream past the operator's
+      // configured limit; for the import path, busboy guards uploads.
+      let manifest;
+      try {
+        manifest = await buildManifest({
+          projectRoot,
+          includeProviders,
+          includeDictionaries
+        });
+      } catch (err) {
+        logEvent(req, "backup.create.error", { error: err?.message || String(err) });
+        return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
       }
-    });
-    archive.on("end", () => {
-      logEvent(req, "backup.create.complete");
-    });
+      const totalBytes = manifest.files.reduce((sum, entry) => sum + entry.bytes, 0);
+      if (totalBytes > backupMaxBytes) {
+        logEvent(req, "backup.create.too-large", { totalBytes, cap: backupMaxBytes });
+        return res.status(413).json({
+          error: `Archive uncompressed size ${totalBytes} bytes exceeds the cap of ${backupMaxBytes} bytes. ` +
+            "Disable optional sets, raise BACKUP_MAX_BYTES, or split the export.",
+          code: "ARCHIVE_TOO_LARGE",
+          totalBytes,
+          cap: backupMaxBytes
+        });
+      }
 
-    archive.pipe(res);
+      const stamp = safeFilenameTimestamp();
+      const nodeId = await readNodeIdSafe(projectRoot);
+      const filename = `wordle-backup-${stamp}-${nodeId}.zip`;
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Cache-Control", "no-store");
+
+      let archive;
+      try {
+        const result = createArchive({
+          projectRoot,
+          includeProviders,
+          includeDictionaries
+        });
+        archive = result.archive;
+      } catch (err) {
+        logEvent(req, "backup.create.error", { error: err?.message || String(err) });
+        return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
+      }
+
+      // Release the lock when the archive finishes streaming or errors.
+      const lockFn = releaseLock;
+      releaseLock = () => {}; // prevent finally-block double-release
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        lockFn();
+      };
+      archive.on("error", (err) => {
+        logEvent(req, "backup.create.error", { error: err?.message || String(err) });
+        release();
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to build archive.", code: "ARCHIVE_BUILD_FAILED" });
+        } else {
+          res.destroy(err);
+        }
+      });
+      archive.on("end", () => {
+        logEvent(req, "backup.create.complete");
+        release();
+      });
+      res.on("close", () => {
+        // Client disconnected mid-stream; ensure we don't hold the lock.
+        release();
+      });
+
+      archive.pipe(res);
+    } finally {
+      // If we exited the synchronous path without piping (early return),
+      // releaseLock is still the original lock-clearer. Otherwise it's
+      // a no-op and the archive event handlers own the release.
+      releaseLock();
+    }
   });
 
   // POST /api/admin/backup/preview
@@ -366,7 +410,8 @@ function createBackupRouter(deps) {
         ["classesStore", () => classesStore?.reload?.()],
         ["appConfigStore", () => appConfigStore?.reloadSync?.()],
         ["languageRegistryStore", () => languageRegistryStore?.reloadSync?.()],
-        ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()]
+        ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()],
+        ["wordDataCache", () => reloadWordData?.()]
       ]) {
         try {
           await action();

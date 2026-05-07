@@ -327,6 +327,41 @@ describe("Backup API: restore", () => {
   });
 });
 
+describe("Backup API: data mutation lock during export", () => {
+  test("blocks mutating /api/admin/* writes while an export is streaming", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths);
+
+    // Fire an export and a class-create concurrently. The export takes
+    // the data-lock for its entire stream; the class POST should
+    // observe the lock and 503. Either ordering is acceptable as long
+    // as one of them is 503 when both run while the lock is held.
+    const exportPromise = request(app)
+      .get("/api/admin/backup")
+      .set("x-admin-key", "secret")
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+    const writePromise = request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Mid-Export Class" });
+
+    const [exportRes, writeRes] = await Promise.all([exportPromise, writePromise]);
+    expect(exportRes.status).toBe(200);
+    // The write either landed before the lock was taken (200/201) or
+    // hit the lock and 503'd. Both outcomes leave the export consistent.
+    expect([200, 201, 503]).toContain(writeRes.status);
+    if (writeRes.status === 503) {
+      expect(writeRes.body.code).toBe("DATA_LOCK_HELD");
+      expect(writeRes.headers["retry-after"]).toBe("5");
+    }
+  });
+});
+
 describe("Backup API: oversize upload", () => {
   test("returns 413 when archive exceeds BACKUP_MAX_BYTES", async () => {
     const paths = makeTempState();

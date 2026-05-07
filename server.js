@@ -2321,6 +2321,48 @@ function limitAdminWrites(req, res, next) {
   }
   adminWriteRateLimiter(req, res, next);
 }
+
+// Data-mutation lock: while a backup export or a restore apply is in
+// flight, refuse mutating requests to any /api/** endpoint that touches
+// data/. Without this gate, a player /api/stats/result POST or an admin
+// /api/word POST mid-restore could persist stale cached state over the
+// just-restored files, and a write between hash-time and archive-time
+// during export would tear the archive. The window is short (seconds)
+// and admin-initiated. The backup endpoints themselves are exempt
+// because they are the operations holding the lock.
+const DATA_LOCK_EXEMPT_PATHS = ["/api/admin/backup", "/api/admin/restore"];
+function isDataLockExemptPath(reqUrl) {
+  if (typeof reqUrl !== "string") return false;
+  // Strip query string if present.
+  const queryIdx = reqUrl.indexOf("?");
+  const pathname = queryIdx === -1 ? reqUrl : reqUrl.slice(0, queryIdx);
+  return DATA_LOCK_EXEMPT_PATHS.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+function gateDataMutationsDuringRestore(req, res, next) {
+  const isMutating = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
+  if (!isMutating) {
+    next();
+    return;
+  }
+  if (!restoreActiveRef.value) {
+    next();
+    return;
+  }
+  // Use originalUrl so the exempt-prefix match works regardless of how
+  // the middleware is mounted (req.path is relative to the mount).
+  if (isDataLockExemptPath(req.originalUrl)) {
+    next();
+    return;
+  }
+  res.set("Retry-After", "5");
+  res.status(503).json({
+    error: "A backup/restore operation is in progress; data mutations are temporarily blocked.",
+    code: "DATA_LOCK_HELD"
+  });
+}
+app.use("/api", gateDataMutationsDuringRestore);
 app.use("/api/admin", adminRateLimiter, requireAdminAccess, limitAdminWrites);
 
 function resolveAdminShellAssets() {
@@ -2379,6 +2421,17 @@ app.use(
     appConfigStore,
     classesStore,
     rebuildLanguageRuntimeCatalog,
+    reloadWordData: () => {
+      // Re-read data/word.json from disk and refresh the in-memory cache
+      // backing /api/word and /daily. ensureWordData() falls back to the
+      // baked default if the file is missing or invalid.
+      const data = readWordData();
+      if (data) {
+        wordDataCache = data;
+      } else {
+        ensureWordData();
+      }
+    },
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     restoreActiveRef,
