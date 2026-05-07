@@ -1554,6 +1554,24 @@ async function fetchReport() {
   }
 }
 
+function parseFilenameFromContentDisposition(headerValue) {
+  if (typeof headerValue !== "string") return null;
+  // Prefer the RFC 5987 filename* form when present.
+  const starMatch = headerValue.match(/filename\*\s*=\s*[^']*'[^']*'([^;]+)/i);
+  if (starMatch) {
+    try {
+      return decodeURIComponent(starMatch[1].trim().replace(/^"|"$/g, ""));
+    } catch (_err) {
+      // fall through to plain filename match
+    }
+  }
+  const plainMatch = headerValue.match(/filename\s*=\s*("([^"]+)"|([^;]+))/i);
+  if (plainMatch) {
+    return (plainMatch[2] || plainMatch[3] || "").trim();
+  }
+  return null;
+}
+
 async function downloadReportCsv() {
   const target = buildReportQuery({ format: "csv" });
   if (!target) return;
@@ -1572,8 +1590,17 @@ async function downloadReportCsv() {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    const today = new Date().toISOString().slice(0, 10);
-    link.download = `class-${target.classId}-report-${today}.csv`;
+    // Honor the server's filename (which encodes the requested date range)
+    // before falling back to a UI-generated name.
+    const headerFilename = parseFilenameFromContentDisposition(
+      response.headers.get("Content-Disposition")
+    );
+    if (headerFilename) {
+      link.download = headerFilename;
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      link.download = `class-${target.classId}-report-${today}.csv`;
+    }
     document.body.appendChild(link);
     link.click();
     link.remove();

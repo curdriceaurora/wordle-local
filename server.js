@@ -2348,7 +2348,9 @@ app.use(
     AppConfigStoreError,
     buildCsv,
     parseBulkNames,
-    UTF8_BOM
+    UTF8_BOM,
+    normalizeLang,
+    getLocalDateString
   })
 );
 

@@ -412,6 +412,18 @@ describe("Classes API: report and CSV", () => {
       .set("x-admin-key", "secret");
     expect(noLang.status).toBe(400);
 
+    const unknownLang = await request(app)
+      .get(`/api/admin/classes/${classId}/report?lang=zz`)
+      .set("x-admin-key", "secret");
+    expect(unknownLang.status).toBe(400);
+    expect(unknownLang.body.error).toMatch(/not registered/);
+
+    const badFrom = await request(app)
+      .get(`/api/admin/classes/${classId}/report?lang=en&from=not-a-date`)
+      .set("x-admin-key", "secret");
+    expect(badFrom.status).toBe(400);
+    expect(badFrom.body.error).toMatch(/from/);
+
     const tooLong = await request(app)
       .get(`/api/admin/classes/${classId}/report?lang=en&from=2026-01-01&to=2027-01-01`)
       .set("x-admin-key", "secret");

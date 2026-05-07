@@ -118,7 +118,9 @@ function createAdminRouter(deps) {
     AppConfigStoreError,
     buildCsv,
     parseBulkNames,
-    UTF8_BOM
+    UTF8_BOM,
+    normalizeLang,
+    getLocalDateString
   } = deps;
 
   const router = express.Router();
@@ -785,6 +787,7 @@ function createAdminRouter(deps) {
   function buildReportSummary({ classRecord, profiles, results, dates, lang }) {
     const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
     const rows = [];
+    const datePrefix = `|${lang}|`;
     for (const profileId of classRecord.memberProfileIds) {
       const profile = profileMap.get(profileId);
       if (!profile) {
@@ -797,14 +800,23 @@ function createAdminRouter(deps) {
         continue;
       }
       const profileResults = results[profileId] || {};
-      const days = dates.map((date) => {
-        let entry = null;
-        for (const [key, value] of Object.entries(profileResults)) {
-          if (key.startsWith(`${date}|${lang}|`)) {
-            entry = value;
-            break;
-          }
+      // Pre-index by date — single pass over the profile's results, regardless
+      // of how many dates we then look up. Collisions on the same date+lang
+      // (different code suffixes) are resolved deterministically by newest
+      // updatedAt.
+      const indexByDate = Object.create(null);
+      for (const [key, value] of Object.entries(profileResults)) {
+        const langSep = key.indexOf("|");
+        if (langSep === -1) continue;
+        const datePart = key.slice(0, langSep);
+        if (!key.startsWith(`${datePart}${datePrefix}`)) continue;
+        const existing = indexByDate[datePart];
+        if (!existing || (value.updatedAt && value.updatedAt > existing.updatedAt)) {
+          indexByDate[datePart] = value;
         }
+      }
+      const days = dates.map((date) => {
+        const entry = indexByDate[date];
         if (!entry) {
           return { date, status: "not-started" };
         }
@@ -1066,7 +1078,13 @@ function createAdminRouter(deps) {
     }
 
     if (candidateNames.length === 0) {
-      return res.json({ ok: true, addedProfiles: [], skippedDuplicates: [], reused: [] });
+      return res.json({
+        ok: true,
+        addedToClass: [],
+        createdProfileIds: [],
+        reusedProfileIds: [],
+        classMemberCount: target.memberProfileIds.length
+      });
     }
     if (candidateNames.length > SUPPORTED_BULK_LIMIT) {
       return res.status(413).json({
@@ -1092,13 +1110,17 @@ function createAdminRouter(deps) {
     }
 
     // Resolve each name to an existing profile (case-insensitive match) or create
-    // a new profile inside a single mutate so we never half-write.
+    // a new profile inside a single mutate so we never half-write. The mutate's
+    // normalizer can prune excess profiles past the leaderboard cap; we use
+    // the persisted snapshot to filter survivors before adding to the class so
+    // we never reference a pruned profile.
     const resolvedProfileIds = [];
-    const reusedProfileIds = [];
-    const createdProfileIds = [];
+    const intendedReused = [];
+    const intendedCreated = [];
     const { randomUUID } = require("node:crypto");
+    let persistedSnapshot;
     try {
-      await leaderboardStore.mutate((draft) => {
+      persistedSnapshot = await leaderboardStore.mutate((draft) => {
         const nowIso = new Date().toISOString();
         const existingByLowerName = new Map(
           draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
@@ -1113,7 +1135,7 @@ function createAdminRouter(deps) {
           const existing = existingByLowerName.get(key);
           if (existing) {
             resolvedProfileIds.push(existing.id);
-            reusedProfileIds.push(existing.id);
+            intendedReused.push(existing.id);
             continue;
           }
           const created = {
@@ -1125,27 +1147,41 @@ function createAdminRouter(deps) {
           draft.profiles.push(created);
           existingByLowerName.set(key, created);
           resolvedProfileIds.push(created.id);
-          createdProfileIds.push(created.id);
+          intendedCreated.push(created.id);
         }
       });
     } catch (err) {
       return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
     }
 
+    // Filter against the persisted snapshot — any profile pruned by the
+    // leaderboard's max-profiles enforcement must not become a class member.
+    const survivingProfileIds = new Set(
+      persistedSnapshot.profiles.map((profile) => profile.id)
+    );
+    const survivors = resolvedProfileIds.filter((id) => survivingProfileIds.has(id));
+    const droppedDueToCap = resolvedProfileIds.filter((id) => !survivingProfileIds.has(id));
+    const reusedProfileIds = intendedReused.filter((id) => survivingProfileIds.has(id));
+    const createdProfileIds = intendedCreated.filter((id) => survivingProfileIds.has(id));
+
     let addOutcome;
     try {
-      addOutcome = await classesStore.addMembers(classId, resolvedProfileIds);
+      addOutcome = await classesStore.addMembers(classId, survivors);
     } catch (err) {
       return handleClassesStoreError(res, err, "Bulk class add failed.");
     }
 
-    return res.json({
+    const responseBody = {
       ok: true,
       addedToClass: addOutcome.added,
       createdProfileIds,
       reusedProfileIds,
       classMemberCount: addOutcome.class.memberProfileIds.length
-    });
+    };
+    if (droppedDueToCap.length > 0) {
+      responseBody.droppedDueToCap = droppedDueToCap.length;
+    }
+    return res.json(responseBody);
   });
 
   router.delete("/api/admin/classes/:id/members/:profileId", async (req, res) => {
@@ -1173,14 +1209,28 @@ function createAdminRouter(deps) {
     if (!classId) {
       return res.status(400).json({ error: "Class id is required." });
     }
-    const lang = String(req.query?.lang || "").trim();
-    if (!lang) {
+    const rawLang = String(req.query?.lang || "").trim();
+    if (!rawLang) {
       return res.status(400).json({ error: "lang query parameter is required." });
     }
+    const lang = normalizeLang(rawLang);
+    if (!lang) {
+      return res.status(400).json({
+        error: `lang "${rawLang}" is not registered on this host.`
+      });
+    }
 
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const fromDate = parseDateString(req.query?.from) || todayIso;
-    const toDate = parseDateString(req.query?.to) || fromDate;
+    const today = getLocalDateString(new Date());
+    const rawFrom = req.query?.from;
+    const rawTo = req.query?.to;
+    if (rawFrom !== undefined && parseDateString(rawFrom) === null) {
+      return res.status(400).json({ error: "`from` must be a YYYY-MM-DD date." });
+    }
+    if (rawTo !== undefined && parseDateString(rawTo) === null) {
+      return res.status(400).json({ error: "`to` must be a YYYY-MM-DD date." });
+    }
+    const fromDate = parseDateString(rawFrom) || today;
+    const toDate = parseDateString(rawTo) || fromDate;
     if (fromDate > toDate) {
       return res.status(400).json({ error: "`from` must be on or before `to`." });
     }
