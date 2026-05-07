@@ -128,6 +128,13 @@ Restore returns:
 - HTTP **409** when another admin operation (provider import or a
   concurrent restore) holds the single-flight mutex.
 - HTTP **413** when the upload exceeds `BACKUP_MAX_BYTES`.
+- HTTP **503** with `code: DATA_LOCK_HELD` for *other* mutating
+  `/api/*` requests (jobs, runtime-config, profiles, classes,
+  `/api/word`, etc.) while an export stream or restore apply holds
+  the data lock. The `Retry-After` header is set to 5. Backup,
+  preview, and restore endpoints are exempt — they're the operations
+  the lock is protecting — so an operator can still preview an
+  archive even while one is being applied or exported.
 
 ## Mutex with provider import
 

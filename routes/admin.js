@@ -735,7 +735,7 @@ function createAdminRouter(deps) {
     }
   });
 
-  router.post("/api/admin/providers/:variant/enable", (req, res) => {
+  router.post("/api/admin/providers/:variant/enable", async (req, res) => {
     let variant;
     try {
       variant = parseProviderVariant(req.params.variant);
@@ -750,6 +750,14 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Claim the direct-write slot before persisting the toggle. The
+    // upsert writes data/languages.json, which a restore will swap
+    // out from underneath any unbarrier-ed write. Without this, an
+    // enable that lands during a restore upload window would 200,
+    // then be silently overwritten by the archive's languages.json.
+    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
+      ? await claimDirectDataWriteSlot()
+      : (() => {});
     try {
       const paths = buildProviderArtifactPaths(variant, commit);
       const minLength = PROVIDER_MIN_LENGTH;
@@ -785,10 +793,12 @@ function createAdminRouter(deps) {
       });
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
+    } finally {
+      releaseSlot();
     }
   });
 
-  router.post("/api/admin/providers/:variant/disable", (req, res) => {
+  router.post("/api/admin/providers/:variant/disable", async (req, res) => {
     let variant;
     try {
       variant = parseProviderVariant(req.params.variant);
@@ -796,6 +806,12 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Same direct-write-slot rationale as /enable above: the
+    // setLanguageEnabledSync call writes data/languages.json and must
+    // be serialised against a concurrent restore.
+    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
+      ? await claimDirectDataWriteSlot()
+      : (() => {});
     try {
       const snapshot = languageRegistryStore.setLanguageEnabledSync(variant, false);
       rebuildLanguageRuntimeCatalog();
@@ -810,6 +826,8 @@ function createAdminRouter(deps) {
       });
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
+    } finally {
+      releaseSlot();
     }
   });
 
