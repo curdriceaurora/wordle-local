@@ -4,8 +4,10 @@ const path = require("path");
 
 const {
   LeaderboardStore,
+  LeaderboardStoreError,
   createEmptyLeaderboardState,
-  normalizeLeaderboardState
+  normalizeLeaderboardState,
+  resolveMergeConflict
 } = require("../lib/leaderboard-store");
 
 function tempFilePath(name = "leaderboard.json") {
@@ -536,5 +538,274 @@ describe("leaderboard-store", () => {
     const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
     expect(persisted.version).toBe(2);
     expect(persisted.futureField).toEqual({ keep: true });
+  });
+});
+
+function buildResult(overrides = {}) {
+  return {
+    date: "2026-02-01",
+    won: true,
+    attempts: 4,
+    maxGuesses: 6,
+    submissionCount: 1,
+    updatedAt: isoAt(40),
+    ...overrides
+  };
+}
+
+describe("resolveMergeConflict", () => {
+  test("prefers higher submissionCount", () => {
+    const left = buildResult({ submissionCount: 3 });
+    const right = buildResult({ submissionCount: 1 });
+    expect(resolveMergeConflict(left, right)).toBe(left);
+    expect(resolveMergeConflict(right, left)).toBe(left);
+  });
+
+  test("prefers a winning result when submissionCount ties", () => {
+    const won = buildResult({ submissionCount: 2, won: true, attempts: 4 });
+    const lost = buildResult({ submissionCount: 2, won: false, attempts: null });
+    expect(resolveMergeConflict(won, lost)).toBe(won);
+    expect(resolveMergeConflict(lost, won)).toBe(won);
+  });
+
+  test("prefers fewer attempts when both wins tie on submissionCount", () => {
+    const fast = buildResult({ submissionCount: 2, won: true, attempts: 3 });
+    const slow = buildResult({ submissionCount: 2, won: true, attempts: 5 });
+    expect(resolveMergeConflict(fast, slow)).toBe(fast);
+    expect(resolveMergeConflict(slow, fast)).toBe(fast);
+  });
+
+  test("prefers newer updatedAt when everything else ties", () => {
+    const newer = buildResult({ updatedAt: isoAt(50) });
+    const older = buildResult({ updatedAt: isoAt(40) });
+    expect(resolveMergeConflict(newer, older)).toBe(newer);
+    expect(resolveMergeConflict(older, newer)).toBe(newer);
+  });
+
+  test("returns left on a complete tie (stable)", () => {
+    const left = buildResult();
+    const right = buildResult();
+    expect(resolveMergeConflict(left, right)).toBe(left);
+  });
+});
+
+describe("leaderboard-store: deleteProfile", () => {
+  test("removes profile and all associated results atomically", async () => {
+    const filePath = tempFilePath();
+    const store = new LeaderboardStore({ filePath, logger: { warn: jest.fn() } });
+
+    await store.mutate((draft) => {
+      draft.profiles.push({
+        id: "p1",
+        name: "Ava",
+        createdAt: isoAt(1),
+        updatedAt: isoAt(1)
+      });
+      draft.profiles.push({
+        id: "p2",
+        name: "Ben",
+        createdAt: isoAt(2),
+        updatedAt: isoAt(2)
+      });
+      draft.resultsByProfile.p1 = {
+        "2026-02-01|en|abcde": buildResult()
+      };
+      draft.resultsByProfile.p2 = {
+        "2026-02-01|en|abcde": buildResult()
+      };
+    });
+
+    const snapshot = await store.deleteProfile("p1");
+
+    expect(snapshot.profiles.map((profile) => profile.id)).toEqual(["p2"]);
+    expect(snapshot.resultsByProfile.p1).toBeUndefined();
+    expect(snapshot.resultsByProfile.p2).toBeDefined();
+
+    const persisted = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    expect(persisted.profiles.map((profile) => profile.id)).toEqual(["p2"]);
+    expect(persisted.resultsByProfile.p1).toBeUndefined();
+  });
+
+  test("throws PROFILE_NOT_FOUND for unknown ids", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await expect(store.deleteProfile("missing")).rejects.toMatchObject({
+      code: "PROFILE_NOT_FOUND"
+    });
+  });
+
+  test("rejects empty profile id", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await expect(store.deleteProfile("")).rejects.toBeInstanceOf(LeaderboardStoreError);
+    await expect(store.deleteProfile("  ")).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
+});
+
+describe("leaderboard-store: mergeProfiles", () => {
+  function seedTwoProfiles(store) {
+    return store.mutate((draft) => {
+      draft.profiles.push({
+        id: "src",
+        name: "Source",
+        createdAt: isoAt(1),
+        updatedAt: isoAt(1)
+      });
+      draft.profiles.push({
+        id: "dst",
+        name: "Target",
+        createdAt: isoAt(2),
+        updatedAt: isoAt(2)
+      });
+    });
+  }
+
+  function ensureResultBucket(draft, profileId) {
+    if (!draft.resultsByProfile[profileId]) {
+      draft.resultsByProfile[profileId] = Object.create(null);
+    }
+    return draft.resultsByProfile[profileId];
+  }
+
+  test("merges results, deletes source, and updates target updatedAt", async () => {
+    const filePath = tempFilePath();
+    const store = new LeaderboardStore({ filePath, logger: { warn: jest.fn() } });
+    await seedTwoProfiles(store);
+    await store.mutate((draft) => {
+      const src = ensureResultBucket(draft, "src");
+      const dst = ensureResultBucket(draft, "dst");
+      src["2026-02-01|en|abcde"] = buildResult({
+        submissionCount: 1,
+        attempts: 4,
+        updatedAt: isoAt(40)
+      });
+      src["2026-02-02|en|fghij"] = buildResult({
+        date: "2026-02-02",
+        attempts: 3,
+        updatedAt: isoAt(41)
+      });
+      dst["2026-02-03|en|klmno"] = buildResult({
+        date: "2026-02-03",
+        attempts: 5,
+        updatedAt: isoAt(42)
+      });
+    });
+
+    const snapshot = await store.mergeProfiles("src", "dst");
+
+    expect(snapshot.profiles.map((profile) => profile.id)).toEqual(["dst"]);
+    expect(snapshot.resultsByProfile.src).toBeUndefined();
+    expect(Object.keys(snapshot.resultsByProfile.dst).sort()).toEqual([
+      "2026-02-01|en|abcde",
+      "2026-02-02|en|fghij",
+      "2026-02-03|en|klmno"
+    ]);
+    const targetProfile = snapshot.profiles.find((profile) => profile.id === "dst");
+    expect(targetProfile.updatedAt > isoAt(2)).toBe(true);
+  });
+
+  test("applies conflict policy on overlapping daily keys", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await seedTwoProfiles(store);
+    await store.mutate((draft) => {
+      const src = ensureResultBucket(draft, "src");
+      const dst = ensureResultBucket(draft, "dst");
+      src["2026-02-01|en|abcde"] = buildResult({
+        submissionCount: 3,
+        attempts: 5,
+        won: true,
+        updatedAt: isoAt(40)
+      });
+      dst["2026-02-01|en|abcde"] = buildResult({
+        submissionCount: 1,
+        attempts: 3,
+        won: true,
+        updatedAt: isoAt(50)
+      });
+    });
+
+    const snapshot = await store.mergeProfiles("src", "dst");
+    const merged = snapshot.resultsByProfile.dst["2026-02-01|en|abcde"];
+
+    expect(merged.submissionCount).toBe(3);
+    expect(merged.attempts).toBe(5);
+    expect(merged.updatedAt).toBe(isoAt(40));
+  });
+
+  test("rejects merging into self and unknown profiles", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await seedTwoProfiles(store);
+
+    await expect(store.mergeProfiles("src", "src")).rejects.toMatchObject({
+      code: "INVALID_REQUEST"
+    });
+    await expect(store.mergeProfiles("", "dst")).rejects.toMatchObject({
+      code: "INVALID_REQUEST"
+    });
+    await expect(store.mergeProfiles("src", "missing")).rejects.toMatchObject({
+      code: "PROFILE_NOT_FOUND"
+    });
+    await expect(store.mergeProfiles("missing", "dst")).rejects.toMatchObject({
+      code: "PROFILE_NOT_FOUND"
+    });
+  });
+
+  test("does not persist anything when merge fails mid-mutation", async () => {
+    const filePath = tempFilePath();
+    const store = new LeaderboardStore({ filePath, logger: { warn: jest.fn() } });
+    await seedTwoProfiles(store);
+
+    const snapshotBefore = await store.getSnapshot();
+
+    await expect(store.mergeProfiles("src", "missing")).rejects.toMatchObject({
+      code: "PROFILE_NOT_FOUND"
+    });
+
+    const snapshotAfter = await store.getSnapshot();
+    expect(snapshotAfter.profiles).toEqual(snapshotBefore.profiles);
+    expect(snapshotAfter.resultsByProfile).toEqual(snapshotBefore.resultsByProfile);
+  });
+});
+
+describe("leaderboard-store: setLimits", () => {
+  test("raises maxProfiles and persists the new cap on subsequent mutate", async () => {
+    const filePath = tempFilePath();
+    const store = new LeaderboardStore({
+      filePath,
+      logger: { warn: jest.fn() },
+      maxProfiles: 5
+    });
+    await store.getSnapshot();
+
+    const next = store.setLimits({ maxProfiles: 10 });
+    expect(next).toEqual({ maxProfiles: 10, maxResultsPerProfile: 400 });
+  });
+
+  test("rejects lowering maxProfiles below current profile count", async () => {
+    const store = new LeaderboardStore({
+      filePath: tempFilePath(),
+      logger: { warn: jest.fn() },
+      maxProfiles: 50
+    });
+
+    await store.mutate((draft) => {
+      for (let i = 0; i < 3; i += 1) {
+        draft.profiles.push({
+          id: `p${i + 1}`,
+          name: `Player${String.fromCharCode(65 + i)}`,
+          createdAt: isoAt(i + 1),
+          updatedAt: isoAt(i + 1)
+        });
+      }
+    });
+
+    expect(() => store.setLimits({ maxProfiles: 2 })).toThrow(/Cannot lower maxProfiles/);
+    expect(store.maxProfiles).toBe(50);
+  });
+
+  test("rejects non-integer values", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await store.getSnapshot();
+
+    expect(() => store.setLimits({ maxProfiles: "abc" })).toThrow(/positive integer/);
+    expect(() => store.setLimits({ maxResultsPerProfile: 0 })).toThrow(/positive integer/);
   });
 });

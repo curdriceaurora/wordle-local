@@ -5,7 +5,12 @@ const path = require("path");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const { LeaderboardStore, parseDailyKey, PROFILE_NAME_PATTERN } = require("./lib/leaderboard-store");
+const {
+  LeaderboardStore,
+  LeaderboardStoreError,
+  parseDailyKey,
+  PROFILE_NAME_PATTERN
+} = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
@@ -62,6 +67,18 @@ const ENV_PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
   process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
   8 * 1024 * 1024
 );
+const ENV_LEADERBOARD_MAX_PROFILES = parsePositiveInteger(
+  process.env.LEADERBOARD_MAX_PROFILES,
+  20
+);
+const ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE = parsePositiveInteger(
+  process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE,
+  400
+);
+const LEADERBOARD_MAX_PROFILES_MIN = 1;
+const LEADERBOARD_MAX_PROFILES_MAX = 1000;
+const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN = 1;
+const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX = 10000;
 const ENV_PERF_LOGGING = process.env.PERF_LOGGING === "true";
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");
@@ -139,7 +156,11 @@ const INDEX_LOOKUP_UNAVAILABLE = Symbol("index-lookup-unavailable");
 let fullEnglishDefinitions = null;
 let englishDefinitionIndexManifest = null;
 let hasWarnedAboutDefinitionIndex = false;
-const leaderboardStore = new LeaderboardStore({ filePath: LEADERBOARD_DATA_PATH });
+const leaderboardStore = new LeaderboardStore({
+  filePath: LEADERBOARD_DATA_PATH,
+  maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
+  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
+});
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -224,7 +245,9 @@ const ENV_CONFIG = Object.freeze({
     shardCacheSize: ENV_DEFINITION_SHARD_CACHE_SIZE
   }),
   limits: Object.freeze({
-    providerManualMaxFileBytes: ENV_PROVIDER_MANUAL_MAX_FILE_BYTES
+    providerManualMaxFileBytes: ENV_PROVIDER_MANUAL_MAX_FILE_BYTES,
+    leaderboardMaxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
+    leaderboardMaxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
   }),
   diagnostics: Object.freeze({
     perfLogging: ENV_PERF_LOGGING
@@ -239,7 +262,9 @@ const ENV_CONFIG_LOCKS = Object.freeze({
     shardCacheSize: hasValidPositiveIntegerEnv("DEFINITION_SHARD_CACHE_SIZE")
   }),
   limits: Object.freeze({
-    providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES")
+    providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES"),
+    leaderboardMaxProfiles: hasValidPositiveIntegerEnv("LEADERBOARD_MAX_PROFILES"),
+    leaderboardMaxResultsPerProfile: hasValidPositiveIntegerEnv("LEADERBOARD_MAX_RESULTS_PER_PROFILE")
   }),
   diagnostics: Object.freeze({
     perfLogging: process.env.PERF_LOGGING !== undefined
@@ -258,6 +283,12 @@ const runtimeConfigState = {
     },
     limits: {
       providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default",
+      leaderboardMaxProfiles: ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+        ? "env"
+        : "default",
+      leaderboardMaxResultsPerProfile: ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
         ? "env"
         : "default"
     },
@@ -286,6 +317,12 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
     },
     limits: {
       providerManualMaxFileBytes: ENV_CONFIG_LOCKS.limits.providerManualMaxFileBytes
+        ? "env"
+        : "default",
+      leaderboardMaxProfiles: ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+        ? "env"
+        : "default",
+      leaderboardMaxResultsPerProfile: ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
         ? "env"
         : "default"
     },
@@ -322,6 +359,22 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
   ) {
     effective.limits.providerManualMaxFileBytes = Number(overrides.limits.providerManualMaxFileBytes);
     sources.limits.providerManualMaxFileBytes = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles
+    && overrides.limits?.leaderboardMaxProfiles !== undefined
+  ) {
+    effective.limits.leaderboardMaxProfiles = Number(overrides.limits.leaderboardMaxProfiles);
+    sources.limits.leaderboardMaxProfiles = "override";
+  }
+  if (
+    !ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile
+    && overrides.limits?.leaderboardMaxResultsPerProfile !== undefined
+  ) {
+    effective.limits.leaderboardMaxResultsPerProfile = Number(
+      overrides.limits.leaderboardMaxResultsPerProfile
+    );
+    sources.limits.leaderboardMaxResultsPerProfile = "override";
   }
   if (
     !ENV_CONFIG_LOCKS.diagnostics.perfLogging
@@ -362,6 +415,20 @@ function applyRuntimeConfig(overrides) {
       }
       definitionShardCache.delete(oldestKey);
     }
+  }
+
+  try {
+    leaderboardStore.setLimits({
+      maxProfiles: runtimeConfigState.effective.limits.leaderboardMaxProfiles,
+      maxResultsPerProfile: runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
+    });
+  } catch (err) {
+    // Persisted overrides may conflict with current profile count after a manual edit;
+    // log and continue rather than crash the server. The admin PUT endpoint validates
+    // before persisting, so this only triggers for hand-edited config files.
+    console.warn(
+      `[runtime-config] Could not apply leaderboard limits: ${err?.message || String(err)}`
+    );
   }
 }
 
@@ -2013,6 +2080,14 @@ function buildRuntimeConfigResponse() {
         providerManualMaxFileBytes: {
           min: PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
           max: editableProviderManualMaxFileBytes
+        },
+        leaderboardMaxProfiles: {
+          min: LEADERBOARD_MAX_PROFILES_MIN,
+          max: LEADERBOARD_MAX_PROFILES_MAX
+        },
+        leaderboardMaxResultsPerProfile: {
+          min: LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+          max: LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
         }
       },
       diagnostics: {
@@ -2166,6 +2241,11 @@ app.use(
     PROVIDER_MIN_LENGTH,
     PROVIDER_ID,
     PROVIDER_REPOSITORY,
+    LEADERBOARD_MAX_PROFILES_MIN,
+    LEADERBOARD_MAX_PROFILES_MAX,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
     AppConfigStoreError

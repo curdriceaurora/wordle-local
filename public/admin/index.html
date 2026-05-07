@@ -108,6 +108,18 @@
             >
               Runtime Settings
             </button>
+            <button
+              id="admin-tab-profiles"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="profiles"
+              role="tab"
+              aria-controls="admin-panel-profiles"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Profiles
+            </button>
           </nav>
 
           <section
@@ -323,6 +335,77 @@
                 <tbody id="runtimeLockedBody"></tbody>
               </table>
             </div>
+          </section>
+
+          <section
+            id="admin-panel-profiles"
+            class="admin-slot hidden"
+            data-panel="profiles"
+            role="tabpanel"
+            aria-labelledby="admin-tab-profiles"
+            tabindex="0"
+            hidden
+          >
+            <h3>Player Profiles</h3>
+            <p class="note">
+              Manage all registered profiles. Rename, merge duplicates, or hard-delete a profile and
+              all of its results. Cap controls below limit how many profiles and per-profile results
+              the leaderboard retains.
+            </p>
+
+            <div class="admin-shell-head">
+              <h4>Profiles</h4>
+              <button id="refreshProfilesBtn" type="button" class="ghost">Refresh profiles</button>
+            </div>
+            <div id="profilesStatus" class="message" role="status" aria-live="polite"></div>
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Player profiles table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Games</th>
+                    <th>Wins</th>
+                    <th>Win rate</th>
+                    <th>Avg attempts (wins)</th>
+                    <th>Last played</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="profilesBody"></tbody>
+              </table>
+            </div>
+
+            <h4>Leaderboard limits</h4>
+            <p class="note">
+              Limits are persisted in <code>data/app-config.json</code>. Lowering
+              <code>maxProfiles</code> below the current registered count is rejected to avoid
+              orphaning data.
+            </p>
+            <form id="profilesLimitsForm" class="create-form" autocomplete="off">
+              <label for="profilesMaxProfiles">Max profiles</label>
+              <input
+                id="profilesMaxProfiles"
+                name="leaderboardMaxProfiles"
+                type="number"
+                min="1"
+                max="1000"
+              />
+
+              <label for="profilesMaxResults">Max results per profile</label>
+              <input
+                id="profilesMaxResults"
+                name="leaderboardMaxResultsPerProfile"
+                type="number"
+                min="1"
+                max="10000"
+              />
+
+              <div class="admin-inline-actions">
+                <button id="saveProfilesLimitsBtn" type="submit">Save leaderboard limits</button>
+              </div>
+            </form>
+            <div id="profilesLimitsStatus" class="message" role="status" aria-live="polite"></div>
           </section>
 
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>

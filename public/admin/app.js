@@ -27,6 +27,14 @@ const refreshJobsBtnEl = document.getElementById("refreshJobsBtn");
 const jobsStatusEl = document.getElementById("jobsStatus");
 const jobsBodyEl = document.getElementById("jobsBody");
 
+const profilesBodyEl = document.getElementById("profilesBody");
+const refreshProfilesBtnEl = document.getElementById("refreshProfilesBtn");
+const profilesStatusEl = document.getElementById("profilesStatus");
+const profilesLimitsFormEl = document.getElementById("profilesLimitsForm");
+const profilesMaxProfilesEl = document.getElementById("profilesMaxProfiles");
+const profilesMaxResultsEl = document.getElementById("profilesMaxResults");
+const profilesLimitsStatusEl = document.getElementById("profilesLimitsStatus");
+
 const runtimeFormEl = document.getElementById("runtimeForm");
 const runtimeDefinitionsModeEl = document.getElementById("runtimeDefinitionsMode");
 const runtimeDefinitionCacheSizeEl = document.getElementById("runtimeDefinitionCacheSize");
@@ -74,6 +82,8 @@ const state = {
   jobs: [],
   queue: createEmptyQueueState(),
   runtimeConfig: null,
+  profiles: [],
+  profilesLoading: false,
   activeTab: "providers"
 };
 
@@ -232,6 +242,9 @@ function activateTab(nextTab, focus = false) {
   renderTabs();
   if (focus) {
     focusActiveTab();
+  }
+  if (tabId === "profiles" && state.unlocked && !state.profilesLoading) {
+    loadProfiles({ announce: true }).catch(() => {});
   }
 }
 
@@ -680,6 +693,7 @@ async function loadRuntimeConfig(options = {}) {
     const payload = await requestAdminJson("/api/admin/runtime-config");
     state.runtimeConfig = payload;
     populateRuntimeFormFromState();
+    populateProfilesLimitsForm();
     if (options.announce !== false) {
       setStatus(runtimeStatusEl, "Runtime config loaded.", "admin-status-ok");
     }
@@ -693,6 +707,281 @@ async function loadRuntimeConfig(options = {}) {
 function findProviderByVariant(variant) {
   const key = String(variant || "").trim().toLowerCase();
   return state.providers.find((provider) => String(provider.variant || "").toLowerCase() === key) || null;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatAverage(value) {
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return value.toFixed(2);
+}
+
+function findProfileById(id) {
+  const key = String(id || "").trim();
+  if (!key) return null;
+  return state.profiles.find((profile) => profile.id === key) || null;
+}
+
+async function loadProfiles(options = {}) {
+  if (!state.unlocked || !profilesBodyEl) {
+    return;
+  }
+  state.profilesLoading = true;
+  if (options.announce !== false) {
+    setStatus(profilesStatusEl, "Loading profiles…", "");
+  }
+  try {
+    const payload = await requestAdminJson("/api/admin/stats/profiles");
+    state.profiles = Array.isArray(payload?.profiles) ? payload.profiles : [];
+    renderProfiles();
+    if (options.announce !== false) {
+      setStatus(
+        profilesStatusEl,
+        `Loaded ${state.profiles.length} profile${state.profiles.length === 1 ? "" : "s"}.`,
+        "admin-status-ok"
+      );
+    }
+    return payload;
+  } catch (err) {
+    if (options.announce !== false) {
+      setStatus(profilesStatusEl, `Profile list failed: ${err.message}`, "admin-status-missing");
+    }
+    throw err;
+  } finally {
+    state.profilesLoading = false;
+  }
+}
+
+function renderProfiles() {
+  if (!profilesBodyEl) return;
+  profilesBodyEl.innerHTML = "";
+
+  if (!state.profiles.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "No player profiles yet.";
+    row.appendChild(cell);
+    profilesBodyEl.appendChild(row);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  state.profiles.forEach((profile) => {
+    const stats = profile.stats || {};
+    const row = document.createElement("tr");
+    row.dataset.profileId = profile.id;
+
+    const nameCell = document.createElement("td");
+    nameCell.textContent = profile.name;
+    row.appendChild(nameCell);
+
+    const gamesCell = document.createElement("td");
+    gamesCell.textContent = String(stats.totalGames ?? 0);
+    row.appendChild(gamesCell);
+
+    const winsCell = document.createElement("td");
+    winsCell.textContent = String(stats.wins ?? 0);
+    row.appendChild(winsCell);
+
+    const winRateCell = document.createElement("td");
+    winRateCell.textContent = formatPercent(stats.winRate);
+    row.appendChild(winRateCell);
+
+    const avgCell = document.createElement("td");
+    avgCell.textContent = formatAverage(stats.averageWinningAttempts);
+    row.appendChild(avgCell);
+
+    const lastPlayedCell = document.createElement("td");
+    lastPlayedCell.textContent = formatTimestamp(stats.lastPlayedAt);
+    row.appendChild(lastPlayedCell);
+
+    const createdCell = document.createElement("td");
+    createdCell.textContent = formatTimestamp(profile.createdAt);
+    row.appendChild(createdCell);
+
+    const actionsCell = document.createElement("td");
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "ghost";
+    renameBtn.dataset.action = "rename-profile";
+    renameBtn.dataset.profileId = profile.id;
+    renameBtn.textContent = "Rename";
+    actionsCell.appendChild(renameBtn);
+
+    const mergeBtn = document.createElement("button");
+    mergeBtn.type = "button";
+    mergeBtn.className = "ghost";
+    mergeBtn.dataset.action = "merge-profile";
+    mergeBtn.dataset.profileId = profile.id;
+    mergeBtn.textContent = "Merge into…";
+    mergeBtn.disabled = state.profiles.length < 2;
+    actionsCell.appendChild(mergeBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "ghost";
+    deleteBtn.dataset.action = "delete-profile";
+    deleteBtn.dataset.profileId = profile.id;
+    deleteBtn.textContent = "Delete";
+    actionsCell.appendChild(deleteBtn);
+
+    row.appendChild(actionsCell);
+    fragment.appendChild(row);
+  });
+
+  profilesBodyEl.appendChild(fragment);
+}
+
+function populateProfilesLimitsForm() {
+  if (!profilesMaxProfilesEl || !profilesMaxResultsEl) return;
+  const limits = state.runtimeConfig?.effective?.limits || {};
+  if (Number.isInteger(limits.leaderboardMaxProfiles)) {
+    profilesMaxProfilesEl.value = String(limits.leaderboardMaxProfiles);
+  }
+  if (Number.isInteger(limits.leaderboardMaxResultsPerProfile)) {
+    profilesMaxResultsEl.value = String(limits.leaderboardMaxResultsPerProfile);
+  }
+
+  const sources = state.runtimeConfig?.sources?.limits || {};
+  profilesMaxProfilesEl.disabled = sources.leaderboardMaxProfiles === "env";
+  profilesMaxResultsEl.disabled = sources.leaderboardMaxResultsPerProfile === "env";
+}
+
+async function renameProfile(profileId) {
+  const profile = findProfileById(profileId);
+  if (!profile) return;
+  const next = window.prompt(`Rename profile "${profile.name}" to:`, profile.name);
+  if (next === null) return;
+  const trimmed = String(next).trim();
+  if (!trimmed) {
+    setStatus(profilesStatusEl, "Rename cancelled — name is empty.", "admin-status-off");
+    return;
+  }
+  if (trimmed === profile.name) {
+    return;
+  }
+  try {
+    await requestAdminJson(`/api/admin/stats/profile/${encodeURIComponent(profileId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed })
+    });
+    setStatus(profilesStatusEl, `Renamed to "${trimmed}".`, "admin-status-ok");
+    await loadProfiles({ announce: false });
+  } catch (err) {
+    setStatus(profilesStatusEl, `Rename failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function deleteProfile(profileId) {
+  const profile = findProfileById(profileId);
+  if (!profile) return;
+  const typed = window.prompt(
+    `Type the profile name "${profile.name}" exactly to permanently delete it and all of its results.`
+  );
+  if (typed === null) return;
+  if (typed.trim() !== profile.name) {
+    setStatus(profilesStatusEl, "Delete cancelled — name did not match.", "admin-status-off");
+    return;
+  }
+  try {
+    await requestAdminJson(`/api/admin/stats/profile/${encodeURIComponent(profileId)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmName: profile.name })
+    });
+    setStatus(profilesStatusEl, `Deleted "${profile.name}".`, "admin-status-ok");
+    await loadProfiles({ announce: false });
+  } catch (err) {
+    setStatus(profilesStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function mergeProfileFlow(sourceId) {
+  const source = findProfileById(sourceId);
+  if (!source) return;
+  const others = state.profiles.filter((profile) => profile.id !== sourceId);
+  if (others.length === 0) {
+    setStatus(profilesStatusEl, "No other profiles available to merge into.", "admin-status-off");
+    return;
+  }
+
+  const promptLines = [
+    `Merge "${source.name}" into another profile.`,
+    "Type the target profile name exactly:",
+    "",
+    "Available profiles:"
+  ];
+  others.forEach((profile) => {
+    promptLines.push(` • ${profile.name}`);
+  });
+  const targetName = window.prompt(promptLines.join("\n"));
+  if (targetName === null) return;
+  const target = others.find((profile) => profile.name === targetName.trim());
+  if (!target) {
+    setStatus(profilesStatusEl, "Merge cancelled — target name did not match.", "admin-status-off");
+    return;
+  }
+  if (
+    !window.confirm(
+      `Merge "${source.name}" into "${target.name}"?\n\nResults are merged using the conflict-resolution policy. The source profile will be deleted. This cannot be undone.`
+    )
+  ) {
+    return;
+  }
+  try {
+    await requestAdminJson(`/api/admin/stats/profile/${encodeURIComponent(sourceId)}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetProfileId: target.id, confirmed: true })
+    });
+    setStatus(
+      profilesStatusEl,
+      `Merged "${source.name}" into "${target.name}".`,
+      "admin-status-ok"
+    );
+    await loadProfiles({ announce: false });
+  } catch (err) {
+    setStatus(profilesStatusEl, `Merge failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function saveProfilesLimits() {
+  const overrides = state.runtimeConfig?.overrides || {};
+  const nextLimits = { ...(overrides.limits || {}) };
+
+  const maxProfilesValue = Number(profilesMaxProfilesEl?.value);
+  if (Number.isInteger(maxProfilesValue) && maxProfilesValue > 0) {
+    nextLimits.leaderboardMaxProfiles = maxProfilesValue;
+  } else {
+    delete nextLimits.leaderboardMaxProfiles;
+  }
+
+  const maxResultsValue = Number(profilesMaxResultsEl?.value);
+  if (Number.isInteger(maxResultsValue) && maxResultsValue > 0) {
+    nextLimits.leaderboardMaxResultsPerProfile = maxResultsValue;
+  } else {
+    delete nextLimits.leaderboardMaxResultsPerProfile;
+  }
+
+  const nextOverrides = {
+    ...overrides,
+    limits: Object.keys(nextLimits).length ? nextLimits : undefined
+  };
+  if (!nextOverrides.limits) {
+    delete nextOverrides.limits;
+  }
+
+  try {
+    await saveRuntimeOverrides(nextOverrides);
+    setStatus(profilesLimitsStatusEl, "Leaderboard limits saved.", "admin-status-ok");
+  } catch (err) {
+    setStatus(profilesLimitsStatusEl, `Save failed: ${err.message}`, "admin-status-missing");
+  }
 }
 
 async function checkProviderUpdateStatus(variant) {
@@ -949,6 +1238,7 @@ async function saveRuntimeOverrides(overrides) {
     });
     state.runtimeConfig = payload;
     populateRuntimeFormFromState();
+    populateProfilesLimitsForm();
     setStatus(runtimeStatusEl, "Runtime overrides saved.", "admin-status-ok");
     setStatus(workspaceStatusEl, "Runtime settings updated.", "admin-status-ok");
   } finally {
@@ -1013,6 +1303,11 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.queue = createEmptyQueueState();
   state.runtimeConfig = null;
   state.providerUpdates = Object.create(null);
+  state.profiles = [];
+  state.profilesLoading = false;
+  if (profilesBodyEl) profilesBodyEl.innerHTML = "";
+  setStatus(profilesStatusEl, "");
+  setStatus(profilesLimitsStatusEl, "");
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
   setStatus(jobsStatusEl, "", "");
@@ -1051,6 +1346,40 @@ if (resetRuntimeBtnEl) {
     } catch (err) {
       setStatus(runtimeStatusEl, `Reset failed: ${err.message}`, "admin-status-missing");
     }
+  });
+}
+
+if (refreshProfilesBtnEl) {
+  refreshProfilesBtnEl.addEventListener("click", async () => {
+    if (!state.unlocked) return;
+    await loadProfiles({ announce: true }).catch(() => {});
+  });
+}
+
+if (profilesBodyEl) {
+  profilesBodyEl.addEventListener("click", async (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-action]")
+      : null;
+    if (!target) return;
+    const action = String(target.dataset.action || "").trim();
+    const profileId = String(target.dataset.profileId || "").trim();
+    if (!action || !profileId) return;
+
+    if (action === "rename-profile") {
+      await renameProfile(profileId);
+    } else if (action === "delete-profile") {
+      await deleteProfile(profileId);
+    } else if (action === "merge-profile") {
+      await mergeProfileFlow(profileId);
+    }
+  });
+}
+
+if (profilesLimitsFormEl) {
+  profilesLimitsFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await saveProfilesLimits();
   });
 }
 

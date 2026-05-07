@@ -2298,6 +2298,253 @@ describe("Stats API", () => {
     }
   });
 
+  test("admin profiles list returns aggregated stats per profile", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const ben = await request(app).post("/api/stats/profile").send({ name: "Ben" });
+
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: false,
+        attempts: null,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ben.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      const unauthorized = await request(app).get("/api/admin/stats/profiles");
+      expect(unauthorized.status).toBe(401);
+
+      const response = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(response.status).toBe(200);
+      expect(response.body.ok).toBe(true);
+      expect(Array.isArray(response.body.profiles)).toBe(true);
+
+      const avaRow = response.body.profiles.find((row) => row.id === ava.body.playerId);
+      const benRow = response.body.profiles.find((row) => row.id === ben.body.playerId);
+      expect(avaRow.name).toBe("Ava");
+      expect(avaRow.stats.totalGames).toBe(2);
+      expect(avaRow.stats.wins).toBe(1);
+      expect(avaRow.stats.losses).toBe(1);
+      expect(avaRow.stats.winRate).toBeCloseTo(0.5, 5);
+      expect(avaRow.stats.averageWinningAttempts).toBeCloseTo(3, 5);
+      expect(typeof avaRow.stats.lastPlayedAt).toBe("string");
+      expect(benRow.stats.totalGames).toBe(1);
+      expect(benRow.stats.wins).toBe(1);
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("admin delete profile requires matching confirmName and removes results", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+
+      const noConfirm = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({});
+      expect(noConfirm.status).toBe(400);
+      expect(noConfirm.body.error).toMatch(/confirmName/);
+
+      const wrongConfirm = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmName: "Avery" });
+      expect(wrongConfirm.status).toBe(400);
+
+      const missing = await request(app)
+        .delete("/api/admin/stats/profile/missing")
+        .set("x-admin-key", "secret")
+        .send({ confirmName: "anything" });
+      expect(missing.status).toBe(404);
+
+      const ok = await request(app)
+        .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
+        .set("x-admin-key", "secret")
+        .send({ confirmName: "Ava" });
+      expect(ok.status).toBe(200);
+      expect(ok.body.deletedProfileId).toBe(ava.body.playerId);
+
+      const stored = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(stored.profiles.find((profile) => profile.id === ava.body.playerId)).toBeUndefined();
+      expect(stored.resultsByProfile[ava.body.playerId]).toBeUndefined();
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("admin merge profile applies conflict policy and removes the source", async () => {
+    const tempStore = createTempStatsStore();
+    try {
+      const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
+      const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const avery = await request(app).post("/api/stats/profile").send({ name: "Avery" });
+
+      // Source has higher submissionCount — should win conflict.
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 5,
+        maxGuesses: 6
+      });
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 5,
+        maxGuesses: 6
+      });
+      // Target has lower submissionCount but better attempts.
+      await request(app).post("/api/stats/result").send({
+        profileId: avery.body.playerId,
+        dailyKey: "2026-02-20|en|abcde",
+        won: true,
+        attempts: 3,
+        maxGuesses: 6
+      });
+      // Source-only key should land in target.
+      await request(app).post("/api/stats/result").send({
+        profileId: ava.body.playerId,
+        dailyKey: "2026-02-21|en|fghij",
+        won: true,
+        attempts: 4,
+        maxGuesses: 6
+      });
+
+      const noTarget = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ confirmed: true });
+      expect(noTarget.status).toBe(400);
+
+      const noConfirm = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: avery.body.playerId });
+      expect(noConfirm.status).toBe(400);
+
+      const selfMerge = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: ava.body.playerId, confirmed: true });
+      expect(selfMerge.status).toBe(400);
+
+      const merged = await request(app)
+        .post(`/api/admin/stats/profile/${ava.body.playerId}/merge`)
+        .set("x-admin-key", "secret")
+        .send({ targetProfileId: avery.body.playerId, confirmed: true });
+      expect(merged.status).toBe(200);
+      expect(merged.body.deletedProfileId).toBe(ava.body.playerId);
+      expect(merged.body.mergedProfile.id).toBe(avery.body.playerId);
+
+      const stored = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(stored.profiles.find((profile) => profile.id === ava.body.playerId)).toBeUndefined();
+      expect(stored.resultsByProfile[ava.body.playerId]).toBeUndefined();
+      const targetResults = stored.resultsByProfile[avery.body.playerId];
+      expect(targetResults["2026-02-20|en|abcde"].submissionCount).toBe(2);
+      expect(targetResults["2026-02-20|en|abcde"].attempts).toBe(5);
+      expect(targetResults["2026-02-21|en|fghij"]).toBeDefined();
+    } finally {
+      tempStore.cleanup();
+    }
+  });
+
+  test("PUT runtime-config rejects leaderboardMaxProfiles below current profile count", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/profile").send({ name: "Ben" });
+      await request(app).post("/api/stats/profile").send({ name: "Cal" });
+
+      const tooLow = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 2 } } });
+      expect(tooLow.status).toBe(409);
+      expect(tooLow.body.error).toMatch(/Cannot lower leaderboardMaxProfiles/);
+
+      const ok = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 50 } } });
+      expect(ok.status).toBe(200);
+      expect(ok.body.effective.limits.leaderboardMaxProfiles).toBe(50);
+      expect(ok.body.sources.limits.leaderboardMaxProfiles).toBe("override");
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config validates leaderboardMaxProfiles bounds and integer type", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+
+      const tooHigh = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 100000 } } });
+      expect(tooHigh.status).toBe(400);
+
+      const fractional = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 12.5 } } });
+      expect(fractional.status).toBe(400);
+
+      const invalidResults = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 0 } } });
+      expect(invalidResults.status).toBe(400);
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
   test("returns 503 when stats storage is unavailable", async () => {
     const tempStore = createTempStatsStore({
       version: 2,

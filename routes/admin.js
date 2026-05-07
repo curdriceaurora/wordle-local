@@ -105,6 +105,11 @@ function createAdminRouter(deps) {
     PROVIDER_MIN_LENGTH,
     PROVIDER_ID,
     PROVIDER_REPOSITORY,
+    LEADERBOARD_MAX_PROFILES_MIN,
+    LEADERBOARD_MAX_PROFILES_MAX,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+    LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
     AppConfigStoreError
@@ -158,11 +163,144 @@ function createAdminRouter(deps) {
     }
   });
 
+  router.get("/api/admin/stats/profiles", async (req, res) => {
+    try {
+      const snapshot = await leaderboardStore.getSnapshot();
+      const profiles = snapshot.profiles.map((profile) => {
+        const results = snapshot.resultsByProfile?.[profile.id] || {};
+        const entries = Object.values(results);
+        const wins = entries.filter((entry) => entry.won === true).length;
+        const totalAttempts = entries.reduce(
+          (sum, entry) => sum + (Number.isInteger(entry.attempts) ? entry.attempts : 0),
+          0
+        );
+        const winsWithAttempts = entries.filter(
+          (entry) => entry.won === true && Number.isInteger(entry.attempts)
+        );
+        const totalWinningAttempts = winsWithAttempts.reduce(
+          (sum, entry) => sum + entry.attempts,
+          0
+        );
+        const lastPlayedAt = entries.reduce((latest, entry) => {
+          if (!entry.updatedAt) return latest;
+          if (!latest || entry.updatedAt > latest) return entry.updatedAt;
+          return latest;
+        }, null);
+
+        return {
+          id: profile.id,
+          name: profile.name,
+          createdAt: profile.createdAt,
+          updatedAt: profile.updatedAt,
+          stats: {
+            totalGames: entries.length,
+            wins,
+            losses: entries.length - wins,
+            winRate: entries.length > 0 ? wins / entries.length : 0,
+            averageAttempts: entries.length > 0 ? totalAttempts / entries.length : 0,
+            averageWinningAttempts:
+              winsWithAttempts.length > 0 ? totalWinningAttempts / winsWithAttempts.length : 0,
+            lastPlayedAt
+          }
+        };
+      });
+      return res.json({ ok: true, profiles });
+    } catch (err) {
+      console.error("Admin profile list failed.", err);
+      return res.status(503).json({ error: "Profile list unavailable right now. Try again soon." });
+    }
+  });
+
+  router.delete("/api/admin/stats/profile/:id", async (req, res) => {
+    const profileId = String(req.params.id || "").trim();
+    if (!profileId) {
+      return res.status(400).json({ error: "Profile ID is required." });
+    }
+
+    const confirmName = typeof req.body?.confirmName === "string"
+      ? req.body.confirmName.trim()
+      : "";
+    if (!confirmName) {
+      return res.status(400).json({
+        error: "confirmName is required and must match the profile name exactly."
+      });
+    }
+
+    try {
+      const snapshot = await leaderboardStore.getSnapshot();
+      const target = snapshot.profiles.find((profile) => profile.id === profileId);
+      if (!target) {
+        return res.status(404).json({ error: "Player profile not found." });
+      }
+      if (target.name !== confirmName) {
+        return res.status(400).json({
+          error: "confirmName must match the profile name exactly."
+        });
+      }
+
+      await leaderboardStore.deleteProfile(profileId);
+      return res.json({ ok: true, deletedProfileId: profileId });
+    } catch (err) {
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "PROFILE_NOT_FOUND") {
+          return res.status(404).json({ error: err.message });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Admin profile delete failed.", err);
+      return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
+    }
+  });
+
+  router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
+    const sourceId = String(req.params.id || "").trim();
+    const targetId = typeof req.body?.targetProfileId === "string"
+      ? req.body.targetProfileId.trim()
+      : "";
+
+    if (!sourceId) {
+      return res.status(400).json({ error: "Source profile ID is required." });
+    }
+    if (!targetId) {
+      return res.status(400).json({ error: "targetProfileId is required." });
+    }
+    if (sourceId === targetId) {
+      return res.status(400).json({ error: "Cannot merge a profile into itself." });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "confirmed=true is required to merge profiles."
+      });
+    }
+
+    try {
+      const snapshot = await leaderboardStore.mergeProfiles(sourceId, targetId);
+      const mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
+      if (!mergedProfile) {
+        throw new Error("Failed to persist merged profile.");
+      }
+      return res.json({
+        ok: true,
+        mergedProfile,
+        deletedProfileId: sourceId
+      });
+    } catch (err) {
+      if (err instanceof LeaderboardStoreError) {
+        if (err.code === "PROFILE_NOT_FOUND") {
+          return res.status(404).json({ error: err.message });
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Admin profile merge failed.", err);
+      return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
+    }
+  });
+
   router.get("/api/admin/runtime-config", (req, res) => {
     return res.json(buildRuntimeConfigResponse());
   });
 
-  router.put("/api/admin/runtime-config", (req, res) => {
+  router.put("/api/admin/runtime-config", async (req, res) => {
     try {
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
@@ -177,6 +315,41 @@ function createAdminRouter(deps) {
           });
         }
       }
+
+      const requestedMaxProfiles = req.body?.overrides?.limits?.leaderboardMaxProfiles;
+      if (requestedMaxProfiles !== undefined) {
+        const parsed = Number(requestedMaxProfiles);
+        if (
+          !Number.isInteger(parsed)
+          || parsed < LEADERBOARD_MAX_PROFILES_MIN
+          || parsed > LEADERBOARD_MAX_PROFILES_MAX
+        ) {
+          return res.status(400).json({
+            error: `overrides.limits.leaderboardMaxProfiles must be an integer between ${LEADERBOARD_MAX_PROFILES_MIN} and ${LEADERBOARD_MAX_PROFILES_MAX}.`
+          });
+        }
+        const snapshot = await leaderboardStore.getSnapshot();
+        if (parsed < snapshot.profiles.length) {
+          return res.status(409).json({
+            error: `Cannot lower leaderboardMaxProfiles to ${parsed}; ${snapshot.profiles.length} profiles are currently registered.`
+          });
+        }
+      }
+
+      const requestedMaxResults = req.body?.overrides?.limits?.leaderboardMaxResultsPerProfile;
+      if (requestedMaxResults !== undefined) {
+        const parsed = Number(requestedMaxResults);
+        if (
+          !Number.isInteger(parsed)
+          || parsed < LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN
+          || parsed > LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
+        ) {
+          return res.status(400).json({
+            error: `overrides.limits.leaderboardMaxResultsPerProfile must be an integer between ${LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN} and ${LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX}.`
+          });
+        }
+      }
+
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
       applyRuntimeConfig(nextState.overrides || {});
       return res.json(buildRuntimeConfigResponse());

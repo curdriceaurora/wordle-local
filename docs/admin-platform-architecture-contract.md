@@ -102,7 +102,9 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
     },
     "limits": {
       "jsonBodyLimit": "12mb",
-      "providerManualMaxFileBytes": 8388608
+      "providerManualMaxFileBytes": 8388608,
+      "leaderboardMaxProfiles": 50,
+      "leaderboardMaxResultsPerProfile": 400
     },
     "security": {
       "trustProxy": null,
@@ -117,6 +119,16 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
   }
 }
 ```
+
+## Persisted Override Keys (`overrides.limits`)
+
+| Key | Bounds | Notes |
+| --- | --- | --- |
+| `providerManualMaxFileBytes` | 1 MiB – 32 MiB | Capped by `JSON_BODY_LIMIT`. Env: `PROVIDER_MANUAL_MAX_FILE_BYTES`. |
+| `leaderboardMaxProfiles` | 1 – 1000 | Lowering below current registered profile count is rejected (`409`). Env: `LEADERBOARD_MAX_PROFILES`. |
+| `leaderboardMaxResultsPerProfile` | 1 – 10000 | Excess results are pruned (oldest first) on next mutation. Env: `LEADERBOARD_MAX_RESULTS_PER_PROFILE`. |
+
+Whitelisted keys must round-trip the schema (`data/app-config.schema.json`) and the `normalizeLimitsOverrides` validator (`lib/app-config-store.js`). Env values lock the corresponding override key when set.
 
 ## Re-entry Criteria For Deferred Work
 - `#9` queue work resumes only if import concurrency/reliability requirements exceed single-import mutex behavior.
