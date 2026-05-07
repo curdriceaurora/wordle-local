@@ -554,38 +554,58 @@ function buildResult(overrides = {}) {
 }
 
 describe("resolveMergeConflict", () => {
-  test("prefers higher submissionCount", () => {
-    const left = buildResult({ submissionCount: 3 });
-    const right = buildResult({ submissionCount: 1 });
-    expect(resolveMergeConflict(left, right)).toBe(left);
-    expect(resolveMergeConflict(right, left)).toBe(left);
+  test("prefers a winning result over a loss regardless of submissionCount", () => {
+    const won = buildResult({ submissionCount: 1, won: true, attempts: 4 });
+    const lost = buildResult({ submissionCount: 5, won: false, attempts: null });
+    const fromWon = resolveMergeConflict(won, lost);
+    expect(fromWon.won).toBe(true);
+    expect(fromWon.attempts).toBe(4);
+    const fromLost = resolveMergeConflict(lost, won);
+    expect(fromLost.won).toBe(true);
+    expect(fromLost.attempts).toBe(4);
   });
 
-  test("prefers a winning result when submissionCount ties", () => {
-    const won = buildResult({ submissionCount: 2, won: true, attempts: 4 });
-    const lost = buildResult({ submissionCount: 2, won: false, attempts: null });
-    expect(resolveMergeConflict(won, lost)).toBe(won);
-    expect(resolveMergeConflict(lost, won)).toBe(won);
+  test("prefers fewer attempts when both wins, regardless of submissionCount", () => {
+    const fast = buildResult({ submissionCount: 1, won: true, attempts: 3 });
+    const slow = buildResult({ submissionCount: 9, won: true, attempts: 5 });
+    expect(resolveMergeConflict(fast, slow).attempts).toBe(3);
+    expect(resolveMergeConflict(slow, fast).attempts).toBe(3);
   });
 
-  test("prefers fewer attempts when both wins tie on submissionCount", () => {
-    const fast = buildResult({ submissionCount: 2, won: true, attempts: 3 });
-    const slow = buildResult({ submissionCount: 2, won: true, attempts: 5 });
-    expect(resolveMergeConflict(fast, slow)).toBe(fast);
-    expect(resolveMergeConflict(slow, fast)).toBe(fast);
+  test("prefers newer updatedAt when scored axes are equivalent", () => {
+    const newer = buildResult({ won: false, attempts: null, updatedAt: isoAt(50) });
+    const older = buildResult({ won: false, attempts: null, updatedAt: isoAt(40) });
+    expect(resolveMergeConflict(newer, older).updatedAt).toBe(isoAt(50));
+    expect(resolveMergeConflict(older, newer).updatedAt).toBe(isoAt(50));
   });
 
-  test("prefers newer updatedAt when everything else ties", () => {
-    const newer = buildResult({ updatedAt: isoAt(50) });
-    const older = buildResult({ updatedAt: isoAt(40) });
-    expect(resolveMergeConflict(newer, older)).toBe(newer);
-    expect(resolveMergeConflict(older, newer)).toBe(newer);
+  test("sums submissionCount across both inputs", () => {
+    const left = buildResult({ submissionCount: 2 });
+    const right = buildResult({ submissionCount: 3 });
+    expect(resolveMergeConflict(left, right).submissionCount).toBe(5);
   });
 
-  test("returns left on a complete tie (stable)", () => {
+  test("uses the newer updatedAt for the merged entry", () => {
+    const left = buildResult({ updatedAt: isoAt(40) });
+    const right = buildResult({ updatedAt: isoAt(50) });
+    expect(resolveMergeConflict(left, right).updatedAt).toBe(isoAt(50));
+  });
+
+  test("returns canonical fields from the winning side on a complete tie (stable)", () => {
     const left = buildResult();
     const right = buildResult();
-    expect(resolveMergeConflict(left, right)).toBe(left);
+    const merged = resolveMergeConflict(left, right);
+    expect(merged.won).toBe(left.won);
+    expect(merged.attempts).toBe(left.attempts);
+    expect(merged.submissionCount).toBe(left.submissionCount + right.submissionCount);
+  });
+
+  test("zeroes attempts when canonical entry is a loss", () => {
+    const lossLeft = buildResult({ won: false, attempts: null });
+    const lossRight = buildResult({ won: false, attempts: null });
+    const merged = resolveMergeConflict(lossLeft, lossRight);
+    expect(merged.won).toBe(false);
+    expect(merged.attempts).toBeNull();
   });
 });
 
@@ -702,14 +722,47 @@ describe("leaderboard-store: mergeProfiles", () => {
     expect(targetProfile.updatedAt > isoAt(2)).toBe(true);
   });
 
-  test("applies conflict policy on overlapping daily keys", async () => {
+  test("applies canonical conflict policy on overlapping daily keys", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await seedTwoProfiles(store);
+    await store.mutate((draft) => {
+      const src = ensureResultBucket(draft, "src");
+      const dst = ensureResultBucket(draft, "dst");
+      // Source: lost five times for this dailyKey.
+      src["2026-02-01|en|abcde"] = buildResult({
+        submissionCount: 5,
+        attempts: null,
+        won: false,
+        updatedAt: isoAt(40)
+      });
+      // Target: single win for the same dailyKey.
+      dst["2026-02-01|en|abcde"] = buildResult({
+        submissionCount: 1,
+        attempts: 3,
+        won: true,
+        updatedAt: isoAt(50)
+      });
+    });
+
+    const snapshot = await store.mergeProfiles("src", "dst");
+    const merged = snapshot.resultsByProfile.dst["2026-02-01|en|abcde"];
+
+    // Canonical replay policy: prefer won=true (target) over loss (source),
+    // sum submissionCount, take newest updatedAt.
+    expect(merged.won).toBe(true);
+    expect(merged.attempts).toBe(3);
+    expect(merged.submissionCount).toBe(6);
+    expect(merged.updatedAt).toBe(isoAt(50));
+  });
+
+  test("prefers lower attempts when both sides have wins on the same dailyKey", async () => {
     const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
     await seedTwoProfiles(store);
     await store.mutate((draft) => {
       const src = ensureResultBucket(draft, "src");
       const dst = ensureResultBucket(draft, "dst");
       src["2026-02-01|en|abcde"] = buildResult({
-        submissionCount: 3,
+        submissionCount: 4,
         attempts: 5,
         won: true,
         updatedAt: isoAt(40)
@@ -725,9 +778,8 @@ describe("leaderboard-store: mergeProfiles", () => {
     const snapshot = await store.mergeProfiles("src", "dst");
     const merged = snapshot.resultsByProfile.dst["2026-02-01|en|abcde"];
 
-    expect(merged.submissionCount).toBe(3);
-    expect(merged.attempts).toBe(5);
-    expect(merged.updatedAt).toBe(isoAt(40));
+    expect(merged.attempts).toBe(3);
+    expect(merged.submissionCount).toBe(5);
   });
 
   test("rejects merging into self and unknown profiles", async () => {

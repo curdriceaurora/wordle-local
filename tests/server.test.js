@@ -2413,14 +2413,14 @@ describe("Stats API", () => {
     }
   });
 
-  test("admin merge profile applies conflict policy and removes the source", async () => {
+  test("admin merge profile applies canonical conflict policy and removes the source", async () => {
     const tempStore = createTempStatsStore();
     try {
       const app = loadApp({ adminKey: "secret", statsStorePath: tempStore.filePath });
       const ava = await request(app).post("/api/stats/profile").send({ name: "Ava" });
       const avery = await request(app).post("/api/stats/profile").send({ name: "Avery" });
 
-      // Source has higher submissionCount — should win conflict.
+      // Source: replayed twice with attempts=5 (higher submissionCount, but slower).
       await request(app).post("/api/stats/result").send({
         profileId: ava.body.playerId,
         dailyKey: "2026-02-20|en|abcde",
@@ -2435,7 +2435,7 @@ describe("Stats API", () => {
         attempts: 5,
         maxGuesses: 6
       });
-      // Target has lower submissionCount but better attempts.
+      // Target: a single faster win on the same daily key.
       await request(app).post("/api/stats/result").send({
         profileId: avery.body.playerId,
         dailyKey: "2026-02-20|en|abcde",
@@ -2482,8 +2482,10 @@ describe("Stats API", () => {
       expect(stored.profiles.find((profile) => profile.id === ava.body.playerId)).toBeUndefined();
       expect(stored.resultsByProfile[ava.body.playerId]).toBeUndefined();
       const targetResults = stored.resultsByProfile[avery.body.playerId];
-      expect(targetResults["2026-02-20|en|abcde"].submissionCount).toBe(2);
-      expect(targetResults["2026-02-20|en|abcde"].attempts).toBe(5);
+      // Canonical replay policy: both wins, prefer lower attempts (target's 3),
+      // sum submissionCount across both inputs (source 2 + target 1 = 3).
+      expect(targetResults["2026-02-20|en|abcde"].attempts).toBe(3);
+      expect(targetResults["2026-02-20|en|abcde"].submissionCount).toBe(3);
       expect(targetResults["2026-02-21|en|fghij"]).toBeDefined();
     } finally {
       tempStore.cleanup();
