@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/classes.schema.json",
+  "title": "Classroom Classes",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "updatedAt",
+    "classes"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "classes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/classRecord"
+      }
+    }
+  },
+  "$defs": {
+    "classId": {
+      "type": "string",
+      "pattern": "^class-[a-f0-9-]{12,64}$"
+    },
+    "profileId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "className": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "isoTimestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "classRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "createdAt",
+        "updatedAt",
+        "memberProfileIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/classId"
+        },
+        "name": {
+          "$ref": "#/$defs/className"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/isoTimestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/isoTimestamp"
+        },
+        "archivedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "memberProfileIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/profileId"
+          },
+          "uniqueItems": true,
+          "maxItems": 1000
+        }
+      }
+    }
+  }
+}

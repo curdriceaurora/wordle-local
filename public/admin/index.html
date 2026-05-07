@@ -120,6 +120,18 @@
             >
               Profiles
             </button>
+            <button
+              id="admin-tab-classes"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="classes"
+              role="tab"
+              aria-controls="admin-panel-classes"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Classes
+            </button>
           </nav>
 
           <section
@@ -406,6 +418,133 @@
               </div>
             </form>
             <div id="profilesLimitsStatus" class="message" role="status" aria-live="polite"></div>
+          </section>
+
+          <section
+            id="admin-panel-classes"
+            class="admin-slot hidden"
+            data-panel="classes"
+            role="tabpanel"
+            aria-labelledby="admin-tab-classes"
+            tabindex="0"
+            hidden
+          >
+            <h3>Classroom Classes</h3>
+            <p class="note">
+              Group player profiles into classes for bulk roster management,
+              participation reports, and CSV exports. Profiles are shared across
+              the host; deleting a class with profile-cleanup checked only
+              removes profiles that are not members of any other active class.
+            </p>
+
+            <div class="admin-shell-head">
+              <h4>Classes</h4>
+              <div class="admin-inline-actions">
+                <label class="admin-checkbox">
+                  <input
+                    id="classesIncludeArchived"
+                    type="checkbox"
+                  />
+                  Show archived
+                </label>
+                <button id="refreshClassesBtn" type="button" class="ghost">Refresh</button>
+              </div>
+            </div>
+            <div id="classesStatus" class="message" role="status" aria-live="polite"></div>
+
+            <form id="classCreateForm" class="create-form" autocomplete="off">
+              <label for="classCreateName">New class name</label>
+              <input
+                id="classCreateName"
+                name="classCreateName"
+                type="text"
+                maxlength="64"
+                required
+              />
+              <button type="submit">Create class</button>
+            </form>
+
+            <div class="admin-table-wrap">
+              <table class="leaderboard-table" aria-label="Classroom classes table">
+                <caption class="admin-table-caption">All classes on this host.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Members</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Created</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="classesBody"></tbody>
+              </table>
+            </div>
+
+            <section
+              id="classDetailPanel"
+              class="admin-slot-inner hidden"
+              hidden
+              aria-labelledby="classDetailHeading"
+            >
+              <div class="admin-shell-head">
+                <h4 id="classDetailHeading">Class detail</h4>
+                <button id="closeClassDetailBtn" type="button" class="ghost">Close</button>
+              </div>
+
+              <div id="classDetailStatus" class="message" role="status" aria-live="polite"></div>
+
+              <form id="classBulkAddForm" class="create-form" autocomplete="off">
+                <label for="classBulkAddNames">
+                  Add members (one name per line, or paste CSV with name in first column)
+                </label>
+                <textarea
+                  id="classBulkAddNames"
+                  name="classBulkAddNames"
+                  rows="6"
+                  placeholder="Alice&#10;Bob&#10;Carol"
+                ></textarea>
+                <button type="submit">Add members</button>
+              </form>
+
+              <div class="admin-table-wrap">
+                <table class="leaderboard-table" aria-label="Class members table">
+                  <caption class="admin-table-caption">Profiles in this class.</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col">Profile id</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="classMembersBody"></tbody>
+                </table>
+              </div>
+
+              <h4>Participation report</h4>
+              <form id="classReportForm" class="create-form" autocomplete="off">
+                <label for="classReportFrom">From</label>
+                <input id="classReportFrom" name="classReportFrom" type="date" />
+
+                <label for="classReportTo">To</label>
+                <input id="classReportTo" name="classReportTo" type="date" />
+
+                <label for="classReportLang">Language</label>
+                <input id="classReportLang" name="classReportLang" type="text" value="en" />
+
+                <div class="admin-inline-actions">
+                  <button type="submit">Show report</button>
+                  <button id="classReportCsvBtn" type="button" class="ghost">Download CSV</button>
+                  <label class="admin-checkbox">
+                    <input id="classReportBom" type="checkbox" />
+                    Excel (UTF-8 BOM)
+                  </label>
+                  <button id="classReportPrintBtn" type="button" class="ghost">Print view</button>
+                </div>
+              </form>
+
+              <div id="classReportStatus" class="message" role="status" aria-live="polite"></div>
+              <div id="classReportRendered" class="admin-table-wrap"></div>
+            </section>
           </section>
 
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>

@@ -371,7 +371,7 @@ describe("leaderboard-store", () => {
     const payload = {
       version: 1,
       updatedAt: isoAt(10),
-      profiles: Array.from({ length: 21 }, (_, idx) => ({
+      profiles: Array.from({ length: 51 }, (_, idx) => ({
         id: `p${idx + 1}`,
         name: `Player${String.fromCharCode(65 + (idx % 26))}`,
         createdAt: isoAt(idx + 1),
@@ -384,7 +384,7 @@ describe("leaderboard-store", () => {
       maxProfiles: 0,
       maxResultsPerProfile: 0
     });
-    expect(normalized.state.profiles).toHaveLength(20);
+    expect(normalized.state.profiles).toHaveLength(50);
     expect(normalized.wasPruned).toBe(true);
   });
 

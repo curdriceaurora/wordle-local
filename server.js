@@ -12,6 +12,8 @@ const {
   PROFILE_NAME_PATTERN
 } = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
+const { ClassesStore, ClassesStoreError } = require("./lib/classes-store");
+const { buildCsv, parseBulkNames, UTF8_BOM } = require("./lib/csv-format");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
@@ -94,7 +96,7 @@ function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
 
 const ENV_LEADERBOARD_MAX_PROFILES = clampEnvBounded(
   process.env.LEADERBOARD_MAX_PROFILES,
-  20,
+  50,
   LEADERBOARD_MAX_PROFILES_MIN,
   LEADERBOARD_MAX_PROFILES_MAX,
   "LEADERBOARD_MAX_PROFILES"
@@ -132,6 +134,19 @@ const ADMIN_JOBS_STAGING_ROOT = path.join(ADMIN_JOBS_ROOT, "staging");
 const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
   ? path.resolve(process.env.APP_CONFIG_PATH)
   : path.join(__dirname, "data", "app-config.json");
+const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
+  ? path.resolve(process.env.CLASSES_STORE_PATH)
+  : path.join(__dirname, "data", "classes.json");
+const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
+  process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
+  1000,
+  1,
+  // Match data/classes.schema.json's memberProfileIds.maxItems so the
+  // env cap can never produce a persisted classes.json that violates
+  // the on-disk contract.
+  1000,
+  "CLASSES_MAX_MEMBERS_PER_CLASS"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -992,6 +1007,11 @@ const appConfigStore = new AppConfigStore({
 });
 const adminJobsStore = new AdminJobsStore({
   filePath: ADMIN_JOBS_DATA_PATH,
+  logger: console
+});
+const classesStore = new ClassesStore({
+  filePath: CLASSES_DATA_PATH,
+  maxMembersPerClass: ENV_CLASSES_MAX_MEMBERS_PER_CLASS,
   logger: console
 });
 let registeredLanguageCatalog = new Map();
@@ -2301,6 +2321,7 @@ app.use(
     leaderboardStore,
     languageRegistryStore,
     adminJobsStore,
+    classesStore,
     appConfigStore,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
@@ -2332,9 +2353,15 @@ app.use(
     isLeaderboardMaxResultsPerProfileEnvLocked: () =>
       ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile,
     LeaderboardStoreError,
+    ClassesStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
-    AppConfigStoreError
+    AppConfigStoreError,
+    buildCsv,
+    parseBulkNames,
+    UTF8_BOM,
+    normalizeLang,
+    getLocalDateString
   })
 );
 
@@ -2430,6 +2457,7 @@ const createStatsRouter = require("./routes/stats.js");
 app.use(
   createStatsRouter({
     leaderboardStore,
+    classesStore,
     normalizeProfileNameInput,
     parseDailyResultPayload,
     parseLeaderboardRange,

@@ -82,6 +82,7 @@ function createAdminRouter(deps) {
     leaderboardStore,
     languageRegistryStore,
     adminJobsStore,
+    classesStore,
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
@@ -111,9 +112,15 @@ function createAdminRouter(deps) {
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
     isLeaderboardMaxProfilesEnvLocked,
     LeaderboardStoreError,
+    ClassesStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
-    AppConfigStoreError
+    AppConfigStoreError,
+    buildCsv,
+    parseBulkNames,
+    UTF8_BOM,
+    normalizeLang,
+    getLocalDateString
   } = deps;
 
   const router = express.Router();
@@ -238,7 +245,6 @@ function createAdminRouter(deps) {
 
     try {
       await leaderboardStore.deleteProfile(profileId, { expectedName: confirmName });
-      return res.json({ ok: true, deletedProfileId: profileId });
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
@@ -252,6 +258,31 @@ function createAdminRouter(deps) {
       console.error("Admin profile delete failed.", err);
       return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
     }
+    // Profile is gone from the leaderboard; pull it out of any class roster
+    // so class detail/report don't surface a "(missing profile)" row.
+    let classCleanupTouched = 0;
+    let classCleanupError = null;
+    try {
+      classCleanupTouched = await classesStore.removeMemberEverywhere(profileId);
+    } catch (err) {
+      classCleanupError = err;
+      console.warn(
+        `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
+      );
+    }
+    const responseBody = {
+      ok: true,
+      deletedProfileId: profileId,
+      classCleanupTouched
+    };
+    if (classCleanupError) {
+      responseBody.partialFailure = {
+        message: "Profile deleted from leaderboard, but class cleanup failed. Class rosters may still reference the deleted profile id.",
+        error: classCleanupError?.message || String(classCleanupError)
+      };
+      return res.status(207).json(responseBody);
+    }
+    return res.json(responseBody);
   });
 
   router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
@@ -275,17 +306,13 @@ function createAdminRouter(deps) {
       });
     }
 
+    let mergedProfile;
     try {
       const snapshot = await leaderboardStore.mergeProfiles(sourceId, targetId);
-      const mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
+      mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
       if (!mergedProfile) {
         throw new Error("Failed to persist merged profile.");
       }
-      return res.json({
-        ok: true,
-        mergedProfile,
-        deletedProfileId: sourceId
-      });
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
@@ -296,6 +323,34 @@ function createAdminRouter(deps) {
       console.error("Admin profile merge failed.", err);
       return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
     }
+    // The source profile is gone; rewrite class memberships so a class that
+    // had the source now references the merged target instead. If the target
+    // is already a member, the source reference is just dropped.
+    let classMembershipsTransferred = [];
+    let classCleanupError = null;
+    try {
+      const result = await classesStore.replaceMemberEverywhere(sourceId, targetId);
+      classMembershipsTransferred = result.touchedClassIds;
+    } catch (err) {
+      classCleanupError = err;
+      console.warn(
+        `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
+      );
+    }
+    const responseBody = {
+      ok: true,
+      mergedProfile,
+      deletedProfileId: sourceId,
+      classMembershipsTransferred
+    };
+    if (classCleanupError) {
+      responseBody.partialFailure = {
+        message: "Profile merge succeeded, but class membership rewrite failed. Some classes may still reference the source profile id.",
+        error: classCleanupError?.message || String(classCleanupError)
+      };
+      return res.status(207).json(responseBody);
+    }
+    return res.json(responseBody);
   });
 
   router.get("/api/admin/runtime-config", (req, res) => {
@@ -706,6 +761,770 @@ function createAdminRouter(deps) {
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
     }
+  });
+
+  // ============================================================================
+  // CLASSROOM (CLASSES) ROUTES
+  // ============================================================================
+
+  function classesStoreErrorToStatus(err) {
+    switch (err?.code) {
+      case "CLASS_NOT_FOUND":
+      case "MEMBER_NOT_FOUND":
+        return 404;
+      case "DUPLICATE_NAME":
+      case "MAX_CLASSES_REACHED":
+      case "MAX_MEMBERS_REACHED":
+      case "CLASS_ARCHIVED":
+        return 409;
+      default:
+        return 400;
+    }
+  }
+
+  function handleClassesStoreError(res, err, fallbackLogContext) {
+    if (err instanceof ClassesStoreError) {
+      return res.status(classesStoreErrorToStatus(err)).json({ error: err.message });
+    }
+    if (err instanceof StatsApiError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (err instanceof LeaderboardStoreError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error(fallbackLogContext, err);
+    return res.status(503).json({ error: "Class operation unavailable right now. Try again soon." });
+  }
+
+  function parseDateString(value) {
+    if (typeof value !== "string") return null;
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year
+      || date.getMonth() !== month - 1
+      || date.getDate() !== day
+    ) {
+      return null;
+    }
+    return value;
+  }
+
+  function eachDateInRange(fromDate, toDate) {
+    const dates = [];
+    const start = new Date(`${fromDate}T00:00:00`);
+    const end = new Date(`${toDate}T00:00:00`);
+    const cursor = new Date(start.getTime());
+    while (cursor <= end) {
+      const yyyy = cursor.getFullYear();
+      const mm = String(cursor.getMonth() + 1).padStart(2, "0");
+      const dd = String(cursor.getDate()).padStart(2, "0");
+      dates.push(`${yyyy}-${mm}-${dd}`);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  }
+
+  const REPORT_MAX_DAYS = 90;
+  const SUPPORTED_BULK_LIMIT = 500;
+
+  function buildReportSummary({ classRecord, profiles, results, dates, lang }) {
+    const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
+    const rows = [];
+    const datePrefix = `|${lang}|`;
+    for (const profileId of classRecord.memberProfileIds) {
+      const profile = profileMap.get(profileId);
+      if (!profile) {
+        rows.push({
+          profileId,
+          name: null,
+          missing: true,
+          wins: 0,
+          playedCount: 0,
+          winRate: null,
+          lastPlayedAt: null,
+          days: dates.map((date) => ({ date, status: "no-profile" }))
+        });
+        continue;
+      }
+      const profileResults = results[profileId] || {};
+      // Pre-index by date — single pass over the profile's results, regardless
+      // of how many dates we then look up. Collisions on the same date+lang
+      // (different code suffixes) are resolved deterministically by newest
+      // updatedAt.
+      const indexByDate = Object.create(null);
+      for (const [key, value] of Object.entries(profileResults)) {
+        const langSep = key.indexOf("|");
+        if (langSep === -1) continue;
+        const datePart = key.slice(0, langSep);
+        if (!key.startsWith(`${datePart}${datePrefix}`)) continue;
+        const existing = indexByDate[datePart];
+        if (!existing || (value.updatedAt && value.updatedAt > existing.updatedAt)) {
+          indexByDate[datePart] = value;
+        }
+      }
+      const days = dates.map((date) => {
+        const entry = indexByDate[date];
+        if (!entry) {
+          return { date, status: "not-started" };
+        }
+        return {
+          date,
+          status: entry.won ? "won" : "lost",
+          attempts: entry.won ? entry.attempts : null,
+          maxGuesses: entry.maxGuesses,
+          submissionCount: entry.submissionCount,
+          updatedAt: entry.updatedAt
+        };
+      });
+      const wins = days.filter((day) => day.status === "won").length;
+      const playedCount = days.filter((day) => day.status === "won" || day.status === "lost").length;
+      rows.push({
+        profileId,
+        name: profile.name,
+        missing: false,
+        wins,
+        playedCount,
+        winRate: playedCount > 0 ? wins / playedCount : 0,
+        lastPlayedAt: days.reduce((latest, day) => {
+          if (!day.updatedAt) return latest;
+          if (!latest || day.updatedAt > latest) return day.updatedAt;
+          return latest;
+        }, null),
+        days
+      });
+    }
+    return rows;
+  }
+
+  function rowsToCsv({ dates, rows, lang }) {
+    const header = ["profile_id", "profile_name", "lang"];
+    for (const date of dates) {
+      header.push(`${date}_status`, `${date}_attempts`);
+    }
+    header.push("wins_in_range", "played_in_range", "win_rate_in_range", "last_played_at");
+    const csvRows = [header];
+    for (const row of rows) {
+      const flat = [row.profileId, row.name || "", lang];
+      for (const day of row.days) {
+        flat.push(day.status, day.attempts === null || day.attempts === undefined ? "" : String(day.attempts));
+      }
+      flat.push(
+        row.missing ? "" : String(row.wins ?? 0),
+        row.missing ? "" : String(row.playedCount ?? 0),
+        row.missing
+          ? ""
+          : (row.winRate !== null && row.winRate !== undefined ? row.winRate.toFixed(4) : ""),
+        row.lastPlayedAt || ""
+      );
+      csvRows.push(flat);
+    }
+    return buildCsv(csvRows);
+  }
+
+  router.get("/api/admin/classes", async (req, res) => {
+    try {
+      const includeArchived = String(req.query?.includeArchived || "").toLowerCase() === "true";
+      const list = await classesStore.listClasses({ includeArchived });
+      return res.json({
+        ok: true,
+        classes: list.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+          archivedAt: entry.archivedAt,
+          memberCount: entry.memberProfileIds.length
+        }))
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class list failed.");
+    }
+  });
+
+  router.post("/api/admin/classes", async (req, res) => {
+    const name = req.body?.name;
+    try {
+      const created = await classesStore.createClass(name);
+      return res.status(201).json({
+        ok: true,
+        class: {
+          id: created.id,
+          name: created.name,
+          createdAt: created.createdAt,
+          updatedAt: created.updatedAt,
+          archivedAt: created.archivedAt,
+          memberCount: 0
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class create failed.");
+    }
+  });
+
+  router.get("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    try {
+      const classRecord = await classesStore.getClass(classId);
+      if (!classRecord) {
+        return res.status(404).json({ error: "Class not found." });
+      }
+      const leaderboard = await leaderboardStore.getSnapshot();
+      const profileMap = new Map(leaderboard.profiles.map((profile) => [profile.id, profile]));
+      const members = classRecord.memberProfileIds.map((profileId) => {
+        const profile = profileMap.get(profileId);
+        return {
+          profileId,
+          name: profile?.name ?? null,
+          missing: !profile
+        };
+      });
+      return res.json({
+        ok: true,
+        class: {
+          ...classRecord,
+          memberCount: classRecord.memberProfileIds.length
+        },
+        members
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class detail failed.");
+    }
+  });
+
+  router.patch("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    const patch = {};
+    if (req.body?.name !== undefined) patch.name = req.body.name;
+    if (req.body?.archived !== undefined) patch.archived = req.body.archived;
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "Provide at least one of: name, archived." });
+    }
+    try {
+      const updated = await classesStore.updateClass(classId, patch);
+      return res.json({
+        ok: true,
+        class: {
+          id: updated.id,
+          name: updated.name,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+          archivedAt: updated.archivedAt,
+          memberCount: updated.memberProfileIds.length
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class update failed.");
+    }
+  });
+
+  router.delete("/api/admin/classes/:id", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ error: "confirmed=true is required to delete a class." });
+    }
+    const deleteProfilesFlag = req.body?.deleteProfiles === true;
+
+    let carveOutIds = [];
+    let removedProfileIds = [];
+    let leaderboardCleanupError = null;
+    try {
+      if (deleteProfilesFlag) {
+        // Atomic in classes-store: drops the class, computes which member
+        // IDs are NOT in any other non-archived class, and removes those
+        // from every (archived) class that still references them. The
+        // classes-side state is consistent before we touch the leaderboard.
+        const result = await classesStore.deleteClassWithCarveOut(classId);
+        carveOutIds = result.carveOutIds;
+      } else {
+        // Just delete the class without touching profiles.
+        await classesStore.deleteClass(classId);
+      }
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class delete failed.");
+    }
+
+    let eligibleForCleanup = [];
+    if (deleteProfilesFlag && carveOutIds.length > 0) {
+      // Class is already deleted at this point. If the leaderboard mutate
+      // fails, returning an error would mislead the client into retrying a
+      // delete that's already happened (404 on retry). Instead capture the
+      // failure as a partial-success signal so callers can reconcile.
+      // Track tentative removals separately so we don't expose them to the
+      // caller until persist completes — a mutator that runs but fails to
+      // persist would otherwise leak unpersisted IDs into deletedProfileIds.
+      //
+      // Cross-store race: between deleteClassWithCarveOut returning and the
+      // leaderboard mutate running, a concurrent bulk-add could have added
+      // one of these carve-out IDs to a different class. Re-read the
+      // classes-store snapshot and skip IDs that are now class members so
+      // we don't strip a profile that another class legitimately needs.
+      try {
+        const referencedNow = new Set();
+        try {
+          const classesSnapshot = await classesStore.getSnapshot();
+          for (const entry of classesSnapshot.classes) {
+            for (const memberId of entry.memberProfileIds) {
+              referencedNow.add(memberId);
+            }
+          }
+        } catch (snapshotErr) {
+          console.warn(
+            `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+          );
+        }
+        eligibleForCleanup = carveOutIds.filter((id) => !referencedNow.has(id));
+        const tentativeRemoved = [];
+        await leaderboardStore.mutate((draft) => {
+          for (const memberId of eligibleForCleanup) {
+            const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
+            if (idx !== -1) {
+              draft.profiles.splice(idx, 1);
+              if (
+                draft.resultsByProfile
+                && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
+              ) {
+                delete draft.resultsByProfile[memberId];
+              }
+              tentativeRemoved.push(memberId);
+            }
+          }
+        });
+        removedProfileIds = tentativeRemoved;
+      } catch (err) {
+        leaderboardCleanupError = err;
+        console.warn(
+          `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
+        );
+      }
+    }
+
+    const responseBody = {
+      ok: true,
+      deletedClassId: classId,
+      deletedProfileIds: removedProfileIds
+    };
+    if (leaderboardCleanupError) {
+      responseBody.partialFailure = true;
+      // Report only IDs we actually attempted to clean up (filtered for
+      // cross-store race) and didn't successfully remove. IDs that were
+      // intentionally skipped (now-referenced by another class) are not
+      // pending — they belong to that other class now.
+      const removedSet = new Set(removedProfileIds);
+      responseBody.pendingProfileIds = eligibleForCleanup.filter((id) => !removedSet.has(id));
+      responseBody.message = "Class deleted, but profile cleanup failed. Pending profile IDs are listed and may need manual reconciliation.";
+    }
+    return res.json(responseBody);
+  });
+
+  router.post("/api/admin/classes/:id/members/bulk", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    let target;
+    try {
+      target = await classesStore.getClass(classId);
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class lookup failed.");
+    }
+    if (!target) {
+      return res.status(404).json({ error: "Class not found." });
+    }
+    if (target.archivedAt) {
+      return res.status(409).json({
+        error: "Cannot bulk-add to an archived class. Unarchive it first."
+      });
+    }
+
+    let candidateNames = [];
+    let parseErrors = [];
+    if (Array.isArray(req.body?.names)) {
+      candidateNames = req.body.names;
+    } else if (typeof req.body?.csv === "string") {
+      const parsed = parseBulkNames(req.body.csv, { lineLimit: SUPPORTED_BULK_LIMIT });
+      candidateNames = parsed.names;
+      parseErrors = parsed.errors;
+    } else {
+      return res.status(400).json({
+        error: "Provide either { names: string[] } or { csv: string }."
+      });
+    }
+
+    if (parseErrors.length > 0) {
+      // Treat the size-limit breach the same as the explicit-array path so
+      // clients can reliably distinguish "too large" (413) from genuine
+      // CSV syntax errors (400).
+      const sizeBreach = parseErrors.some((entry) =>
+        typeof entry?.message === "string" && entry.message.includes("exceeded")
+      );
+      if (sizeBreach) {
+        return res.status(413).json({
+          error: `Bulk input exceeded ${SUPPORTED_BULK_LIMIT} names per request.`
+        });
+      }
+      return res.status(400).json({
+        error: "Bulk input could not be parsed.",
+        parseErrors
+      });
+    }
+
+    if (candidateNames.length === 0) {
+      return res.json({
+        ok: true,
+        addedToClass: [],
+        createdProfileIds: [],
+        reusedProfileIds: [],
+        classMemberCount: target.memberProfileIds.length
+      });
+    }
+    if (candidateNames.length > SUPPORTED_BULK_LIMIT) {
+      return res.status(413).json({
+        error: `Bulk input exceeded ${SUPPORTED_BULK_LIMIT} names per request.`
+      });
+    }
+
+    const normalizedNames = [];
+    const invalidNames = [];
+    const dedupedLowerSet = new Set();
+    for (const candidate of candidateNames) {
+      try {
+        const next = normalizeProfileNameInput(candidate);
+        const key = next.toLowerCase();
+        if (!dedupedLowerSet.has(key)) {
+          dedupedLowerSet.add(key);
+          normalizedNames.push(next);
+        }
+      } catch (err) {
+        invalidNames.push({ raw: candidate, error: err?.message || "Invalid name." });
+      }
+    }
+    if (invalidNames.length > 0) {
+      return res.status(400).json({
+        error: "One or more names did not pass validation.",
+        invalidNames
+      });
+    }
+
+    // Pre-validate the per-class member cap. The check counts only names that
+    // would be NET-NEW members of this class — names that resolve to a
+    // profile already in the class (or names not yet in the leaderboard but
+    // assumed-new under fail-closed semantics) — so an idempotent re-upload
+    // of an at-cap roster doesn't trip the cap.
+    let leaderboardSnapshotForPrecheck;
+    try {
+      leaderboardSnapshotForPrecheck = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Leaderboard snapshot for cap pre-check failed.");
+    }
+    const existingProfileByLowerName = new Map();
+    for (const profile of leaderboardSnapshotForPrecheck.profiles) {
+      existingProfileByLowerName.set(profile.name.toLowerCase(), profile.id);
+    }
+    const targetMemberSet = new Set(target.memberProfileIds);
+    let projectedNetNew = 0;
+    for (const name of normalizedNames) {
+      const existingId = existingProfileByLowerName.get(name.toLowerCase());
+      if (!existingId || !targetMemberSet.has(existingId)) {
+        projectedNetNew += 1;
+      }
+    }
+    if (target.memberProfileIds.length + projectedNetNew > classesStore.maxMembersPerClass) {
+      return res.status(409).json({
+        error: `Class is at the per-class member cap of ${classesStore.maxMembersPerClass}.`
+      });
+    }
+
+    // Host-cap pre-check. Count names that would create truly new profiles
+    // (not in the leaderboard) and reject 409 if accepting the request
+    // would push the host past LEADERBOARD_MAX_PROFILES. Without this, the
+    // mutate path's normalizer would silently prune older profiles —
+    // including profiles owned by other classes — to make room.
+    let projectedNetNewProfiles = 0;
+    for (const name of normalizedNames) {
+      if (!existingProfileByLowerName.has(name.toLowerCase())) {
+        projectedNetNewProfiles += 1;
+      }
+    }
+    const hostCap = leaderboardStore.maxProfiles;
+    if (
+      Number.isInteger(hostCap)
+      && hostCap > 0
+      && leaderboardSnapshotForPrecheck.profiles.length + projectedNetNewProfiles > hostCap
+    ) {
+      return res.status(409).json({
+        error: `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
+      });
+    }
+
+    // Resolve each name to an existing profile (case-insensitive match) or
+    // create a new profile inside a single mutate so we never half-write.
+    // The pre-check above bounds growth, but we re-validate inside the
+    // mutate to defend against concurrent bulk-adds: two requests that
+    // each pass the pre-check could still overflow when serialized. The
+    // throw aborts the mutate and rolls back the draft, so no profiles
+    // are persisted.
+    const resolvedProfileIds = [];
+    const reusedProfileIds = [];
+    const createdProfileIds = [];
+    try {
+      await leaderboardStore.mutate((draft) => {
+        const nowIso = new Date().toISOString();
+        const existingByLowerName = new Map(
+          draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
+        );
+        for (const name of normalizedNames) {
+          const key = name.toLowerCase();
+          const existing = existingByLowerName.get(key);
+          if (existing) {
+            resolvedProfileIds.push(existing.id);
+            reusedProfileIds.push(existing.id);
+            continue;
+          }
+          const created = {
+            id: randomUUID(),
+            name,
+            createdAt: nowIso,
+            updatedAt: nowIso
+          };
+          draft.profiles.push(created);
+          existingByLowerName.set(key, created);
+          resolvedProfileIds.push(created.id);
+          createdProfileIds.push(created.id);
+        }
+        if (Number.isInteger(hostCap) && hostCap > 0 && draft.profiles.length > hostCap) {
+          throw new ClassesStoreError(
+            "HOST_CAP_EXCEEDED",
+            `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
+          );
+        }
+      });
+    } catch (err) {
+      if (err && err.code === "HOST_CAP_EXCEEDED") {
+        return res.status(409).json({ error: err.message });
+      }
+      return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
+    }
+
+    // Cross-store race: between resolving resolvedProfileIds in the
+    // leaderboard mutate above and calling addMembers below, a concurrent
+    // admin DELETE /api/admin/stats/profile/:id (or a profile-merge) can
+    // remove one of those IDs from the leaderboard. Re-read a fresh
+    // leaderboard snapshot and filter resolvedProfileIds so we don't
+    // persist a class member id that no longer points at a real profile.
+    let membersToAdd = resolvedProfileIds;
+    try {
+      const recheck = await leaderboardStore.getSnapshot();
+      const liveIds = new Set(recheck.profiles.map((profile) => profile.id));
+      membersToAdd = resolvedProfileIds.filter((id) => liveIds.has(id));
+    } catch (recheckErr) {
+      console.warn(
+        `[admin] Bulk add could not revalidate profile IDs against the leaderboard; proceeding with the resolved set: ${recheckErr?.message || String(recheckErr)}`
+      );
+    }
+    const droppedDuringRecheck = resolvedProfileIds.filter(
+      (id) => !membersToAdd.includes(id)
+    );
+
+    let addOutcome;
+    try {
+      addOutcome = await classesStore.addMembers(classId, membersToAdd);
+    } catch (err) {
+      // Race window: between the pre-check and addMembers, another admin
+      // could have archived the class or filled the per-class cap. Roll back
+      // the profiles we just created so a failed bulk import doesn't pollute
+      // the leaderboard with orphaned profiles. Reused profiles existed
+      // before this request and stay.
+      //
+      // Cross-store race: a concurrent bulk-add could have looked up one of
+      // our newly created profiles by name and added it to a different
+      // class while addMembers was failing. Filter createdProfileIds against
+      // a fresh classes-store snapshot so we don't delete profiles that are
+      // now legitimately in use.
+      if (createdProfileIds.length > 0) {
+        try {
+          const referencedNow = new Set();
+          try {
+            const classesSnapshot = await classesStore.getSnapshot();
+            for (const entry of classesSnapshot.classes) {
+              for (const memberId of entry.memberProfileIds) {
+                referencedNow.add(memberId);
+              }
+            }
+          } catch (snapshotErr) {
+            console.warn(
+              `[admin] Bulk add rollback could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+            );
+          }
+          const safeToDelete = createdProfileIds.filter((id) => !referencedNow.has(id));
+          if (safeToDelete.length > 0) {
+            const safeSet = new Set(safeToDelete);
+            await leaderboardStore.mutate((draft) => {
+              draft.profiles = draft.profiles.filter((profile) => !safeSet.has(profile.id));
+              if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
+                for (const id of safeSet) {
+                  if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
+                    delete draft.resultsByProfile[id];
+                  }
+                }
+              }
+            });
+          }
+        } catch (rollbackErr) {
+          console.warn(
+            `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
+          );
+        }
+      }
+      return handleClassesStoreError(res, err, "Bulk class add failed.");
+    }
+
+    const droppedSet = new Set(droppedDuringRecheck);
+    const responseBody = {
+      ok: true,
+      addedToClass: addOutcome.added,
+      createdProfileIds: createdProfileIds.filter((id) => !droppedSet.has(id)),
+      reusedProfileIds: reusedProfileIds.filter((id) => !droppedSet.has(id)),
+      classMemberCount: addOutcome.class.memberProfileIds.length
+    };
+    if (droppedDuringRecheck.length > 0) {
+      responseBody.droppedDueToConcurrentDelete = droppedDuringRecheck;
+    }
+    return res.json(responseBody);
+  });
+
+  router.delete("/api/admin/classes/:id/members/:profileId", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    const profileId = String(req.params.profileId || "").trim();
+    if (!classId || !profileId) {
+      return res.status(400).json({ error: "Class id and profile id are required." });
+    }
+    try {
+      const updated = await classesStore.removeMember(classId, profileId);
+      return res.json({
+        ok: true,
+        class: {
+          id: updated.id,
+          memberCount: updated.memberProfileIds.length
+        }
+      });
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class member removal failed.");
+    }
+  });
+
+  router.get("/api/admin/classes/:id/report", async (req, res) => {
+    const classId = String(req.params.id || "").trim();
+    if (!classId) {
+      return res.status(400).json({ error: "Class id is required." });
+    }
+    const rawLang = String(req.query?.lang || "").trim();
+    if (!rawLang) {
+      return res.status(400).json({ error: "lang query parameter is required." });
+    }
+    const lang = normalizeLang(rawLang);
+    if (!lang) {
+      return res.status(400).json({
+        error: `lang "${rawLang}" is not registered on this host.`
+      });
+    }
+
+    const today = getLocalDateString(new Date());
+    const rawFrom = req.query?.from;
+    const rawTo = req.query?.to;
+    if (rawFrom !== undefined && parseDateString(rawFrom) === null) {
+      return res.status(400).json({ error: "`from` must be a YYYY-MM-DD date." });
+    }
+    if (rawTo !== undefined && parseDateString(rawTo) === null) {
+      return res.status(400).json({ error: "`to` must be a YYYY-MM-DD date." });
+    }
+    const fromDate = parseDateString(rawFrom) || today;
+    const toDate = parseDateString(rawTo) || fromDate;
+    if (fromDate > toDate) {
+      return res.status(400).json({ error: "`from` must be on or before `to`." });
+    }
+    // Cap-check the span BEFORE materializing the date array, so a
+    // syntactically valid but huge range (e.g. from=0100-01-01&to=9999-12-31)
+    // doesn't allocate millions of strings just to return a 400.
+    const fromMs = Date.UTC(
+      Number(fromDate.slice(0, 4)),
+      Number(fromDate.slice(5, 7)) - 1,
+      Number(fromDate.slice(8, 10))
+    );
+    const toMs = Date.UTC(
+      Number(toDate.slice(0, 4)),
+      Number(toDate.slice(5, 7)) - 1,
+      Number(toDate.slice(8, 10))
+    );
+    const projectedDays = Math.floor((toMs - fromMs) / (24 * 60 * 60 * 1000)) + 1;
+    if (projectedDays > REPORT_MAX_DAYS) {
+      return res.status(400).json({
+        error: `Date range exceeds the ${REPORT_MAX_DAYS}-day cap.`
+      });
+    }
+    const dates = eachDateInRange(fromDate, toDate);
+
+    const format = String(req.query?.format || "json").trim().toLowerCase();
+    if (format !== "json" && format !== "csv") {
+      return res.status(400).json({ error: "format must be \"json\" or \"csv\"." });
+    }
+    const wantBom = String(req.query?.bom || "").toLowerCase() === "true";
+
+    let classRecord;
+    let leaderboardSnapshot;
+    try {
+      classRecord = await classesStore.getClass(classId);
+      if (!classRecord) {
+        return res.status(404).json({ error: "Class not found." });
+      }
+      leaderboardSnapshot = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class report failed.");
+    }
+
+    const rows = buildReportSummary({
+      classRecord,
+      profiles: leaderboardSnapshot.profiles,
+      results: leaderboardSnapshot.resultsByProfile || {},
+      dates,
+      lang
+    });
+
+    if (format === "csv") {
+      const csv = rowsToCsv({ dates, rows, lang });
+      const filename = `class-${classRecord.id}-report-${fromDate}-${toDate}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      const body = wantBom ? `${UTF8_BOM}${csv}` : csv;
+      return res.send(body);
+    }
+
+    return res.json({
+      ok: true,
+      class: {
+        id: classRecord.id,
+        name: classRecord.name
+      },
+      lang,
+      from: fromDate,
+      to: toDate,
+      dates,
+      rows
+    });
   });
 
   return router;

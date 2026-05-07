@@ -27,6 +27,8 @@ const adminJobsSchemaPath = path.join(projectRoot, "data", "admin-jobs.schema.js
 const adminJobsExamplePath = path.join(projectRoot, "data", "admin-jobs.example.json");
 const appConfigSchemaPath = path.join(projectRoot, "data", "app-config.schema.json");
 const appConfigExamplePath = path.join(projectRoot, "data", "app-config.example.json");
+const classesSchemaPath = path.join(projectRoot, "data", "classes.schema.json");
+const classesExamplePath = path.join(projectRoot, "data", "classes.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -89,6 +91,11 @@ function runSchemaChecks() {
       schemaPath: appConfigSchemaPath,
       dataPath: appConfigExamplePath,
       schemaLabel: "app config schema"
+    },
+    {
+      schemaPath: classesSchemaPath,
+      dataPath: classesExamplePath,
+      schemaLabel: "classes schema"
     }
   ];
 

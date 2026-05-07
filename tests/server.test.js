@@ -52,6 +52,7 @@ function loadApp(options = {}) {
           adminJobsStorePath: options.adminJobsStorePath,
           appConfigPath: options.appConfigPath,
           providersRoot: options.providersRoot,
+          classesStorePath: options.classesStorePath,
           leaderboardMaxProfiles: options.leaderboardMaxProfiles,
           leaderboardMaxResultsPerProfile: options.leaderboardMaxResultsPerProfile,
           clearRuntimeEnv: options.clearRuntimeEnv
@@ -126,6 +127,11 @@ function loadApp(options = {}) {
   } else {
     delete process.env.PROVIDERS_ROOT;
   }
+  if (opts.classesStorePath !== undefined) {
+    process.env.CLASSES_STORE_PATH = opts.classesStorePath;
+  } else {
+    delete process.env.CLASSES_STORE_PATH;
+  }
   if (opts.leaderboardMaxProfiles !== undefined) {
     process.env.LEADERBOARD_MAX_PROFILES = String(opts.leaderboardMaxProfiles);
   } else {
@@ -183,6 +189,7 @@ function createTempAdminState() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-admin-"));
   const jobsPath = path.join(dir, "admin-jobs.json");
   const configPath = path.join(dir, "app-config.json");
+  const classesPath = path.join(dir, "classes.json");
   fs.writeFileSync(
     jobsPath,
     `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), jobs: [] }, null, 2)}\n`,
@@ -193,9 +200,15 @@ function createTempAdminState() {
     `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), overrides: {} }, null, 2)}\n`,
     "utf8"
   );
+  fs.writeFileSync(
+    classesPath,
+    `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), classes: [] }, null, 2)}\n`,
+    "utf8"
+  );
   return {
     jobsPath,
     configPath,
+    classesPath,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true })
   };
 }
@@ -1827,6 +1840,7 @@ describe("Admin auth", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         clearRuntimeEnv: true
       });
 
@@ -1883,6 +1897,7 @@ describe("Admin auth", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         definitionsMode: "indexed"
       });
 
@@ -1918,7 +1933,8 @@ describe("Admin auth", () => {
           const app = loadApp({
             adminKey: "secret",
             appConfigPath: tempAdminState.configPath,
-            adminJobsStorePath: tempAdminState.jobsPath
+            adminJobsStorePath: tempAdminState.jobsPath,
+            classesStorePath: tempAdminState.classesPath
           });
           const dicContent = "2\nDOGMA/S\nCRANE\n";
           const affContent = "SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n";
@@ -2509,7 +2525,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       await request(app).post("/api/stats/profile").send({ name: "Ava" });
       await request(app).post("/api/stats/profile").send({ name: "Ben" });
@@ -2544,6 +2561,7 @@ describe("Stats API", () => {
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         leaderboardMaxProfiles: 100
       });
       await request(app).post("/api/stats/profile").send({ name: "Ava" });
@@ -2571,14 +2589,15 @@ describe("Stats API", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         leaderboardMaxProfiles: 5000
       });
       const initial = await request(app)
         .get("/api/admin/runtime-config")
         .set("x-admin-key", "secret");
       expect(initial.status).toBe(200);
-      // 5000 is out of bounds (max 1000), env clamps to default 20 and does NOT lock.
-      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(20);
+      // 5000 is out of bounds (max 1000), env clamps to default and does NOT lock.
+      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(50);
       expect(initial.body.sources.limits.leaderboardMaxProfiles).toBe("default");
 
       const update = await request(app)
@@ -2601,7 +2620,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
       const profileId = profile.body.playerId;
@@ -2663,7 +2683,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
       await request(app).post("/api/stats/result").send({
@@ -2722,7 +2743,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
 
       const tooHigh = await request(app)
