@@ -364,7 +364,11 @@ function createBackupRouter(deps) {
       logEvent(req, "backup.restore.rollback", { code: err?.code, error: err?.message });
       const status = backupErrorStatus(err);
       const body = backupErrorBody(err);
-      body.rolledBackOnError = true;
+      // True only when the failure happened after we'd started swapping
+      // files into place; pre-apply validation failures (malformed zip,
+      // schema drift, etc.) didn't mutate anything, so the flag stays
+      // false to avoid misleading operators.
+      body.rolledBackOnError = err?.rolledBackChanges === true;
       return res.status(status).json(body);
     } finally {
       restoreActiveRef.value = false;

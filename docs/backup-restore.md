@@ -104,11 +104,26 @@ apply UI flow never collides with itself.
 
 Every in-scope file is byte-copied via the staging dir, validated
 against its schema, then atomically renamed into place. A failure
-mid-apply triggers a reverse rename from the rollback dir — operators
-see HTTP 200 with `partialFailure` info only when the leaderboard
-mutate succeeds but a non-fatal cleanup step fails. A genuine
-mid-write failure aborts with `rolledBackOnError: true` and leaves the
-live tree unchanged.
+mid-apply triggers a reverse rename from the rollback dir.
+
+Restore returns:
+
+- HTTP **200** with `{ ok: true, restored, filesRestored,
+  rolledBackOnError: false, warnings, reloads }` when every in-scope
+  file was swapped into place. `warnings` may contain non-fatal
+  reload notes (e.g. a single store's reload threw).
+- HTTP **400** for pre-apply validation failures (manifest invalid,
+  manifest version unsupported, schema drift, malformed zip, sha256
+  mismatch, path traversal). The body has
+  `rolledBackOnError: false` because no on-disk mutation happened.
+- HTTP **400** with `rolledBackOnError: true` for failures that
+  occurred after at least one file had been swapped — the rewind
+  ran and the live tree is byte-equal to its pre-restore state.
+  `warnings` may include `ROLLBACK_PARTIAL` notes when a rewind step
+  itself failed (rare; operator action required).
+- HTTP **409** when another admin operation (provider import or a
+  concurrent restore) holds the single-flight mutex.
+- HTTP **413** when the upload exceeds `BACKUP_MAX_BYTES`.
 
 ## Mutex with provider import
 

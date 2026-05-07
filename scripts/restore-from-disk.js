@@ -21,7 +21,12 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--project-root" || arg === "-p") {
-      args.projectRoot = path.resolve(argv[++i] || "");
+      const next = argv[i + 1];
+      if (typeof next !== "string" || next.length === 0 || next.startsWith("-")) {
+        throw new Error(`${arg} requires a path argument`);
+      }
+      args.projectRoot = path.resolve(next);
+      i += 1;
     } else if (arg === "--help" || arg === "-h") {
       args.help = true;
     } else if (!arg.startsWith("-") && !args.archivePath) {

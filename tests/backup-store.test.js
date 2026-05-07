@@ -289,7 +289,8 @@ describe("validateArchive rejection cases", () => {
     await expect(
       validateArchive(tamperedPath, { projectRoot })
     ).rejects.toMatchObject({
-      code: "MANIFEST_INVALID"
+      code: "MANIFEST_VERSION_UNSUPPORTED",
+      details: expect.objectContaining({ expected: 1, got: 999 })
     });
   });
 
