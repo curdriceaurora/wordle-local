@@ -972,28 +972,37 @@ function parseOptionalCapValue(element, label) {
 
 async function saveProfilesLimits() {
   const overrides = state.runtimeConfig?.overrides || {};
+  const sources = state.runtimeConfig?.sources?.limits || {};
   const nextLimits = { ...(overrides.limits || {}) };
 
-  const maxProfilesParse = parseOptionalCapValue(profilesMaxProfilesEl, "Max profiles");
-  if (maxProfilesParse.mode === "invalid") {
-    setStatus(profilesLimitsStatusEl, maxProfilesParse.message, "admin-status-missing");
-    return;
-  }
-  if (maxProfilesParse.mode === "set") {
-    nextLimits.leaderboardMaxProfiles = maxProfilesParse.value;
-  } else {
-    delete nextLimits.leaderboardMaxProfiles;
+  // When an env var locks the cap, the input is disabled and pre-filled with
+  // the effective env value for display. Reading and persisting that value
+  // would write a dormant ghost override — silently re-activating with the
+  // env's value the next time the env is unset. Skip the field instead.
+  if (sources.leaderboardMaxProfiles !== "env") {
+    const maxProfilesParse = parseOptionalCapValue(profilesMaxProfilesEl, "Max profiles");
+    if (maxProfilesParse.mode === "invalid") {
+      setStatus(profilesLimitsStatusEl, maxProfilesParse.message, "admin-status-missing");
+      return;
+    }
+    if (maxProfilesParse.mode === "set") {
+      nextLimits.leaderboardMaxProfiles = maxProfilesParse.value;
+    } else {
+      delete nextLimits.leaderboardMaxProfiles;
+    }
   }
 
-  const maxResultsParse = parseOptionalCapValue(profilesMaxResultsEl, "Max results per profile");
-  if (maxResultsParse.mode === "invalid") {
-    setStatus(profilesLimitsStatusEl, maxResultsParse.message, "admin-status-missing");
-    return;
-  }
-  if (maxResultsParse.mode === "set") {
-    nextLimits.leaderboardMaxResultsPerProfile = maxResultsParse.value;
-  } else {
-    delete nextLimits.leaderboardMaxResultsPerProfile;
+  if (sources.leaderboardMaxResultsPerProfile !== "env") {
+    const maxResultsParse = parseOptionalCapValue(profilesMaxResultsEl, "Max results per profile");
+    if (maxResultsParse.mode === "invalid") {
+      setStatus(profilesLimitsStatusEl, maxResultsParse.message, "admin-status-missing");
+      return;
+    }
+    if (maxResultsParse.mode === "set") {
+      nextLimits.leaderboardMaxResultsPerProfile = maxResultsParse.value;
+    } else {
+      delete nextLimits.leaderboardMaxResultsPerProfile;
+    }
   }
 
   const nextOverrides = {
