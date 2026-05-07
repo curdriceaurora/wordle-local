@@ -127,6 +127,16 @@ function createAdminRouter(deps) {
     getLocalDateString
   } = deps;
 
+  // Required dep — the toggle and runtime-config handlers depend on
+  // it to close the restore/direct-write TOCTOU. The earlier defensive
+  // `typeof === "function"` fallbacks would have degraded silently to
+  // a no-op release fn if a stale server.js failed to inject this,
+  // re-introducing the very race we documented. Fail loudly at wiring
+  // time so the bug surfaces in tests, not in production under load.
+  if (typeof claimDirectDataWriteSlot !== "function") {
+    throw new TypeError("createAdminRouter: claimDirectDataWriteSlot dep is required.");
+  }
+
   const router = express.Router();
 
   router.get("/admin", (req, res) => {
@@ -368,9 +378,7 @@ function createAdminRouter(deps) {
     // persist. Restore observes the counter and 409s while we hold
     // the slot. The slot is released in the finally below regardless
     // of success/failure.
-    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
-      ? await claimDirectDataWriteSlot()
-      : (() => {});
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
@@ -755,9 +763,7 @@ function createAdminRouter(deps) {
     // out from underneath any unbarrier-ed write. Without this, an
     // enable that lands during a restore upload window would 200,
     // then be silently overwritten by the archive's languages.json.
-    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
-      ? await claimDirectDataWriteSlot()
-      : (() => {});
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const paths = buildProviderArtifactPaths(variant, commit);
       const minLength = PROVIDER_MIN_LENGTH;
@@ -809,9 +815,7 @@ function createAdminRouter(deps) {
     // Same direct-write-slot rationale as /enable above: the
     // setLanguageEnabledSync call writes data/languages.json and must
     // be serialised against a concurrent restore.
-    const releaseSlot = typeof claimDirectDataWriteSlot === "function"
-      ? await claimDirectDataWriteSlot()
-      : (() => {});
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const snapshot = languageRegistryStore.setLanguageEnabledSync(variant, false);
       rebuildLanguageRuntimeCatalog();

@@ -109,7 +109,21 @@ test("admin Data tab supports export, preview, typed-confirm gate, and apply", a
   });
 
   await page.route("/api/admin/backup/preview", (route) => fulfillJson(route, PREVIEW_RESPONSE));
-  await page.route("/api/admin/restore", (route) => fulfillJson(route, RESTORE_RESPONSE));
+  // Assert the destructive headers on the restore mock — the typed-confirm
+  // gate is the headline guarantee of this PR, so a future regression in
+  // app.js that drops x-admin-key or x-admin-confirm should fail this test
+  // rather than silently pass.
+  await page.route("/api/admin/restore", (route) => {
+    const headers = route.request().headers();
+    if (headers["x-admin-key"] !== "demo-key" || headers["x-admin-confirm"] !== "I-UNDERSTAND") {
+      return route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "missing required restore confirm headers" })
+      });
+    }
+    return fulfillJson(route, RESTORE_RESPONSE);
+  });
 
   await page.goto("/admin", { waitUntil: "commit" });
   await page.fill("#adminKeyInput", "demo-key");

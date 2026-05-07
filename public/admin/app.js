@@ -2016,15 +2016,22 @@ function formatBytes(bytes) {
 
 function parseAttachmentFilename(disposition) {
   if (typeof disposition !== "string") return null;
-  const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
-  if (!match) return null;
+  // Per RFC 6266, when both `filename` and `filename*` are present
+  // recipients SHOULD prefer `filename*` and ignore `filename`. The
+  // earlier regex matched whichever came first textually — which
+  // could pick a US-ASCII filename and ignore the UTF-8 form. Try
+  // filename* first; fall through to filename if it isn't there.
+  const starMatch = disposition.match(/filename\*=(?:UTF-8'')?"?([^";]+)"?/i);
+  const plainMatch = disposition.match(/filename=(?:UTF-8''|")?([^";]+)"?/i);
+  const captured = starMatch ? starMatch[1] : (plainMatch ? plainMatch[1] : null);
+  if (!captured) return null;
   // Headers from older servers may contain a literal % that isn't valid
   // percent-encoding. decodeURIComponent throws on those; fall back to
   // the raw matched value rather than breaking the whole download flow.
   try {
-    return decodeURIComponent(match[1]);
+    return decodeURIComponent(captured);
   } catch (_err) {
-    return match[1];
+    return captured;
   }
 }
 

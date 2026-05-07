@@ -286,11 +286,15 @@ describe("validateArchive rejection cases", () => {
     await archive.finalize();
     await new Promise((resolve) => out.on("close", resolve));
 
+    // Schema enforces `manifestVersion: { const: 1 }`, so the mismatch
+    // is caught at schema-validation time (MANIFEST_INVALID) before the
+    // runtime version check (MANIFEST_VERSION_UNSUPPORTED) ever runs.
+    // Either error means the same thing operationally — version 999 is
+    // rejected — but the schema layer is the cheaper and earlier guard.
     await expect(
       validateArchive(tamperedPath, { projectRoot })
     ).rejects.toMatchObject({
-      code: "MANIFEST_VERSION_UNSUPPORTED",
-      details: expect.objectContaining({ expected: 1, got: 999 })
+      code: "MANIFEST_INVALID"
     });
   });
 
