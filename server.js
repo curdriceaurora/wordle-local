@@ -257,7 +257,26 @@ const dataMutationLockRef = {
     await this._releasePromise;
   }
 };
-const waitForDataMutationLock = () => dataMutationLockRef.waitForRelease();
+// Stores call this at the top of every mutation. Waits until BOTH
+// dataMutationLockRef AND restoreInProgressRef are clear. The latter
+// is held across a restore's full multipart upload, before the data
+// lock is taken — so a mutation that arrives during the upload would
+// otherwise pass straight through, load pre-restore state, and then
+// (after the lock is taken and released) persist that stale state
+// over the just-restored file. Looping covers the case where a new
+// restore claims a flag between two `await waitForRelease()` calls.
+async function waitForDataMutationLock() {
+  while (dataMutationLockRef.value || restoreInProgressRef.value) {
+    if (dataMutationLockRef.value) {
+      await dataMutationLockRef.waitForRelease();
+      continue;
+    }
+    if (restoreInProgressRef.value) {
+      await restoreInProgressRef.waitForRelease();
+      continue;
+    }
+  }
+}
 
 // Atomic claim helper for direct data writers. Loops: wait for
 // whichever barrier is holding things up, then synchronously verify
