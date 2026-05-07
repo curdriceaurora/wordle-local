@@ -245,7 +245,6 @@ function createAdminRouter(deps) {
 
     try {
       await leaderboardStore.deleteProfile(profileId, { expectedName: confirmName });
-      return res.json({ ok: true, deletedProfileId: profileId });
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
@@ -259,6 +258,21 @@ function createAdminRouter(deps) {
       console.error("Admin profile delete failed.", err);
       return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
     }
+    // Profile is gone from the leaderboard; pull it out of any class roster
+    // so class detail/report don't surface a "(missing profile)" row.
+    let classCleanupTouched = 0;
+    try {
+      classCleanupTouched = await classesStore.removeMemberEverywhere(profileId);
+    } catch (err) {
+      console.warn(
+        `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
+      );
+    }
+    return res.json({
+      ok: true,
+      deletedProfileId: profileId,
+      classCleanupTouched
+    });
   });
 
   router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
@@ -282,17 +296,13 @@ function createAdminRouter(deps) {
       });
     }
 
+    let mergedProfile;
     try {
       const snapshot = await leaderboardStore.mergeProfiles(sourceId, targetId);
-      const mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
+      mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
       if (!mergedProfile) {
         throw new Error("Failed to persist merged profile.");
       }
-      return res.json({
-        ok: true,
-        mergedProfile,
-        deletedProfileId: sourceId
-      });
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
@@ -303,6 +313,24 @@ function createAdminRouter(deps) {
       console.error("Admin profile merge failed.", err);
       return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
     }
+    // The source profile is gone; rewrite class memberships so a class that
+    // had the source now references the merged target instead. If the target
+    // is already a member, the source reference is just dropped.
+    let classMembershipsTransferred = [];
+    try {
+      const result = await classesStore.replaceMemberEverywhere(sourceId, targetId);
+      classMembershipsTransferred = result.touchedClassIds;
+    } catch (err) {
+      console.warn(
+        `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
+      );
+    }
+    return res.json({
+      ok: true,
+      mergedProfile,
+      deletedProfileId: sourceId,
+      classMembershipsTransferred
+    });
   });
 
   router.get("/api/admin/runtime-config", (req, res) => {
@@ -1106,12 +1134,30 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Pre-validate the per-class member cap with an upper bound. If even the
-    // best-case (all reused profiles) would exceed the cap, reject before we
-    // touch the leaderboard so a class-side failure can't leave orphan
-    // profile records.
-    const projectedMembers = target.memberProfileIds.length + normalizedNames.length;
-    if (projectedMembers > classesStore.maxMembersPerClass) {
+    // Pre-validate the per-class member cap. The check counts only names that
+    // would be NET-NEW members of this class — names that resolve to a
+    // profile already in the class (or names not yet in the leaderboard but
+    // assumed-new under fail-closed semantics) — so an idempotent re-upload
+    // of an at-cap roster doesn't trip the cap.
+    let leaderboardSnapshotForPrecheck;
+    try {
+      leaderboardSnapshotForPrecheck = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Leaderboard snapshot for cap pre-check failed.");
+    }
+    const existingProfileByLowerName = new Map();
+    for (const profile of leaderboardSnapshotForPrecheck.profiles) {
+      existingProfileByLowerName.set(profile.name.toLowerCase(), profile.id);
+    }
+    const targetMemberSet = new Set(target.memberProfileIds);
+    let projectedNetNew = 0;
+    for (const name of normalizedNames) {
+      const existingId = existingProfileByLowerName.get(name.toLowerCase());
+      if (!existingId || !targetMemberSet.has(existingId)) {
+        projectedNetNew += 1;
+      }
+    }
+    if (target.memberProfileIds.length + projectedNetNew > classesStore.maxMembersPerClass) {
       return res.status(409).json({
         error: `Class is at the per-class member cap of ${classesStore.maxMembersPerClass}.`
       });

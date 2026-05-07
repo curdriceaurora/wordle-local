@@ -292,6 +292,47 @@ describe("classes-store: members", () => {
     const bAfter = await store.getClass(b.id);
     expect(bAfter.memberProfileIds).toEqual(["p3"]);
   });
+
+  test("replaceMemberEverywhere swaps oldId for newId across classes", async () => {
+    const store = new ClassesStore({ filePath: tempFilePath(), logger: silentLogger() });
+    const a = await store.createClass("Alpha");
+    const b = await store.createClass("Beta");
+    const c = await store.createClass("Gamma");
+    await store.addMembers(a.id, ["src", "other"]);
+    await store.addMembers(b.id, ["src", "tgt"]);
+    await store.addMembers(c.id, ["unrelated"]);
+
+    const result = await store.replaceMemberEverywhere("src", "tgt");
+    expect(result.touched).toBe(2);
+    expect(result.touchedClassIds.sort()).toEqual([a.id, b.id].sort());
+
+    const aAfter = await store.getClass(a.id);
+    expect(aAfter.memberProfileIds).toEqual(["tgt", "other"]);
+    const bAfter = await store.getClass(b.id);
+    // Dedupes — tgt was already there.
+    expect(bAfter.memberProfileIds).toEqual(["tgt"]);
+    const cAfter = await store.getClass(c.id);
+    expect(cAfter.memberProfileIds).toEqual(["unrelated"]);
+  });
+
+  test("replaceMemberEverywhere is a no-op when oldId is not a member anywhere", async () => {
+    const store = new ClassesStore({ filePath: tempFilePath(), logger: silentLogger() });
+    const a = await store.createClass("Alpha");
+    await store.addMembers(a.id, ["p1"]);
+    const result = await store.replaceMemberEverywhere("missing", "p2");
+    expect(result.touched).toBe(0);
+    expect(result.touchedClassIds).toEqual([]);
+  });
+
+  test("replaceMemberEverywhere rejects empty ids", async () => {
+    const store = new ClassesStore({ filePath: tempFilePath(), logger: silentLogger() });
+    await expect(store.replaceMemberEverywhere("", "x")).rejects.toMatchObject({
+      code: "INVALID_REQUEST"
+    });
+    await expect(store.replaceMemberEverywhere("x", "")).rejects.toMatchObject({
+      code: "INVALID_REQUEST"
+    });
+  });
 });
 
 describe("classes-store: listClasses", () => {

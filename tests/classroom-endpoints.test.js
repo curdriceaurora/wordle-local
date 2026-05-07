@@ -438,6 +438,165 @@ describe("Classes API: report and CSV", () => {
   });
 });
 
+describe("Classes API: idempotent re-upload at capacity", () => {
+  test("re-uploading the same roster at the per-class cap returns ok, not 409", async () => {
+    const paths = makeTempState();
+    process.env.CLASSES_STORE_PATH = paths.classesPath;
+    // Use a tiny per-class member cap to exercise the boundary.
+    const fs2 = require("fs");
+    fs2.writeFileSync(
+      paths.classesPath,
+      `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), classes: [] }, null, 2)}\n`,
+      "utf8"
+    );
+    // Stub the in-process classesStore via env: use leaderboardMaxProfiles
+    // generous enough that all names fit in the leaderboard.
+    process.env.LEADERBOARD_MAX_PROFILES = "20";
+    const app = loadFreshApp("secret", paths);
+
+    const cls = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Capped" });
+    const classId = cls.body.class.id;
+
+    const names = ["Alice", "Bob", "Carol", "Dan"];
+    const first = await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names });
+    expect(first.status).toBe(200);
+    expect(first.body.classMemberCount).toBe(4);
+
+    // Re-uploading the SAME roster must not 409 even when the class is at
+    // its (logical) cap — counting only net-new members.
+    const second = await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names });
+    expect(second.status).toBe(200);
+    expect(second.body.classMemberCount).toBe(4);
+    expect(second.body.addedToClass).toEqual([]);
+  });
+});
+
+describe("Classes API: profile delete + merge cleanup", () => {
+  test("deleting a profile pulls it out of every class membership", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths);
+
+    const a = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Class A" });
+    const b = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Class B" });
+    await request(app)
+      .post(`/api/admin/classes/${a.body.class.id}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Ava", "Ben"] });
+    await request(app)
+      .post(`/api/admin/classes/${b.body.class.id}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Ava"] });
+
+    const stored = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    const ava = stored.profiles.find((p) => p.name === "Ava");
+
+    const deleted = await request(app)
+      .delete(`/api/admin/stats/profile/${ava.id}`)
+      .set("x-admin-key", "secret")
+      .send({ confirmed: true, confirmName: "Ava" });
+    expect(deleted.status).toBe(200);
+    expect(deleted.body.classCleanupTouched).toBe(2);
+
+    const aDetail = await request(app)
+      .get(`/api/admin/classes/${a.body.class.id}`)
+      .set("x-admin-key", "secret");
+    expect(aDetail.body.members.map((m) => m.name)).toEqual(["Ben"]);
+    const bDetail = await request(app)
+      .get(`/api/admin/classes/${b.body.class.id}`)
+      .set("x-admin-key", "secret");
+    expect(bDetail.body.members).toEqual([]);
+  });
+
+  test("merging profiles transfers source memberships to target with dedup", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths);
+
+    const a = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Class A" });
+    const b = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Class B" });
+    // Source in A only, target in B only — source membership should
+    // move to target after merge.
+    await request(app)
+      .post(`/api/admin/classes/${a.body.class.id}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Source"] });
+    await request(app)
+      .post(`/api/admin/classes/${b.body.class.id}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Target"] });
+
+    const stored = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    const source = stored.profiles.find((p) => p.name === "Source");
+    const target = stored.profiles.find((p) => p.name === "Target");
+
+    const merged = await request(app)
+      .post(`/api/admin/stats/profile/${source.id}/merge`)
+      .set("x-admin-key", "secret")
+      .send({ targetProfileId: target.id, confirmed: true });
+    expect(merged.status).toBe(200);
+    expect(merged.body.classMembershipsTransferred).toEqual([a.body.class.id]);
+
+    const aDetail = await request(app)
+      .get(`/api/admin/classes/${a.body.class.id}`)
+      .set("x-admin-key", "secret");
+    expect(aDetail.body.members.map((m) => m.name)).toEqual(["Target"]);
+    const bDetail = await request(app)
+      .get(`/api/admin/classes/${b.body.class.id}`)
+      .set("x-admin-key", "secret");
+    expect(bDetail.body.members.map((m) => m.name)).toEqual(["Target"]);
+  });
+
+  test("merge dedupes when target already a member of the source's class", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths);
+
+    const a = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Class A" });
+    await request(app)
+      .post(`/api/admin/classes/${a.body.class.id}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Source", "Target"] });
+
+    const stored = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    const source = stored.profiles.find((p) => p.name === "Source");
+    const target = stored.profiles.find((p) => p.name === "Target");
+
+    const merged = await request(app)
+      .post(`/api/admin/stats/profile/${source.id}/merge`)
+      .set("x-admin-key", "secret")
+      .send({ targetProfileId: target.id, confirmed: true });
+    expect(merged.status).toBe(200);
+
+    const aDetail = await request(app)
+      .get(`/api/admin/classes/${a.body.class.id}`)
+      .set("x-admin-key", "secret");
+    // Source dropped, target retained — no duplicate.
+    expect(aDetail.body.members.map((m) => m.name)).toEqual(["Target"]);
+  });
+});
+
 describe("Classes API: member removal", () => {
   test("removes a single member and reports updated count", async () => {
     const paths = makeTempState();
