@@ -365,6 +365,50 @@ describe("Classes API: report and CSV", () => {
     expect(benRow.days[0].status).toBe("not-started");
   });
 
+  test("missing-profile rows include the same aggregate fields as normal rows", async () => {
+    const paths = makeTempState();
+
+    // Pre-populate the classes file with a record that references a profile
+    // id that doesn't exist in the leaderboard. The report endpoint should
+    // surface this row as missing while preserving the same shape as
+    // present rows (stable schema for JSON consumers).
+    const ghostId = "profile-ghost-deadbeef";
+    const classId = "class-aaaabbbbccccdddd";
+    fs.writeFileSync(paths.classesPath, JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      classes: [
+        {
+          id: classId,
+          name: "Schema Consistency",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          archivedAt: null,
+          memberProfileIds: [ghostId]
+        }
+      ]
+    }));
+
+    const app = loadFreshApp("secret", paths);
+
+    const report = await request(app)
+      .get(`/api/admin/classes/${classId}/report?lang=en`)
+      .set("x-admin-key", "secret");
+    expect(report.status).toBe(200);
+
+    const ghostRow = report.body.rows.find((row) => row.profileId === ghostId);
+    expect(ghostRow).toBeDefined();
+    expect(ghostRow.missing).toBe(true);
+    // Aggregate keys must exist (even as 0/null) so JSON consumers see a
+    // stable schema across missing and present rows.
+    expect(ghostRow).toHaveProperty("wins", 0);
+    expect(ghostRow).toHaveProperty("playedCount", 0);
+    expect(ghostRow).toHaveProperty("winRate", null);
+    expect(ghostRow).toHaveProperty("lastPlayedAt", null);
+    expect(Array.isArray(ghostRow.days)).toBe(true);
+    expect(ghostRow.days.every((day) => day.status === "no-profile")).toBe(true);
+  });
+
   test("returns CSV format with proper headers and BOM toggle", async () => {
     const paths = makeTempState();
     const app = loadFreshApp("secret", paths);

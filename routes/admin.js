@@ -823,6 +823,10 @@ function createAdminRouter(deps) {
           profileId,
           name: null,
           missing: true,
+          wins: 0,
+          playedCount: 0,
+          winRate: null,
+          lastPlayedAt: null,
           days: dates.map((date) => ({ date, status: "no-profile" }))
         });
         continue;
@@ -1014,9 +1018,10 @@ function createAdminRouter(deps) {
     }
     const deleteProfilesFlag = req.body?.deleteProfiles === true;
 
+    let carveOutIds = [];
+    let removedProfileIds = [];
+    let leaderboardCleanupError = null;
     try {
-      let carveOutIds = [];
-      let removedProfileIds = [];
       if (deleteProfilesFlag) {
         // Atomic in classes-store: drops the class, computes which member
         // IDs are NOT in any other non-archived class, and removes those
@@ -1024,36 +1029,54 @@ function createAdminRouter(deps) {
         // classes-side state is consistent before we touch the leaderboard.
         const result = await classesStore.deleteClassWithCarveOut(classId);
         carveOutIds = result.carveOutIds;
-
-        if (carveOutIds.length > 0) {
-          await leaderboardStore.mutate((draft) => {
-            for (const memberId of carveOutIds) {
-              const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
-              if (idx !== -1) {
-                draft.profiles.splice(idx, 1);
-                if (
-                  draft.resultsByProfile
-                  && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
-                ) {
-                  delete draft.resultsByProfile[memberId];
-                }
-                removedProfileIds.push(memberId);
-              }
-            }
-          });
-        }
       } else {
         // Just delete the class without touching profiles.
         await classesStore.deleteClass(classId);
       }
-      return res.json({
-        ok: true,
-        deletedClassId: classId,
-        deletedProfileIds: removedProfileIds
-      });
     } catch (err) {
       return handleClassesStoreError(res, err, "Class delete failed.");
     }
+
+    if (deleteProfilesFlag && carveOutIds.length > 0) {
+      // Class is already deleted at this point. If the leaderboard mutate
+      // fails, returning an error would mislead the client into retrying a
+      // delete that's already happened (404 on retry). Instead capture the
+      // failure as a partial-success signal so callers can reconcile.
+      try {
+        await leaderboardStore.mutate((draft) => {
+          for (const memberId of carveOutIds) {
+            const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
+            if (idx !== -1) {
+              draft.profiles.splice(idx, 1);
+              if (
+                draft.resultsByProfile
+                && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
+              ) {
+                delete draft.resultsByProfile[memberId];
+              }
+              removedProfileIds.push(memberId);
+            }
+          }
+        });
+      } catch (err) {
+        leaderboardCleanupError = err;
+        console.warn(
+          `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
+        );
+      }
+    }
+
+    const responseBody = {
+      ok: true,
+      deletedClassId: classId,
+      deletedProfileIds: removedProfileIds
+    };
+    if (leaderboardCleanupError) {
+      responseBody.partialFailure = true;
+      responseBody.pendingProfileIds = carveOutIds;
+      responseBody.message = "Class deleted, but profile cleanup failed. Pending profile IDs are listed and may need manual reconciliation.";
+    }
+    return res.json(responseBody);
   });
 
   router.post("/api/admin/classes/:id/members/bulk", async (req, res) => {
