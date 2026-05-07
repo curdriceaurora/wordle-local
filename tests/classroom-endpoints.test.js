@@ -589,6 +589,60 @@ describe("Classes API: idempotent re-upload at capacity", () => {
   });
 });
 
+describe("Classes API: public profile creation cleanup", () => {
+  test("non-admin /api/stats/profile reconciles classes when cap-pruning a class member", async () => {
+    const paths = makeTempState();
+    const app = loadFreshApp("secret", paths, { LEADERBOARD_MAX_PROFILES: "3" });
+
+    // Create a class with three members to fill all host profile slots.
+    const cls = await request(app)
+      .post("/api/admin/classes")
+      .set("x-admin-key", "secret")
+      .send({ name: "Cap Cohort" });
+    const classId = cls.body.class.id;
+    await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Alpha", "Beta", "Gamma"] });
+
+    const initial = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    expect(initial.profiles).toHaveLength(3);
+    const initialIds = new Set(initial.profiles.map((p) => p.id));
+    const initialNames = new Set(initial.profiles.map((p) => p.name));
+    expect(initialNames).toEqual(new Set(["Alpha", "Beta", "Gamma"]));
+
+    // Non-admin path: creating a 4th profile must evict one of the three
+    // existing class members. The post-mutate reconciliation in
+    // /api/stats/profile is responsible for dropping the dangling
+    // reference in the class so detail/report don't surface a "(missing
+    // profile)" row.
+    const created = await request(app)
+      .post("/api/stats/profile")
+      .send({ name: "Public" });
+    expect(created.status).toBe(200);
+
+    const after = JSON.parse(fs.readFileSync(paths.statsPath, "utf8"));
+    expect(after.profiles).toHaveLength(3);
+    const afterIds = new Set(after.profiles.map((p) => p.id));
+    expect(after.profiles.map((p) => p.name)).toContain("Public");
+
+    // Exactly one of the original three IDs should have been evicted.
+    const survivingFromOriginal = [...initialIds].filter((id) => afterIds.has(id));
+    expect(survivingFromOriginal).toHaveLength(2);
+
+    // The class roster should now only reference the surviving original
+    // members — the evicted one is gone from the membership list.
+    const detail = await request(app)
+      .get(`/api/admin/classes/${classId}`)
+      .set("x-admin-key", "secret");
+    expect(detail.status).toBe(200);
+    const memberIds = detail.body.members.map((m) => m.profileId);
+    expect(memberIds.sort()).toEqual([...survivingFromOriginal].sort());
+    // No "(missing profile)" rows — every member resolves.
+    expect(detail.body.members.every((m) => m.name)).toBe(true);
+  });
+});
+
 describe("Classes API: profile delete + merge cleanup", () => {
   test("deleting a profile pulls it out of every class membership", async () => {
     const paths = makeTempState();

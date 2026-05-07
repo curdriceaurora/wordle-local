@@ -2454,6 +2454,7 @@ const createStatsRouter = require("./routes/stats.js");
 app.use(
   createStatsRouter({
     leaderboardStore,
+    classesStore,
     normalizeProfileNameInput,
     parseDailyResultPayload,
     parseLeaderboardRange,

@@ -22,6 +22,7 @@ const { randomUUID } = require("node:crypto");
 function createStatsRouter(deps) {
   const {
     leaderboardStore,
+    classesStore,
     normalizeProfileNameInput,
     parseDailyResultPayload,
     parseLeaderboardRange,
@@ -49,6 +50,20 @@ function createStatsRouter(deps) {
       let createdProfileId = "";
       let reused = false;
 
+      // Capture pre-mutate IDs so we can detect cap-driven pruning. The
+      // leaderboard normalizer can drop the oldest profile to keep the
+      // host under maxProfiles when a brand-new profile is created.
+      // Without reconciliation, a class roster that referenced the
+      // pruned profile would silently develop a dangling reference.
+      let preMutateIds = null;
+      try {
+        const preSnapshot = await leaderboardStore.getSnapshot();
+        preMutateIds = new Set(preSnapshot.profiles.map((profile) => profile.id));
+      } catch (_err) {
+        // best effort — if the snapshot fails we skip reconciliation; the
+        // mutate below will still persist or surface its own error.
+      }
+
       const snapshot = await leaderboardStore.mutate((draft) => {
         const existing = draft.profiles.find(
           (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
@@ -69,6 +84,27 @@ function createStatsRouter(deps) {
         draft.profiles.push(createdProfile);
         createdProfileId = createdProfile.id;
       });
+
+      if (classesStore && preMutateIds && !reused) {
+        const postIds = new Set(snapshot.profiles.map((profile) => profile.id));
+        let prunedAny = false;
+        for (const id of preMutateIds) {
+          if (!postIds.has(id)) {
+            prunedAny = true;
+            break;
+          }
+        }
+        if (prunedAny) {
+          try {
+            await classesStore.reconcileMissingProfiles(postIds);
+          } catch (reconcileErr) {
+            console.warn(
+              `[stats] Profile creation pruned older profile(s) but class reconciliation failed: ${reconcileErr?.message || String(reconcileErr)}`
+            );
+          }
+        }
+      }
+
       const responseProfile = snapshot.profiles.find((profile) => profile.id === createdProfileId);
       if (!responseProfile) {
         throw new Error("Failed to persist player profile.");
