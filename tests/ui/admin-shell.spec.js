@@ -686,7 +686,7 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
 
   const providersTab = page.locator("#admin-tab-providers");
   const importsTab = page.locator("#admin-tab-imports");
-  const classesTab = page.locator("#admin-tab-classes");
+  const dataTab = page.locator("#admin-tab-data");
 
   await providersTab.focus();
   await page.keyboard.press("ArrowRight");
@@ -695,8 +695,8 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
   await expect(page.locator("#admin-panel-imports")).toBeVisible();
 
   await page.keyboard.press("End");
-  await expect(classesTab).toBeFocused();
-  await expect(classesTab).toHaveAttribute("aria-selected", "true");
+  await expect(dataTab).toBeFocused();
+  await expect(dataTab).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Home");
   await expect(providersTab).toBeFocused();
