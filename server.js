@@ -73,14 +73,23 @@ const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN = 1;
 const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX = 10000;
 
 function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
-  const parsed = parsePositiveInteger(rawValue, defaultValue);
-  if (parsed < min || parsed > max) {
+  if (rawValue === undefined) {
+    return defaultValue;
+  }
+  const numeric = Number(rawValue);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
     console.warn(
-      `${envName}=${rawValue} is outside the documented range (${min}-${max}); using default ${defaultValue}.`
+      `${envName}=${String(rawValue)} is not a positive integer; using default ${defaultValue}.`
     );
     return defaultValue;
   }
-  return parsed;
+  if (numeric < min || numeric > max) {
+    console.warn(
+      `${envName}=${String(rawValue)} is outside the documented range (${min}-${max}); using default ${defaultValue}.`
+    );
+    return defaultValue;
+  }
+  return numeric;
 }
 
 const ENV_LEADERBOARD_MAX_PROFILES = clampEnvBounded(

@@ -716,7 +716,6 @@ test("admin shell profiles tab supports rename, merge, and delete flows", async 
         wins: 3,
         losses: 1,
         winRate: 0.75,
-        averageAttempts: 4,
         averageWinningAttempts: 3.5,
         lastPlayedAt: "2026-02-25T18:00:00.000Z"
       }
@@ -731,7 +730,6 @@ test("admin shell profiles tab supports rename, merge, and delete flows", async 
         wins: 1,
         losses: 1,
         winRate: 0.5,
-        averageAttempts: 5,
         averageWinningAttempts: 5,
         lastPlayedAt: "2026-02-24T20:00:00.000Z"
       }

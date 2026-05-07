@@ -171,16 +171,12 @@ function createAdminRouter(deps) {
         const results = snapshot.resultsByProfile?.[profile.id] || {};
         let totalGames = 0;
         let wins = 0;
-        let totalAttempts = 0;
         let winningAttemptsSum = 0;
         let winningAttemptsCount = 0;
         let lastPlayedAt = null;
 
         for (const entry of Object.values(results)) {
           totalGames += 1;
-          if (Number.isInteger(entry.attempts)) {
-            totalAttempts += entry.attempts;
-          }
           if (entry.won === true) {
             wins += 1;
             if (Number.isInteger(entry.attempts)) {
@@ -203,7 +199,9 @@ function createAdminRouter(deps) {
             wins,
             losses: totalGames - wins,
             winRate: totalGames > 0 ? wins / totalGames : 0,
-            averageAttempts: totalGames > 0 ? totalAttempts / totalGames : 0,
+            // averageWinningAttempts is the meaningful metric — losses store
+            // attempts=null per schema, so any "average across all games"
+            // would either drop those rows or pretend a loss was 0 attempts.
             averageWinningAttempts:
               winningAttemptsCount > 0 ? winningAttemptsSum / winningAttemptsCount : 0,
             lastPlayedAt
