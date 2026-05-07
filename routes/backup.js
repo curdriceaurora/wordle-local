@@ -196,14 +196,14 @@ function createBackupRouter(deps) {
     reloadWordData,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
-    restoreActiveRef,
+    dataMutationLockRef,
     backupMaxBytes,
     backupIncludeProvidersDefault,
     backupRateLimiter
   } = deps;
 
   // Wait for every async store's write queue to drain. Called AFTER
-  // restoreActiveRef is set (so the /api gate has already started
+  // dataMutationLockRef is set (so the /api gate has already started
   // refusing new mutations) and BEFORE buildManifest/applyRestore reads
   // or swaps any files. Without this, a mutation that passed the gate
   // moments before the lock was taken could complete its atomic-rename
@@ -243,17 +243,17 @@ function createBackupRouter(deps) {
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
-      || restoreActiveRef?.value
+      || dataMutationLockRef?.value
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
         code: "BACKUP_BUSY"
       });
     }
-    restoreActiveRef.value = true;
+    dataMutationLockRef.value = true;
 
     let releaseLock = () => {
-      restoreActiveRef.value = false;
+      dataMutationLockRef.value = false;
     };
 
     try {
@@ -403,14 +403,14 @@ function createBackupRouter(deps) {
     if (
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
-      || restoreActiveRef?.value
+      || dataMutationLockRef?.value
     ) {
       return res.status(409).json({
         error: "Another admin operation is in flight; retry shortly.",
         code: "RESTORE_BUSY"
       });
     }
-    restoreActiveRef.value = true;
+    dataMutationLockRef.value = true;
 
     let upload;
     try {
@@ -419,7 +419,7 @@ function createBackupRouter(deps) {
         tempDir: uploadsTempDir
       });
     } catch (err) {
-      restoreActiveRef.value = false;
+      dataMutationLockRef.value = false;
       return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
     }
 
@@ -475,7 +475,7 @@ function createBackupRouter(deps) {
       body.rolledBackOnError = err?.rolledBackChanges === true;
       return res.status(status).json(body);
     } finally {
-      restoreActiveRef.value = false;
+      dataMutationLockRef.value = false;
       try {
         await fsp.rm(upload.tempPath, { force: true });
       } catch {

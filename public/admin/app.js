@@ -2007,7 +2007,15 @@ function formatBytes(bytes) {
 function parseAttachmentFilename(disposition) {
   if (typeof disposition !== "string") return null;
   const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  // Headers from older servers may contain a literal % that isn't valid
+  // percent-encoding. decodeURIComponent throws on those; fall back to
+  // the raw matched value rather than breaking the whole download flow.
+  try {
+    return decodeURIComponent(match[1]);
+  } catch (_err) {
+    return match[1];
+  }
 }
 
 async function fetchAdminBlob(path, init = {}) {

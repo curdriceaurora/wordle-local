@@ -281,49 +281,39 @@ describe("Backup API: restore", () => {
     ]));
   });
 
-  test("rejects restore when another restore is already in flight", async () => {
-    // Simulate the mutex by setting restoreActiveRef.value = true before
-    // the request. Since the ref is internal to server.js, we use a
-    // simulator: mutate the live process.env to force the rate limiter to
-    // lock things… actually the cleanest way is to mark the mutex via a
-    // POST that itself takes the mutex. Skipped here; covered indirectly
-    // by the unit-test layer (the route's busy check is straightforward).
-    // This test asserts the 409 returned by the route when mutex is held,
-    // which we exercise by issuing two concurrent restores against a
-    // server with no admin-key gating beyond the env wiring.
-    const paths = makeTempState();
-    const app = loadFreshApp("secret", paths);
-    const exportRes = await request(app)
-      .get("/api/admin/backup")
-      .set("x-admin-key", "secret")
-      .buffer(true)
-      .parse((response, callback) => {
-        const chunks = [];
-        response.on("data", (chunk) => chunks.push(chunk));
-        response.on("end", () => callback(null, Buffer.concat(chunks)));
-      });
+  test("rejects a restore request when the data-mutation lock is already held", async () => {
+    // Direct route-level test. We can't easily mock applyRestore through
+    // the server's destructured import without a fragile module-mock
+    // dance, so verify the busy path directly: import the backup router
+    // factory, hold the lock manually, fire one restore, and assert it
+    // returns 409 + RESTORE_BUSY.
+    const fsLib = require("fs");
+    const expressLib = require("express");
 
-    // Fire two restore requests "concurrently" — supertest runs them
-    // sequentially per agent, so this is best-effort. The first should
-    // succeed; if the second arrives during the first's mutex window it
-    // returns 409. If the mutex has already released, both succeed —
-    // either outcome is acceptable for this test (we're verifying the
-    // 409 path doesn't crash).
-    const firstPromise = request(app)
+    jest.resetModules();
+    resetEnv();
+    const dataMutationLockRef = { value: true };
+    const noopRef = { value: false };
+
+    const createBackupRouter = require("../routes/backup.js");
+    const backupRouter = createBackupRouter({
+      projectRoot: "/tmp",
+      providerImportQueueActiveRef: noopRef,
+      providerImportSyncActiveRef: noopRef,
+      dataMutationLockRef,
+      backupMaxBytes: 1024,
+      backupIncludeProvidersDefault: false
+    });
+
+    const app = expressLib();
+    app.use(backupRouter);
+
+    const res = await request(app)
       .post("/api/admin/restore")
-      .set("x-admin-key", "secret")
       .set(RESTORE_CONFIRM_HEADER, RESTORE_CONFIRM_VALUE)
-      .attach("archive", exportRes.body, "test.zip");
-    const secondPromise = request(app)
-      .post("/api/admin/restore")
-      .set("x-admin-key", "secret")
-      .set(RESTORE_CONFIRM_HEADER, RESTORE_CONFIRM_VALUE)
-      .attach("archive", exportRes.body, "test.zip");
-    const [first, second] = await Promise.all([firstPromise, secondPromise]);
-    const statuses = [first.status, second.status].sort();
-    // Either both 200 (no overlap) or one 200 + one 409 (overlapped).
-    expect(statuses[0]).toBe(200);
-    expect([200, 409]).toContain(statuses[1]);
+      .attach("archive", fsLib.readFileSync(__filename), "fake.zip");
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("RESTORE_BUSY");
   });
 });
 

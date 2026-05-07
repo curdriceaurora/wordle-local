@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const nodeCrypto = require("node:crypto");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -1042,7 +1043,7 @@ let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
-const restoreActiveRef = { value: false };
+const dataMutationLockRef = { value: false };
 
 function initializeRuntimeConfig() {
   let normalizePromise;
@@ -2136,7 +2137,7 @@ async function startProviderImportQueueIfNeeded() {
   if (
     providerImportQueueActiveRef.value
     || providerImportSyncActiveRef.value
-    || restoreActiveRef.value
+    || dataMutationLockRef.value
   ) {
     return;
   }
@@ -2346,7 +2347,7 @@ function gateDataMutationsDuringRestore(req, res, next) {
     next();
     return;
   }
-  if (!restoreActiveRef.value) {
+  if (!dataMutationLockRef.value) {
     next();
     return;
   }
@@ -2399,11 +2400,17 @@ const backupRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // Throttle per admin key (when present) so two operators on the same IP
-  // don't share a single bucket. Falls back to express-rate-limit's
-  // built-in IPv6-aware ipKeyGenerator when no admin key is set.
+  // don't share a single bucket. The admin key itself is never used as the
+  // bucket id directly — we hash it first so the secret can't leak into
+  // rate-limit store dumps, logs, or metrics. Falls back to
+  // express-rate-limit's IPv6-aware ipKeyGenerator when no admin key is
+  // set.
   keyGenerator: (req, res) => {
     const key = req.headers["x-admin-key"];
-    if (typeof key === "string" && key.length > 0) return `admin:${key}`;
+    if (typeof key === "string" && key.length > 0) {
+      const digest = nodeCrypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
+      return `admin:${digest}`;
+    }
     return rateLimitIpKeyGenerator(req, res);
   },
   message: { error: "Too many backup or restore requests. Try again later." }
@@ -2434,7 +2441,7 @@ app.use(
     },
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
-    restoreActiveRef,
+    dataMutationLockRef,
     backupMaxBytes: ENV_BACKUP_MAX_BYTES,
     backupIncludeProvidersDefault: ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT,
     backupRateLimiter
@@ -2482,7 +2489,7 @@ app.use(
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
-    restoreActiveRef,
+    dataMutationLockRef,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,

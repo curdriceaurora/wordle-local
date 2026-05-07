@@ -86,7 +86,7 @@ function createAdminRouter(deps) {
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
-    restoreActiveRef,
+    dataMutationLockRef,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -548,7 +548,7 @@ function createAdminRouter(deps) {
       if (
         providerImportQueueActiveRef.value
         || providerImportSyncActiveRef.value
-        || restoreActiveRef?.value
+        || dataMutationLockRef?.value
       ) {
         return providerAdminError(
           res,
