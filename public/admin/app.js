@@ -1332,6 +1332,11 @@ async function deleteClassFlow(classId) {
 }
 
 function closeClassDetail() {
+  // Bump the request token so any in-flight loadClassDetail() response
+  // resolves into a stale check and is silently discarded — without this,
+  // a slow Open click could still repopulate the panel after we cleared it.
+  state.classDetailRequestToken = (state.classDetailRequestToken || 0) + 1;
+  state.pendingClassDetailId = null;
   state.activeClassId = null;
   state.activeClassDetail = null;
   if (classDetailPanelEl) {
@@ -1972,6 +1977,10 @@ lockSessionBtnEl.addEventListener("click", () => {
     clearTimeout(jobsRefreshTimer);
     jobsRefreshTimer = null;
   }
+  // Invalidate any pending class-detail request so a slow response can't
+  // repopulate the panel after the session is locked.
+  state.classDetailRequestToken = (state.classDetailRequestToken || 0) + 1;
+  state.pendingClassDetailId = null;
   state.adminKey = "";
   state.unlocked = false;
   state.providers = [];

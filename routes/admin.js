@@ -261,18 +261,28 @@ function createAdminRouter(deps) {
     // Profile is gone from the leaderboard; pull it out of any class roster
     // so class detail/report don't surface a "(missing profile)" row.
     let classCleanupTouched = 0;
+    let classCleanupError = null;
     try {
       classCleanupTouched = await classesStore.removeMemberEverywhere(profileId);
     } catch (err) {
+      classCleanupError = err;
       console.warn(
         `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
       );
     }
-    return res.json({
+    const responseBody = {
       ok: true,
       deletedProfileId: profileId,
       classCleanupTouched
-    });
+    };
+    if (classCleanupError) {
+      responseBody.partialFailure = {
+        message: "Profile deleted from leaderboard, but class cleanup failed. Class rosters may still reference the deleted profile id.",
+        error: classCleanupError?.message || String(classCleanupError)
+      };
+      return res.status(207).json(responseBody);
+    }
+    return res.json(responseBody);
   });
 
   router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
@@ -317,20 +327,30 @@ function createAdminRouter(deps) {
     // had the source now references the merged target instead. If the target
     // is already a member, the source reference is just dropped.
     let classMembershipsTransferred = [];
+    let classCleanupError = null;
     try {
       const result = await classesStore.replaceMemberEverywhere(sourceId, targetId);
       classMembershipsTransferred = result.touchedClassIds;
     } catch (err) {
+      classCleanupError = err;
       console.warn(
         `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
       );
     }
-    return res.json({
+    const responseBody = {
       ok: true,
       mergedProfile,
       deletedProfileId: sourceId,
       classMembershipsTransferred
-    });
+    };
+    if (classCleanupError) {
+      responseBody.partialFailure = {
+        message: "Profile merge succeeded, but class membership rewrite failed. Some classes may still reference the source profile id.",
+        error: classCleanupError?.message || String(classCleanupError)
+      };
+      return res.status(207).json(responseBody);
+    }
+    return res.json(responseBody);
   });
 
   router.get("/api/admin/runtime-config", (req, res) => {
@@ -1037,6 +1057,7 @@ function createAdminRouter(deps) {
       return handleClassesStoreError(res, err, "Class delete failed.");
     }
 
+    let eligibleForCleanup = [];
     if (deleteProfilesFlag && carveOutIds.length > 0) {
       // Class is already deleted at this point. If the leaderboard mutate
       // fails, returning an error would mislead the client into retrying a
@@ -1065,10 +1086,10 @@ function createAdminRouter(deps) {
             `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
           );
         }
-        const eligible = carveOutIds.filter((id) => !referencedNow.has(id));
+        eligibleForCleanup = carveOutIds.filter((id) => !referencedNow.has(id));
         const tentativeRemoved = [];
         await leaderboardStore.mutate((draft) => {
-          for (const memberId of eligible) {
+          for (const memberId of eligibleForCleanup) {
             const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
             if (idx !== -1) {
               draft.profiles.splice(idx, 1);
@@ -1098,7 +1119,12 @@ function createAdminRouter(deps) {
     };
     if (leaderboardCleanupError) {
       responseBody.partialFailure = true;
-      responseBody.pendingProfileIds = carveOutIds;
+      // Report only IDs we actually attempted to clean up (filtered for
+      // cross-store race) and didn't successfully remove. IDs that were
+      // intentionally skipped (now-referenced by another class) are not
+      // pending — they belong to that other class now.
+      const removedSet = new Set(removedProfileIds);
+      responseBody.pendingProfileIds = eligibleForCleanup.filter((id) => !removedSet.has(id));
       responseBody.message = "Class deleted, but profile cleanup failed. Pending profile IDs are listed and may need manual reconciliation.";
     }
     return res.json(responseBody);

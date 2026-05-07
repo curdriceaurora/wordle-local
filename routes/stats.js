@@ -56,12 +56,12 @@ function createStatsRouter(deps) {
       // Without reconciliation, a class roster that referenced the
       // pruned profile would silently develop a dangling reference.
       let preMutateIds = null;
+      let preSnapshotFailed = false;
       try {
         const preSnapshot = await leaderboardStore.getSnapshot();
         preMutateIds = new Set(preSnapshot.profiles.map((profile) => profile.id));
       } catch (_err) {
-        // best effort — if the snapshot fails we skip reconciliation; the
-        // mutate below will still persist or surface its own error.
+        preSnapshotFailed = true;
       }
 
       const snapshot = await leaderboardStore.mutate((draft) => {
@@ -85,16 +85,23 @@ function createStatsRouter(deps) {
         createdProfileId = createdProfile.id;
       });
 
-      if (classesStore && preMutateIds && !reused) {
+      if (classesStore && !reused) {
         const postIds = new Set(snapshot.profiles.map((profile) => profile.id));
-        let prunedAny = false;
-        for (const id of preMutateIds) {
-          if (!postIds.has(id)) {
-            prunedAny = true;
-            break;
+        // Reconcile when we know pruning happened (preMutateIds had
+        // entries the post-snapshot lacks), OR when we couldn't read the
+        // pre-snapshot at all — in that case we can't prove no pruning
+        // happened, and a no-op reconcile is cheap (single classes-store
+        // mutate with zero changes if nothing is dangling).
+        let shouldReconcile = preSnapshotFailed;
+        if (preMutateIds) {
+          for (const id of preMutateIds) {
+            if (!postIds.has(id)) {
+              shouldReconcile = true;
+              break;
+            }
           }
         }
-        if (prunedAny) {
+        if (shouldReconcile) {
           try {
             await classesStore.reconcileMissingProfiles(postIds);
           } catch (reconcileErr) {
