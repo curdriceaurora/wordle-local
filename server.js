@@ -1578,10 +1578,14 @@ rebuildLanguageRuntimeCatalog();
 // Boot-time orphan check: a previous restore that crashed mid-apply leaves
 // .restore-staging-* / .restore-rollback-* dirs in data/. Log them loudly
 // rather than auto-deleting — operators may need to inspect or rewind.
+// Honor BACKUP_PROJECT_ROOT so the scan path matches the restore handler's.
 (async () => {
   try {
     const { findOrphanedRestoreDirs } = require("./lib/backup-store.js");
-    const orphans = await findOrphanedRestoreDirs(path.join(__dirname, "data"));
+    const backupRoot = process.env.BACKUP_PROJECT_ROOT
+      ? path.resolve(process.env.BACKUP_PROJECT_ROOT)
+      : __dirname;
+    const orphans = await findOrphanedRestoreDirs(path.join(backupRoot, "data"));
     if (orphans.length > 0) {
       const list = orphans.map((entry) => entry.name).join(", ");
       console.warn(
@@ -2445,13 +2449,15 @@ const backupRateLimiter = rateLimit({
   // rate-limit store dumps, logs, or metrics. Falls back to
   // express-rate-limit's IPv6-aware ipKeyGenerator when no admin key is
   // set.
-  keyGenerator: (req, res) => {
+  keyGenerator: (req) => {
     const key = req.headers["x-admin-key"];
     if (typeof key === "string" && key.length > 0) {
       const digest = nodeCrypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
       return `admin:${digest}`;
     }
-    return rateLimitIpKeyGenerator(req, res);
+    // ipKeyGenerator expects an IP string, not the request object. Pass
+    // req.ip and let the helper apply IPv6 subnet masking.
+    return rateLimitIpKeyGenerator(req.ip);
   },
   message: { error: "Too many backup or restore requests. Try again later." }
 });
@@ -2530,6 +2536,7 @@ app.use(
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    waitForDataMutationLock,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
@@ -2697,6 +2704,9 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
+  // Honor the data-mutation lock: a handler that already passed the gate
+  // could otherwise write data/word.json on top of a just-restored value.
+  await waitForDataMutationLock();
   try {
     await saveWordDataAtomic(data);
   } catch (err) {

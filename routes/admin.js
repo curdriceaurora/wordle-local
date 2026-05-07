@@ -87,6 +87,7 @@ function createAdminRouter(deps) {
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    waitForDataMutationLock,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -415,6 +416,11 @@ function createAdminRouter(deps) {
       // Snapshot the current overrides so a failed normalize can roll back
       // both disk and in-memory state, keeping GET /api/admin/runtime-config
       // honest about what the store is actually enforcing.
+      // Honor the data-mutation lock: a handler past the gate could
+      // otherwise write data/app-config.json on top of just-restored bytes.
+      if (typeof waitForDataMutationLock === "function") {
+        await waitForDataMutationLock();
+      }
       const previousOverrides = appConfigStore.getOverridesSync();
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
       try {

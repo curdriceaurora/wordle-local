@@ -2180,6 +2180,18 @@ if (backupRestoreApplyBtnEl) {
         tone = "admin-status-missing";
       }
       setStatus(backupRestoreStatusEl, message, tone);
+
+      // Refresh every loaded admin section so the in-memory client view
+      // matches the just-restored state. Run in parallel; failures here
+      // are logged via setStatus on the relevant section but don't block
+      // the restore success message.
+      await Promise.allSettled([
+        typeof loadProviders === "function" ? loadProviders({ announce: false }) : null,
+        typeof loadJobs === "function" ? loadJobs({ announce: false }) : null,
+        typeof loadRuntimeConfig === "function" ? loadRuntimeConfig({ announce: false }) : null,
+        typeof loadProfiles === "function" ? loadProfiles({ announce: false }) : null,
+        typeof loadClasses === "function" ? loadClasses({ announce: false }) : null
+      ].filter(Boolean));
     } catch (err) {
       setStatus(backupRestoreStatusEl, `Restore failed: ${err.message}`, "admin-status-missing");
     } finally {

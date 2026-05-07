@@ -565,10 +565,11 @@
             role="tabpanel"
             data-panel="data"
             aria-labelledby="admin-tab-data"
+            tabindex="0"
             hidden
           >
             <header class="admin-panel-header">
-              <h2>Data backup &amp; restore</h2>
+              <h3>Data backup &amp; restore</h3>
               <p class="muted">
                 Export the full state of this node as a versioned archive, or restore from a previous archive.
                 Restores are atomic: a failed apply leaves the node in its pre-restore state.
@@ -617,7 +618,11 @@
             </section>
 
             <dialog id="backupRestoreDialog" aria-labelledby="backupRestoreDialogTitle">
-              <form method="dialog" id="backupRestoreDialogForm">
+              <!-- No method="dialog": pressing Enter in the confirmation
+                   field would otherwise submit the form, close the dialog,
+                   and bypass the typed-confirmation gate. The apply button
+                   handler runs explicitly on click. -->
+              <form id="backupRestoreDialogForm" onsubmit="return false;">
                 <h3 id="backupRestoreDialogTitle">Confirm restore</h3>
                 <div id="backupRestorePreviewSummary" class="message"></div>
                 <p>

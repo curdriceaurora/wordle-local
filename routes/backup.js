@@ -52,6 +52,7 @@ function backupErrorStatus(err) {
       return 400;
     case "ENTRY_TOO_LARGE":
     case "ARCHIVE_TOO_LARGE":
+    case "MANIFEST_TOO_LARGE":
       return 413;
     case "RESTORE_BUSY":
       return 409;
@@ -473,6 +474,9 @@ function createBackupRouter(deps) {
       // schema drift, etc.) didn't mutate anything, so the flag stays
       // false to avoid misleading operators.
       body.rolledBackOnError = err?.rolledBackChanges === true;
+      if (Array.isArray(err?.warnings) && err.warnings.length > 0) {
+        body.warnings = err.warnings;
+      }
       return res.status(status).json(body);
     } finally {
       dataMutationLockRef.value = false;

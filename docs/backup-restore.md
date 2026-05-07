@@ -70,7 +70,7 @@ apply UI flow never collides with itself.
 
 | Method | Path | Backup-rate-limited | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/admin/backup` | Yes | Streams the archive. Query: `includeProviders=true|false`, `includeDictionaries=true|false`. |
+| `GET` | `/api/admin/backup` | Yes | Streams the archive. Query: `includeProviders=true\|false`, `includeDictionaries=true\|false`. |
 | `POST` | `/api/admin/backup/preview` | No | Validates an uploaded archive without applying. Returns `{ manifestVersion, appVersion, createdAt, nodeId, files, totalBytes }`. |
 | `POST` | `/api/admin/restore` | Yes | Applies atomically. Requires the header `x-admin-confirm: I-UNDERSTAND` plus a multipart `archive` field. |
 
@@ -202,9 +202,32 @@ The archive is plaintext. `data/leaderboard.json` and
 `data/classes.json` contain profile names and per-game timing. Treat
 backups as sensitive; encrypt at rest if you are sharing them off-host.
 
+## Configured data paths
+
+The backup/restore implementation reads and writes files at their
+canonical paths under `<projectRoot>/data/` (e.g.
+`<projectRoot>/data/leaderboard.json`). If a deployment redirects an
+individual store via env (`STATS_STORE_PATH`, `CLASSES_STORE_PATH`,
+`ADMIN_JOBS_STORE_PATH`, `APP_CONFIG_PATH`) the live store reads from
+the configured path but backup/restore still operates on the
+canonical location. Operators using non-default paths must either:
+
+- Symlink the configured paths into `<projectRoot>/data/` so backup
+  and the live store agree, or
+- Set `BACKUP_PROJECT_ROOT` to the directory whose `data/` subtree
+  contains the configured files (test-style isolation), or
+- Skip backup/restore entirely for that store and reconcile it
+  manually.
+
+A future revision can route backup through the same path-resolution
+logic the stores use; tracked separately.
+
 ## What's NOT in v1
 
 - Selective per-file restore (all-or-nothing only)
 - Cross-host migration (archives are local to a single node)
 - Encryption / password protection
 - Continuous backups, retention policies
+- Backup with non-default `STATS_STORE_PATH` /
+  `CLASSES_STORE_PATH` / `ADMIN_JOBS_STORE_PATH` /
+  `APP_CONFIG_PATH` (see *Configured data paths* above)
