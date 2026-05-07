@@ -232,23 +232,15 @@ function createAdminRouter(deps) {
     }
 
     try {
-      const snapshot = await leaderboardStore.getSnapshot();
-      const target = snapshot.profiles.find((profile) => profile.id === profileId);
-      if (!target) {
-        return res.status(404).json({ error: "Player profile not found." });
-      }
-      if (target.name !== confirmName) {
-        return res.status(400).json({
-          error: "confirmName must match the profile name exactly."
-        });
-      }
-
-      await leaderboardStore.deleteProfile(profileId);
+      await leaderboardStore.deleteProfile(profileId, { expectedName: confirmName });
       return res.json({ ok: true, deletedProfileId: profileId });
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
           return res.status(404).json({ error: err.message });
+        }
+        if (err.code === "PROFILE_NAME_MISMATCH") {
+          return res.status(409).json({ error: err.message });
         }
         return res.status(400).json({ error: err.message });
       }

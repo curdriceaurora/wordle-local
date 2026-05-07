@@ -957,20 +957,41 @@ async function mergeProfileFlow(sourceId) {
   }
 }
 
+function parseOptionalCapValue(element, label) {
+  const raw = String(element?.value ?? "").trim();
+  if (!raw) return { mode: "clear" };
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return {
+      mode: "invalid",
+      message: `${label} must be a positive integer (or empty to clear the override).`
+    };
+  }
+  return { mode: "set", value: parsed };
+}
+
 async function saveProfilesLimits() {
   const overrides = state.runtimeConfig?.overrides || {};
   const nextLimits = { ...(overrides.limits || {}) };
 
-  const maxProfilesValue = Number(profilesMaxProfilesEl?.value);
-  if (Number.isInteger(maxProfilesValue) && maxProfilesValue > 0) {
-    nextLimits.leaderboardMaxProfiles = maxProfilesValue;
+  const maxProfilesParse = parseOptionalCapValue(profilesMaxProfilesEl, "Max profiles");
+  if (maxProfilesParse.mode === "invalid") {
+    setStatus(profilesLimitsStatusEl, maxProfilesParse.message, "admin-status-missing");
+    return;
+  }
+  if (maxProfilesParse.mode === "set") {
+    nextLimits.leaderboardMaxProfiles = maxProfilesParse.value;
   } else {
     delete nextLimits.leaderboardMaxProfiles;
   }
 
-  const maxResultsValue = Number(profilesMaxResultsEl?.value);
-  if (Number.isInteger(maxResultsValue) && maxResultsValue > 0) {
-    nextLimits.leaderboardMaxResultsPerProfile = maxResultsValue;
+  const maxResultsParse = parseOptionalCapValue(profilesMaxResultsEl, "Max results per profile");
+  if (maxResultsParse.mode === "invalid") {
+    setStatus(profilesLimitsStatusEl, maxResultsParse.message, "admin-status-missing");
+    return;
+  }
+  if (maxResultsParse.mode === "set") {
+    nextLimits.leaderboardMaxResultsPerProfile = maxResultsParse.value;
   } else {
     delete nextLimits.leaderboardMaxResultsPerProfile;
   }

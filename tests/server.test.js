@@ -2377,7 +2377,8 @@ describe("Stats API", () => {
         .delete(`/api/admin/stats/profile/${ava.body.playerId}`)
         .set("x-admin-key", "secret")
         .send({ confirmName: "Avery" });
-      expect(wrongConfirm.status).toBe(400);
+      expect(wrongConfirm.status).toBe(409);
+      expect(wrongConfirm.body.error).toMatch(/Profile name has changed/);
 
       const missing = await request(app)
         .delete("/api/admin/stats/profile/missing")

@@ -808,4 +808,65 @@ describe("leaderboard-store: setLimits", () => {
     expect(() => store.setLimits({ maxProfiles: "abc" })).toThrow(/positive integer/);
     expect(() => store.setLimits({ maxResultsPerProfile: 0 })).toThrow(/positive integer/);
   });
+
+  test("validates both options before mutating either", async () => {
+    const store = new LeaderboardStore({
+      filePath: tempFilePath(),
+      logger: { warn: jest.fn() },
+      maxProfiles: 25,
+      maxResultsPerProfile: 200
+    });
+    await store.getSnapshot();
+
+    expect(() =>
+      store.setLimits({ maxProfiles: 100, maxResultsPerProfile: 0 })
+    ).toThrow(/positive integer/);
+    expect(store.maxProfiles).toBe(25);
+    expect(store.maxResultsPerProfile).toBe(200);
+
+    expect(() =>
+      store.setLimits({ maxProfiles: "bad", maxResultsPerProfile: 800 })
+    ).toThrow(/positive integer/);
+    expect(store.maxProfiles).toBe(25);
+    expect(store.maxResultsPerProfile).toBe(200);
+
+    const next = store.setLimits({ maxProfiles: 100, maxResultsPerProfile: 800 });
+    expect(next).toEqual({ maxProfiles: 100, maxResultsPerProfile: 800 });
+  });
+});
+
+describe("leaderboard-store: deleteProfile expectedName", () => {
+  test("rejects with PROFILE_NAME_MISMATCH when stored name disagrees with caller", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await store.mutate((draft) => {
+      draft.profiles.push({
+        id: "p1",
+        name: "Ava",
+        createdAt: isoAt(1),
+        updatedAt: isoAt(1)
+      });
+    });
+
+    await expect(
+      store.deleteProfile("p1", { expectedName: "Avery" })
+    ).rejects.toMatchObject({ code: "PROFILE_NAME_MISMATCH" });
+
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.profiles.find((profile) => profile.id === "p1")).toBeDefined();
+  });
+
+  test("succeeds when the expectedName matches", async () => {
+    const store = new LeaderboardStore({ filePath: tempFilePath(), logger: { warn: jest.fn() } });
+    await store.mutate((draft) => {
+      draft.profiles.push({
+        id: "p1",
+        name: "Ava",
+        createdAt: isoAt(1),
+        updatedAt: isoAt(1)
+      });
+    });
+
+    const snapshot = await store.deleteProfile("p1", { expectedName: "Ava" });
+    expect(snapshot.profiles).toHaveLength(0);
+  });
 });
