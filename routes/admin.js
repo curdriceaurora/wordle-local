@@ -1045,10 +1045,30 @@ function createAdminRouter(deps) {
       // Track tentative removals separately so we don't expose them to the
       // caller until persist completes — a mutator that runs but fails to
       // persist would otherwise leak unpersisted IDs into deletedProfileIds.
+      //
+      // Cross-store race: between deleteClassWithCarveOut returning and the
+      // leaderboard mutate running, a concurrent bulk-add could have added
+      // one of these carve-out IDs to a different class. Re-read the
+      // classes-store snapshot and skip IDs that are now class members so
+      // we don't strip a profile that another class legitimately needs.
       try {
+        const referencedNow = new Set();
+        try {
+          const classesSnapshot = await classesStore.getSnapshot();
+          for (const entry of classesSnapshot.classes) {
+            for (const memberId of entry.memberProfileIds) {
+              referencedNow.add(memberId);
+            }
+          }
+        } catch (snapshotErr) {
+          console.warn(
+            `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+          );
+        }
+        const eligible = carveOutIds.filter((id) => !referencedNow.has(id));
         const tentativeRemoved = [];
         await leaderboardStore.mutate((draft) => {
-          for (const memberId of carveOutIds) {
+          for (const memberId of eligible) {
             const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
             if (idx !== -1) {
               draft.profiles.splice(idx, 1);
@@ -1271,19 +1291,41 @@ function createAdminRouter(deps) {
       // the profiles we just created so a failed bulk import doesn't pollute
       // the leaderboard with orphaned profiles. Reused profiles existed
       // before this request and stay.
+      //
+      // Cross-store race: a concurrent bulk-add could have looked up one of
+      // our newly created profiles by name and added it to a different
+      // class while addMembers was failing. Filter createdProfileIds against
+      // a fresh classes-store snapshot so we don't delete profiles that are
+      // now legitimately in use.
       if (createdProfileIds.length > 0) {
         try {
-          const createdSet = new Set(createdProfileIds);
-          await leaderboardStore.mutate((draft) => {
-            draft.profiles = draft.profiles.filter((profile) => !createdSet.has(profile.id));
-            if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
-              for (const id of createdSet) {
-                if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
-                  delete draft.resultsByProfile[id];
-                }
+          const referencedNow = new Set();
+          try {
+            const classesSnapshot = await classesStore.getSnapshot();
+            for (const entry of classesSnapshot.classes) {
+              for (const memberId of entry.memberProfileIds) {
+                referencedNow.add(memberId);
               }
             }
-          });
+          } catch (snapshotErr) {
+            console.warn(
+              `[admin] Bulk add rollback could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+            );
+          }
+          const safeToDelete = createdProfileIds.filter((id) => !referencedNow.has(id));
+          if (safeToDelete.length > 0) {
+            const safeSet = new Set(safeToDelete);
+            await leaderboardStore.mutate((draft) => {
+              draft.profiles = draft.profiles.filter((profile) => !safeSet.has(profile.id));
+              if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
+                for (const id of safeSet) {
+                  if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
+                    delete draft.resultsByProfile[id];
+                  }
+                }
+              }
+            });
+          }
         } catch (rollbackErr) {
           console.warn(
             `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
