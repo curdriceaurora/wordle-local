@@ -276,14 +276,33 @@ function createBackupRouter(deps) {
     try {
       // Make sure every in-scope store's file exists on disk before
       // hashing. On a fresh node, an unread store's data file may not
-      // exist yet — buildManifest would otherwise throw.
-      await warmInScopeStores();
+      // exist yet — buildManifest would otherwise throw. Wrap with the
+      // same error-mapping as the rest of the route so a store-load
+      // disk failure surfaces as a structured JSON 500 instead of an
+      // unhandled rejection / generic Express HTML error.
+      try {
+        await warmInScopeStores();
+      } catch (err) {
+        logEvent(req, "backup.create.error", { phase: "warm", error: err?.message || String(err) });
+        return res.status(500).json({
+          error: `Could not warm in-scope stores before backup: ${err?.message || String(err)}`,
+          code: "STORE_WARM_FAILED"
+        });
+      }
 
       // Drain in-flight writers that already passed the gate before we
       // took the lock. Without this, an in-progress leaderboard mutation
       // could complete its rename mid-build and produce an archive
       // whose hashed bytes don't match its streamed bytes.
-      await drainStoreWriteQueues();
+      try {
+        await drainStoreWriteQueues();
+      } catch (err) {
+        logEvent(req, "backup.create.error", { phase: "drain", error: err?.message || String(err) });
+        return res.status(500).json({
+          error: `Could not drain in-flight writers before backup: ${err?.message || String(err)}`,
+          code: "STORE_DRAIN_FAILED"
+        });
+      }
 
       // Pre-check uncompressed total size before piping. Without this, an
       // export of an over-cap data tree would stream past the operator's

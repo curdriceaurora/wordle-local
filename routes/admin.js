@@ -555,18 +555,32 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Refuse to start (or enqueue) any import while a restore is in
+    // flight. The async path below would otherwise persist a job into
+    // data/admin-jobs.json during the restore upload window; the
+    // restore would then overwrite that file with the archive's
+    // contents and the just-enqueued job (plus any staged manual
+    // upload) would vanish.
+    if (dataMutationLockRef?.value || restoreInProgressRef?.value) {
+      return providerAdminError(
+        res,
+        new StatsApiError(
+          409,
+          "A backup or restore is currently running; provider imports are paused. Retry once it completes."
+        )
+      );
+    }
+
     if (!importAsync) {
       if (
         providerImportQueueActiveRef.value
         || providerImportSyncActiveRef.value
-        || dataMutationLockRef?.value
-        || restoreInProgressRef?.value
       ) {
         return providerAdminError(
           res,
           new StatsApiError(
             409,
-            "Another admin operation (import or restore) is currently running. Retry with async=true or wait for completion."
+            "Another import is currently running. Retry with async=true or wait for completion."
           )
         );
       }
