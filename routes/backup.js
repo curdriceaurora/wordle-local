@@ -527,7 +527,16 @@ function createBackupRouter(deps) {
     // good. applyRestore re-runs validateArchive — that's a small
     // duplication (hash checks only) but the safety win is worth it.
     try {
-      await validateArchive(upload.tempPath, { projectRoot });
+      // Match preview's options so pre-validation rejects the same
+      // archives preview would. Without this, an archive that the
+      // operator's BACKUP_MAX_BYTES would reject in preview could
+      // still slip past the apply path's pre-validation (which
+      // would then defer the rejection to applyRestore's internal
+      // validate — same effect, but inconsistent code paths).
+      await validateArchive(upload.tempPath, {
+        projectRoot,
+        totalMaxBytes: backupMaxBytes
+      });
     } catch (err) {
       logEvent(req, "backup.restore.validate.error", { code: err?.code, error: err?.message });
       restoreInProgressRef.value = false;
@@ -592,7 +601,10 @@ function createBackupRouter(deps) {
       // after applyRestore returns success.
       await drainStoreWriteQueues();
 
-      const result = await applyRestore({ archivePath: upload.tempPath, projectRoot });
+      const result = await applyRestore(
+        { archivePath: upload.tempPath, projectRoot },
+        { totalMaxBytes: backupMaxBytes }
+      );
 
       // Reload in-memory caches so consumers see the restored state.
       const reloadResults = [];
