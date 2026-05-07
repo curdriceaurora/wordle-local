@@ -2797,42 +2797,46 @@ app.get("/api/word", requireAdminAccess, (req, res) => {
 });
 
 app.post("/api/word", requireAdminAccess, async (req, res) => {
-  const word = normalizeWord(req.body.word);
-  const date = req.body.date ? String(req.body.date) : null;
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-
-  try {
-    assertWord(word, getMinLengthForLang(lang));
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  const data = {
-    word,
-    lang,
-    date: date || null,
-    updatedAt: new Date().toISOString()
-  };
-
-  // Atomic claim: wait for the data-mutation lock, then increment the
-  // direct-write counter under one synchronous tick so a restore that
-  // claims the lock immediately after our wait can't race past us
-  // before saveWordDataAtomic runs. Restore busy check observes the
-  // counter and 409s while it's > 0.
+  // Claim the direct-write slot BEFORE validating. resolveLang() reads
+  // the live language registry, which a concurrent restore can swap
+  // out from under us. If we validated first and waited second, an
+  // archive that drops support for the requested lang would still let
+  // this request 200 — and persist a now-unsupported word over the
+  // freshly-restored data/word.json. Claiming first guarantees the
+  // restore (if any) has fully landed before we resolve lang/word.
   const releaseSlot = await claimDirectDataWriteSlot();
   try {
-    await saveWordDataAtomic(data);
-  } catch (err) {
-    console.error("Failed to persist daily word data.", err);
-    return res.status(500).json({ error: "Could not save daily word right now." });
+    const word = normalizeWord(req.body.word);
+    const date = req.body.date ? String(req.body.date) : null;
+    const lang = resolveLang(req.body.lang);
+    if (!lang) {
+      return res.status(400).json({ error: "Unknown language." });
+    }
+
+    try {
+      assertWord(word, getMinLengthForLang(lang));
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const data = {
+      word,
+      lang,
+      date: date || null,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      await saveWordDataAtomic(data);
+    } catch (err) {
+      console.error("Failed to persist daily word data.", err);
+      return res.status(500).json({ error: "Could not save daily word right now." });
+    }
+    wordDataCache = data;
+    res.json({ ok: true, data });
   } finally {
     releaseSlot();
   }
-  wordDataCache = data;
-  res.json({ ok: true, data });
 });
 
 // ============================================================================
