@@ -7,6 +7,7 @@ const Busboy = require("busboy");
 
 const {
   BackupError,
+  buildManifest,
   createArchive,
   validateArchive,
   applyRestore
@@ -212,6 +213,32 @@ function createBackupRouter(deps) {
     const includeProviders = parseBoolFlag(req.query.includeProviders, backupIncludeProvidersDefault);
     const includeDictionaries = parseBoolFlag(req.query.includeDictionaries, false);
     logEvent(req, "backup.create", { includeProviders, includeDictionaries });
+
+    // Pre-check uncompressed total size before piping. Without this, an
+    // export of an over-cap data tree would stream past the operator's
+    // configured limit; for the import path, busboy guards uploads.
+    let manifest;
+    try {
+      manifest = await buildManifest({
+        projectRoot,
+        includeProviders,
+        includeDictionaries
+      });
+    } catch (err) {
+      logEvent(req, "backup.create.error", { error: err?.message || String(err) });
+      return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
+    }
+    const totalBytes = manifest.files.reduce((sum, entry) => sum + entry.bytes, 0);
+    if (totalBytes > backupMaxBytes) {
+      logEvent(req, "backup.create.too-large", { totalBytes, cap: backupMaxBytes });
+      return res.status(413).json({
+        error: `Archive uncompressed size ${totalBytes} bytes exceeds the cap of ${backupMaxBytes} bytes. ` +
+          "Disable optional sets, raise BACKUP_MAX_BYTES, or split the export.",
+        code: "ARCHIVE_TOO_LARGE",
+        totalBytes,
+        cap: backupMaxBytes
+      });
+    }
 
     const stamp = safeFilenameTimestamp();
     const nodeId = await readNodeIdSafe(projectRoot);

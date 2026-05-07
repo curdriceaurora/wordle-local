@@ -398,6 +398,99 @@ describe("validateArchive rejection cases", () => {
   });
 });
 
+describe("validateArchive security guards", () => {
+  test("rejects manifest with optionalSet entry outside the allowed prefix", async () => {
+    const projectRoot = await tempProject();
+    const archiver = require("archiver");
+    const archivePath = path.join(projectRoot, "evil-optional.zip");
+    const archive = archiver("zip");
+    const out = fs.createWriteStream(archivePath);
+    archive.pipe(out);
+    const evilBytes = Buffer.from("evil");
+    archive.append(JSON.stringify({
+      manifestVersion: 1,
+      appVersion: "0.0.0",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      nodeId: "evil",
+      files: [
+        {
+          path: "server.js",
+          bytes: evilBytes.length,
+          sha256: sha256OfBuffer(evilBytes),
+          optionalSet: "providers"
+        }
+      ],
+      optionalSets: ["providers"]
+    }, null, 2), { name: "manifest.json" });
+    archive.append(evilBytes, { name: "server.js" });
+    await archive.finalize();
+    await new Promise((resolve) => out.on("close", resolve));
+
+    await expect(
+      validateArchive(archivePath, { projectRoot })
+    ).rejects.toMatchObject({
+      code: "OPTIONAL_SET_PATH_INVALID"
+    });
+  });
+
+  test("rejects archive with duplicate paths", async () => {
+    const projectRoot = await tempProject();
+    const archiver = require("archiver");
+    const archivePath = path.join(projectRoot, "dup.zip");
+    const archive = archiver("zip");
+    const out = fs.createWriteStream(archivePath);
+    archive.pipe(out);
+    const buf = Buffer.from("{}");
+    archive.append(JSON.stringify({
+      manifestVersion: 1,
+      appVersion: "0.0.0",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      nodeId: "dup",
+      files: [
+        { path: "data/word.json", bytes: buf.length, sha256: sha256OfBuffer(buf) },
+        { path: "data/word.json", bytes: buf.length, sha256: sha256OfBuffer(buf) }
+      ],
+      optionalSets: []
+    }, null, 2), { name: "manifest.json" });
+    archive.append(buf, { name: "data/word.json" });
+    archive.append(buf, { name: "data/word.json" });
+    await archive.finalize();
+    await new Promise((resolve) => out.on("close", resolve));
+
+    await expect(
+      validateArchive(archivePath, { projectRoot })
+    ).rejects.toMatchObject({
+      code: "MANIFEST_DUPLICATE_PATH"
+    });
+  });
+
+  test("ignores explicit directory entries instead of rejecting them", async () => {
+    const projectRoot = await tempProject();
+    const archiver = require("archiver");
+    const archivePath = path.join(projectRoot, "with-dirs.zip");
+    const archive = archiver("zip");
+    const out = fs.createWriteStream(archivePath);
+    archive.pipe(out);
+    // Build a normal manifest from the project, then append a stray
+    // directory entry to the archive to verify it doesn't break validation.
+    const manifest = await buildManifest({
+      projectRoot,
+      includeProviders: false,
+      includeDictionaries: false
+    });
+    archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: "manifest.json" });
+    for (const entry of manifest.files) {
+      archive.file(path.join(projectRoot, entry.path), { name: entry.path });
+    }
+    archive.append("", { name: "data/providers/" });
+    await archive.finalize();
+    await new Promise((resolve) => out.on("close", resolve));
+
+    const result = await validateArchive(archivePath, { projectRoot });
+    expect(result.manifest.manifestVersion).toBe(1);
+  });
+});
+
 describe("applyRestore happy path", () => {
   test("replaces in-scope files byte-equal to archive contents", async () => {
     const projectRoot = await tempProject();

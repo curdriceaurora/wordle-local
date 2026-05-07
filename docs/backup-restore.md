@@ -154,8 +154,8 @@ historical commits, raise `BACKUP_MAX_BYTES`.
 | --- | --- | --- |
 | `BACKUP_MAX_BYTES` | `268435456` (256 MiB) | Per-archive byte cap (export streaming + import upload). Clamped to `[1 MiB, 4 GiB]`. |
 | `BACKUP_INCLUDE_PROVIDERS_DEFAULT` | `false` | Default for the export UI's "include providers" checkbox. |
-| `BACKUP_RATE_LIMIT_WINDOW_MS` | `30000` | Rolling window for the backup-route rate limit. |
-| `BACKUP_RATE_LIMIT_MAX` | `1` | Max backup/preview/restore calls per window per admin key. |
+| `BACKUP_RATE_LIMIT_WINDOW_MS` | `30000` | Rolling window for the strict backup rate limiter. |
+| `BACKUP_RATE_LIMIT_MAX` | `1` | Max calls per window per admin key against the strict backup limiter. **Only `GET /api/admin/backup` and `POST /api/admin/restore` are gated by this limiter** — `POST /api/admin/backup/preview` is read-only and falls through to the standard admin-write limit. |
 | `BACKUP_PROJECT_ROOT` | (server's `__dirname`) | Override for tests; should not be set in production. |
 
 ## Boot-time orphan check

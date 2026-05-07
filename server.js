@@ -2129,7 +2129,15 @@ function toAdminJobResponse(job) {
 }
 
 async function startProviderImportQueueIfNeeded() {
-  if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
+  // Bidirectional mutex with the restore router: don't start dequeueing
+  // jobs while a restore is mutating data/. Without this, a pending
+  // import could begin between the restore's pre-check and the leaderboard
+  // mutate and write data/providers/** concurrently with the swap.
+  if (
+    providerImportQueueActiveRef.value
+    || providerImportSyncActiveRef.value
+    || restoreActiveRef.value
+  ) {
     return;
   }
   providerImportQueueActiveRef.value = true;
@@ -2421,6 +2429,7 @@ app.use(
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    restoreActiveRef,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,

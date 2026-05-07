@@ -86,6 +86,7 @@ function createAdminRouter(deps) {
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    restoreActiveRef,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -544,12 +545,16 @@ function createAdminRouter(deps) {
     }
 
     if (!importAsync) {
-      if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
+      if (
+        providerImportQueueActiveRef.value
+        || providerImportSyncActiveRef.value
+        || restoreActiveRef?.value
+      ) {
         return providerAdminError(
           res,
           new StatsApiError(
             409,
-            "Another queued import is currently running. Retry with async=true or wait for completion."
+            "Another admin operation (import or restore) is currently running. Retry with async=true or wait for completion."
           )
         );
       }
