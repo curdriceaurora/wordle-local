@@ -2035,10 +2035,18 @@ async function fetchAdminBlob(path, init = {}) {
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
-      const text = await response.text();
-      message = text || message;
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string" && payload.error.trim()) {
+          message = payload.error.trim();
+        }
+      } else {
+        const text = await response.text();
+        if (text) message = text;
+      }
     } catch {
-      // ignore
+      // Body unreadable or not the shape we expected — fall back to status line.
     }
     const err = new Error(message);
     err.status = response.status;
