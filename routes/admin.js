@@ -1229,6 +1229,30 @@ function createAdminRouter(deps) {
     try {
       addOutcome = await classesStore.addMembers(classId, survivors);
     } catch (err) {
+      // Race window: between the pre-check and addMembers, another admin
+      // could have archived the class or filled the per-class cap. Roll back
+      // the profiles we just created so a failed bulk import doesn't pollute
+      // the leaderboard with orphaned profiles. Reused profiles existed
+      // before this request and stay.
+      if (createdProfileIds.length > 0) {
+        try {
+          const createdSet = new Set(createdProfileIds);
+          await leaderboardStore.mutate((draft) => {
+            draft.profiles = draft.profiles.filter((profile) => !createdSet.has(profile.id));
+            if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
+              for (const id of createdSet) {
+                if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
+                  delete draft.resultsByProfile[id];
+                }
+              }
+            }
+          });
+        } catch (rollbackErr) {
+          console.warn(
+            `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
+          );
+        }
+      }
       return handleClassesStoreError(res, err, "Bulk class add failed.");
     }
 
