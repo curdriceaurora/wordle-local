@@ -29,6 +29,8 @@ const appConfigSchemaPath = path.join(projectRoot, "data", "app-config.schema.js
 const appConfigExamplePath = path.join(projectRoot, "data", "app-config.example.json");
 const classesSchemaPath = path.join(projectRoot, "data", "classes.schema.json");
 const classesExamplePath = path.join(projectRoot, "data", "classes.example.json");
+const backupManifestSchemaPath = path.join(projectRoot, "data", "backup-manifest.schema.json");
+const backupManifestExamplePath = path.join(projectRoot, "data", "backup-manifest.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -96,6 +98,11 @@ function runSchemaChecks() {
       schemaPath: classesSchemaPath,
       dataPath: classesExamplePath,
       schemaLabel: "classes schema"
+    },
+    {
+      schemaPath: backupManifestSchemaPath,
+      dataPath: backupManifestExamplePath,
+      schemaLabel: "backup manifest schema"
     }
   ];
 

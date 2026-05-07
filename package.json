@@ -26,11 +26,14 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
+    "busboy": "^1.6.0",
     "compression": "^1.7.4",
     "express": "^4.19.2",
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
-    "nspell": "^2.1.5"
+    "nspell": "^2.1.5",
+    "yauzl": "^3.3.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",

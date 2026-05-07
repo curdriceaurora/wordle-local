@@ -73,6 +73,21 @@ const runtimeLockedBodyEl = document.getElementById("runtimeLockedBody");
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
 
+const backupExportFormEl = document.getElementById("backupExportForm");
+const backupIncludeProvidersEl = document.getElementById("backupIncludeProviders");
+const backupIncludeDictionariesEl = document.getElementById("backupIncludeDictionaries");
+const backupExportBtnEl = document.getElementById("backupExportBtn");
+const backupExportStatusEl = document.getElementById("backupExportStatus");
+const backupRestoreFormEl = document.getElementById("backupRestoreForm");
+const backupRestoreFileEl = document.getElementById("backupRestoreFile");
+const backupRestorePreviewBtnEl = document.getElementById("backupRestorePreviewBtn");
+const backupRestoreStatusEl = document.getElementById("backupRestoreStatus");
+const backupRestoreDialogEl = document.getElementById("backupRestoreDialog");
+const backupRestorePreviewSummaryEl = document.getElementById("backupRestorePreviewSummary");
+const backupRestoreConfirmInputEl = document.getElementById("backupRestoreConfirmInput");
+const backupRestoreCancelBtnEl = document.getElementById("backupRestoreCancelBtn");
+const backupRestoreApplyBtnEl = document.getElementById("backupRestoreApplyBtn");
+
 const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
   REMOTE_FETCH: "remote-fetch",
   MANUAL_UPLOAD: "manual-upload"
@@ -1972,6 +1987,201 @@ if (refreshJobsBtnEl) {
   });
 }
 
+const RESTORE_CONFIRM_PHRASE = "RESTORE";
+const RESTORE_CONFIRM_HEADER = "x-admin-confirm";
+const RESTORE_CONFIRM_VALUE = "I-UNDERSTAND";
+let pendingRestoreFile = null;
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "?";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function parseAttachmentFilename(disposition) {
+  if (typeof disposition !== "string") return null;
+  const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function fetchAdminBlob(path, init = {}) {
+  const headers = Object.assign({}, init.headers || {});
+  if (state.adminKey) headers["x-admin-key"] = state.adminKey;
+  const response = await fetch(path, Object.assign({}, init, { headers }));
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const text = await response.text();
+      message = text || message;
+    } catch {
+      // ignore
+    }
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+  return response;
+}
+
+if (backupExportFormEl) {
+  backupExportFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) {
+      setStatus(backupExportStatusEl, "Unlock the admin session first.", "admin-status-off");
+      return;
+    }
+    backupExportBtnEl.disabled = true;
+    setStatus(backupExportStatusEl, "Building backup archive…", "");
+    try {
+      const includeProviders = backupIncludeProvidersEl?.checked ? "true" : "false";
+      const includeDictionaries = backupIncludeDictionariesEl?.checked ? "true" : "false";
+      const url = `/api/admin/backup?includeProviders=${includeProviders}&includeDictionaries=${includeDictionaries}`;
+      const response = await fetchAdminBlob(url);
+      const blob = await response.blob();
+      const filename =
+        parseAttachmentFilename(response.headers.get("content-disposition"))
+        || `wordle-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      setStatus(
+        backupExportStatusEl,
+        `Downloaded ${filename} (${formatBytes(blob.size)}).`,
+        "admin-status-ok"
+      );
+    } catch (err) {
+      setStatus(backupExportStatusEl, `Export failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      backupExportBtnEl.disabled = false;
+    }
+  });
+}
+
+function renderBackupPreviewSummary(payload) {
+  if (!backupRestorePreviewSummaryEl) return;
+  const fileCount = Array.isArray(payload.files) ? payload.files.length : 0;
+  const total = formatBytes(payload.totalBytes);
+  const lines = [
+    `Manifest version: ${payload.manifestVersion}`,
+    `App version: ${payload.appVersion}`,
+    `Created: ${payload.createdAt}`,
+    `Node id: ${payload.nodeId}`,
+    `Files: ${fileCount} (${total} total)`
+  ];
+  backupRestorePreviewSummaryEl.textContent = lines.join("\n");
+}
+
+function resetRestoreDialog() {
+  if (backupRestoreConfirmInputEl) backupRestoreConfirmInputEl.value = "";
+  if (backupRestoreApplyBtnEl) backupRestoreApplyBtnEl.disabled = true;
+  if (backupRestorePreviewSummaryEl) backupRestorePreviewSummaryEl.textContent = "";
+  pendingRestoreFile = null;
+}
+
+if (backupRestoreFormEl) {
+  backupRestoreFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) {
+      setStatus(backupRestoreStatusEl, "Unlock the admin session first.", "admin-status-off");
+      return;
+    }
+    const file = backupRestoreFileEl?.files?.[0];
+    if (!file) {
+      setStatus(backupRestoreStatusEl, "Select an archive file first.", "admin-status-missing");
+      return;
+    }
+    backupRestorePreviewBtnEl.disabled = true;
+    setStatus(backupRestoreStatusEl, "Validating archive…", "");
+    try {
+      const formData = new FormData();
+      formData.append("archive", file, file.name);
+      const response = await fetchAdminBlob("/api/admin/backup/preview", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json();
+      renderBackupPreviewSummary(payload);
+      pendingRestoreFile = file;
+      if (backupRestoreApplyBtnEl) backupRestoreApplyBtnEl.disabled = true;
+      if (backupRestoreConfirmInputEl) {
+        backupRestoreConfirmInputEl.value = "";
+        setTimeout(() => backupRestoreConfirmInputEl.focus(), 0);
+      }
+      if (backupRestoreDialogEl?.showModal) {
+        backupRestoreDialogEl.showModal();
+      } else if (backupRestoreDialogEl) {
+        backupRestoreDialogEl.setAttribute("open", "");
+      }
+      setStatus(backupRestoreStatusEl, "Preview ready.", "admin-status-ok");
+    } catch (err) {
+      setStatus(backupRestoreStatusEl, `Preview failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      backupRestorePreviewBtnEl.disabled = false;
+    }
+  });
+}
+
+if (backupRestoreConfirmInputEl) {
+  backupRestoreConfirmInputEl.addEventListener("input", () => {
+    if (!backupRestoreApplyBtnEl) return;
+    backupRestoreApplyBtnEl.disabled =
+      backupRestoreConfirmInputEl.value.trim() !== RESTORE_CONFIRM_PHRASE;
+  });
+}
+
+if (backupRestoreCancelBtnEl) {
+  backupRestoreCancelBtnEl.addEventListener("click", () => {
+    resetRestoreDialog();
+    if (backupRestoreDialogEl?.close) backupRestoreDialogEl.close();
+    else backupRestoreDialogEl?.removeAttribute("open");
+  });
+}
+
+if (backupRestoreApplyBtnEl) {
+  backupRestoreApplyBtnEl.addEventListener("click", async () => {
+    if (backupRestoreConfirmInputEl?.value.trim() !== RESTORE_CONFIRM_PHRASE) return;
+    if (!pendingRestoreFile) return;
+    backupRestoreApplyBtnEl.disabled = true;
+    setStatus(backupRestoreStatusEl, "Applying restore…", "");
+    try {
+      const formData = new FormData();
+      formData.append("archive", pendingRestoreFile, pendingRestoreFile.name);
+      const response = await fetchAdminBlob("/api/admin/restore", {
+        method: "POST",
+        headers: { [RESTORE_CONFIRM_HEADER]: RESTORE_CONFIRM_VALUE },
+        body: formData
+      });
+      const payload = await response.json();
+      const failedReloads = (payload.reloads || []).filter((entry) => !entry.ok);
+      const filesRestored = payload.filesRestored ?? payload.restored?.length ?? 0;
+      let message = `Restore complete — ${filesRestored} file(s) restored.`;
+      let tone = "admin-status-ok";
+      if (failedReloads.length > 0) {
+        message += ` Caches partially reloaded; ${failedReloads.length} store(s) failed.`;
+        tone = "admin-status-missing";
+      }
+      setStatus(backupRestoreStatusEl, message, tone);
+    } catch (err) {
+      setStatus(backupRestoreStatusEl, `Restore failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      resetRestoreDialog();
+      if (backupRestoreDialogEl?.close) backupRestoreDialogEl.close();
+      else backupRestoreDialogEl?.removeAttribute("open");
+    }
+  });
+}
+
 lockSessionBtnEl.addEventListener("click", () => {
   if (jobsRefreshTimer) {
     clearTimeout(jobsRefreshTimer);
@@ -2011,11 +2221,18 @@ lockSessionBtnEl.addEventListener("click", () => {
   if (classReportToEl) classReportToEl.value = "";
   if (classReportLangEl) classReportLangEl.value = "";
   if (classReportBomEl) classReportBomEl.checked = false;
+  if (backupRestoreFileEl) backupRestoreFileEl.value = "";
+  if (backupIncludeProvidersEl) backupIncludeProvidersEl.checked = false;
+  if (backupIncludeDictionariesEl) backupIncludeDictionariesEl.checked = false;
+  resetRestoreDialog();
+  if (backupRestoreDialogEl?.close && backupRestoreDialogEl.open) backupRestoreDialogEl.close();
   setStatus(profilesStatusEl, "");
   setStatus(profilesLimitsStatusEl, "");
   setStatus(classesStatusEl, "");
   setStatus(classDetailStatusEl, "");
   setStatus(classReportStatusEl, "");
+  setStatus(backupExportStatusEl, "");
+  setStatus(backupRestoreStatusEl, "");
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
   setStatus(jobsStatusEl, "", "");

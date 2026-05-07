@@ -147,6 +147,30 @@ const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   1000,
   "CLASSES_MAX_MEMBERS_PER_CLASS"
 );
+const ENV_BACKUP_MAX_BYTES = clampEnvBounded(
+  process.env.BACKUP_MAX_BYTES,
+  256 * 1024 * 1024,
+  1024 * 1024,
+  // Hard upper bound — operators wanting larger archives should split.
+  4 * 1024 * 1024 * 1024,
+  "BACKUP_MAX_BYTES"
+);
+const ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT =
+  String(process.env.BACKUP_INCLUDE_PROVIDERS_DEFAULT || "").toLowerCase() === "true";
+const ENV_BACKUP_RATE_LIMIT_WINDOW_MS = clampEnvBounded(
+  process.env.BACKUP_RATE_LIMIT_WINDOW_MS,
+  30 * 1000,
+  1000,
+  60 * 60 * 1000,
+  "BACKUP_RATE_LIMIT_WINDOW_MS"
+);
+const ENV_BACKUP_RATE_LIMIT_MAX = clampEnvBounded(
+  process.env.BACKUP_RATE_LIMIT_MAX,
+  1,
+  1,
+  100,
+  "BACKUP_RATE_LIMIT_MAX"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -1018,6 +1042,7 @@ let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
+const restoreActiveRef = { value: false };
 
 function initializeRuntimeConfig() {
   let normalizePromise;
@@ -1508,6 +1533,26 @@ function rebuildLanguageRuntimeCatalog() {
 
 initializeRuntimeConfig();
 rebuildLanguageRuntimeCatalog();
+
+// Boot-time orphan check: a previous restore that crashed mid-apply leaves
+// .restore-staging-* / .restore-rollback-* dirs in data/. Log them loudly
+// rather than auto-deleting — operators may need to inspect or rewind.
+(async () => {
+  try {
+    const { findOrphanedRestoreDirs } = require("./lib/backup-store.js");
+    const orphans = await findOrphanedRestoreDirs(path.join(__dirname, "data"));
+    if (orphans.length > 0) {
+      const list = orphans.map((entry) => entry.name).join(", ");
+      console.warn(
+        `[backup-store] Found ${orphans.length} orphaned restore directory(ies) under data/: ${list}. ` +
+          "These are left over from a restore that did not complete. " +
+          "Inspect their contents before deleting; see docs/backup-restore.md."
+      );
+    }
+  } catch (err) {
+    console.warn(`[backup-store] Orphan-dir check failed: ${err?.message || String(err)}`);
+  }
+})();
 
 if (getDefinitionsMode() === "memory") {
   getOrLoadFullDefinitionsMap();
@@ -2297,6 +2342,44 @@ if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
 }
 
 // Mount admin router first so GET /admin route takes precedence over static serving
+const { ipKeyGenerator: rateLimitIpKeyGenerator } = require("express-rate-limit");
+const backupRateLimiter = rateLimit({
+  windowMs: ENV_BACKUP_RATE_LIMIT_WINDOW_MS,
+  max: ENV_BACKUP_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Throttle per admin key (when present) so two operators on the same IP
+  // don't share a single bucket. Falls back to express-rate-limit's
+  // built-in IPv6-aware ipKeyGenerator when no admin key is set.
+  keyGenerator: (req, res) => {
+    const key = req.headers["x-admin-key"];
+    if (typeof key === "string" && key.length > 0) return `admin:${key}`;
+    return rateLimitIpKeyGenerator(req, res);
+  },
+  message: { error: "Too many backup or restore requests. Try again later." }
+});
+const createBackupRouter = require("./routes/backup.js");
+const BACKUP_PROJECT_ROOT = process.env.BACKUP_PROJECT_ROOT
+  ? path.resolve(process.env.BACKUP_PROJECT_ROOT)
+  : __dirname;
+app.use(
+  createBackupRouter({
+    projectRoot: BACKUP_PROJECT_ROOT,
+    leaderboardStore,
+    languageRegistryStore,
+    adminJobsStore,
+    appConfigStore,
+    classesStore,
+    rebuildLanguageRuntimeCatalog,
+    providerImportQueueActiveRef,
+    providerImportSyncActiveRef,
+    restoreActiveRef,
+    backupMaxBytes: ENV_BACKUP_MAX_BYTES,
+    backupIncludeProvidersDefault: ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT,
+    backupRateLimiter
+  })
+);
+
 const createAdminRouter = require("./routes/admin.js");
 app.use(
   createAdminRouter({

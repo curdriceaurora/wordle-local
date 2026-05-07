@@ -31,10 +31,15 @@ Out of scope:
 | `data/admin-jobs.json` | Persisted queue/job ledger for admin processing (deferred implementation) | Contract locked, runtime deferred | `data/admin-jobs.schema.json` |
 | `data/app-config.json` | Persisted runtime-safe override layer for admin settings (deferred implementation) | Contract locked, runtime deferred | `data/app-config.schema.json` |
 | `data/classes.json` | Classroom-mode classes (named containers of profile IDs) | Active | `data/classes.schema.json` |
+| Backup archives (`*.zip`) | Versioned, schema-checked snapshot of the in-scope data files | Active | `data/backup-manifest.schema.json` |
 
 Examples are provided for tooling validation:
 - `data/admin-jobs.example.json`
 - `data/app-config.example.json`
+- `data/backup-manifest.example.json`
+
+Backup/restore semantics: see [`docs/backup-restore.md`](backup-restore.md). The
+restore handler shares the single-flight admin mutex with provider import.
 
 ## Runtime Config Precedence (Locked)
 Order of precedence is deterministic:
