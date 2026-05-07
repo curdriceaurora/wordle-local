@@ -505,18 +505,13 @@ describe("Classes API: report and CSV", () => {
 describe("Classes API: idempotent re-upload at capacity", () => {
   test("re-uploading the same roster at the per-class cap returns ok, not 409", async () => {
     const paths = makeTempState();
-    process.env.CLASSES_STORE_PATH = paths.classesPath;
-    // Use a tiny per-class member cap to exercise the boundary.
-    const fs2 = require("fs");
-    fs2.writeFileSync(
-      paths.classesPath,
-      `${JSON.stringify({ version: 1, updatedAt: new Date(0).toISOString(), classes: [] }, null, 2)}\n`,
-      "utf8"
-    );
-    // Stub the in-process classesStore via env: use leaderboardMaxProfiles
-    // generous enough that all names fit in the leaderboard.
-    process.env.LEADERBOARD_MAX_PROFILES = "20";
-    const app = loadFreshApp("secret", paths);
+    // Configure the per-class cap to match the roster size so the first
+    // upload puts the class exactly at the cap and the second upload is
+    // a true re-upload of an at-cap roster.
+    const app = loadFreshApp("secret", paths, {
+      LEADERBOARD_MAX_PROFILES: "20",
+      CLASSES_MAX_MEMBERS_PER_CLASS: "4"
+    });
 
     const cls = await request(app)
       .post("/api/admin/classes")
@@ -532,8 +527,16 @@ describe("Classes API: idempotent re-upload at capacity", () => {
     expect(first.status).toBe(200);
     expect(first.body.classMemberCount).toBe(4);
 
+    // Adding even one more name now must 409 — the class is at its cap.
+    const overflow = await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ names: ["Eve"] });
+    expect(overflow.status).toBe(409);
+    expect(overflow.body.error).toMatch(/per-class member cap/);
+
     // Re-uploading the SAME roster must not 409 even when the class is at
-    // its (logical) cap — counting only net-new members.
+    // its cap — counting only net-new members.
     const second = await request(app)
       .post(`/api/admin/classes/${classId}/members/bulk`)
       .set("x-admin-key", "secret")

@@ -137,6 +137,13 @@ const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
 const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
   ? path.resolve(process.env.CLASSES_STORE_PATH)
   : path.join(__dirname, "data", "classes.json");
+const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
+  process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
+  1000,
+  1,
+  10000,
+  "CLASSES_MAX_MEMBERS_PER_CLASS"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -1001,6 +1008,7 @@ const adminJobsStore = new AdminJobsStore({
 });
 const classesStore = new ClassesStore({
   filePath: CLASSES_DATA_PATH,
+  maxMembersPerClass: ENV_CLASSES_MAX_MEMBERS_PER_CLASS,
   logger: console
 });
 let registeredLanguageCatalog = new Map();
