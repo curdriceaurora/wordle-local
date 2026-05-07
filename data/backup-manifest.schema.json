@@ -15,7 +15,7 @@
   "properties": {
     "manifestVersion": {
       "type": "integer",
-      "const": 1
+      "minimum": 1
     },
     "appVersion": {
       "type": "string",

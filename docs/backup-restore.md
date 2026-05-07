@@ -221,10 +221,13 @@ canonical paths under `<projectRoot>/data/` (e.g.
 individual store via env (`STATS_STORE_PATH`, `CLASSES_STORE_PATH`,
 `ADMIN_JOBS_STORE_PATH`, `APP_CONFIG_PATH`) the live store reads from
 the configured path but backup/restore still operates on the
-canonical location. Operators using non-default paths must either:
+canonical location. Symlinks are NOT a workaround — both the backup
+build and restore-time schema check call `assertRegularFile` on
+in-scope paths and reject symlinks/non-regular files with
+`PATH_UNSAFE`. Operators using non-default paths must either:
 
-- Symlink the configured paths into `<projectRoot>/data/` so backup
-  and the live store agree, or
+- Copy or hard-link the configured paths to `<projectRoot>/data/`
+  before each backup so both sides see the same regular file, or
 - Set `BACKUP_PROJECT_ROOT` to the directory whose `data/` subtree
   contains the configured files (test-style isolation), or
 - Skip backup/restore entirely for that store and reconcile it
