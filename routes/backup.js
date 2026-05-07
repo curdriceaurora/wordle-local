@@ -456,6 +456,29 @@ function createBackupRouter(deps) {
 
     logEvent(req, "backup.restore.start", { bytes: upload.bytes, originalName: upload.originalName });
 
+    // Recheck the provider-import refs after the upload window. Even
+    // though restoreInProgressRef has been claimed since the busy
+    // check, a provider import that started AFTER restoreInProgressRef
+    // was set but BEFORE we updated the import-side guards (older
+    // build) could be in flight. If either ref is now true, abort and
+    // tell the operator to retry — we don't want to take the data
+    // lock and race a running import.
+    if (
+      providerImportQueueActiveRef?.value
+      || providerImportSyncActiveRef?.value
+    ) {
+      restoreInProgressRef.value = false;
+      try {
+        await fsp.rm(upload.tempPath, { force: true });
+      } catch {
+        // best effort
+      }
+      return res.status(409).json({
+        error: "A provider import started while the restore archive was uploading; retry once the import completes.",
+        code: "RESTORE_BUSY"
+      });
+    }
+
     // NOW take the data-mutation lock — upload is done, we're about to
     // start touching live data/. Other /api mutations are 503'd from
     // here until the apply + reload completes.

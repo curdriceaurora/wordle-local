@@ -87,6 +87,7 @@ function createAdminRouter(deps) {
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    restoreInProgressRef,
     waitForDataMutationLock,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
@@ -559,6 +560,7 @@ function createAdminRouter(deps) {
         providerImportQueueActiveRef.value
         || providerImportSyncActiveRef.value
         || dataMutationLockRef?.value
+        || restoreInProgressRef?.value
       ) {
         return providerAdminError(
           res,

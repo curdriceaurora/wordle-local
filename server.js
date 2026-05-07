@@ -2182,13 +2182,16 @@ function toAdminJobResponse(job) {
 
 async function startProviderImportQueueIfNeeded() {
   // Bidirectional mutex with the restore router: don't start dequeueing
-  // jobs while a restore is mutating data/. Without this, a pending
-  // import could begin between the restore's pre-check and the leaderboard
-  // mutate and write data/providers/** concurrently with the swap.
+  // jobs while a restore is in flight. The restore now claims
+  // restoreInProgressRef synchronously (before the upload completes),
+  // and dataMutationLockRef later (right before the swap). Both must
+  // be checked here — checking only dataMutationLockRef would let an
+  // import start during the upload window and race the swap.
   if (
     providerImportQueueActiveRef.value
     || providerImportSyncActiveRef.value
     || dataMutationLockRef.value
+    || restoreInProgressRef.value
   ) {
     return;
   }
@@ -2544,6 +2547,7 @@ app.use(
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     dataMutationLockRef,
+    restoreInProgressRef,
     waitForDataMutationLock,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
