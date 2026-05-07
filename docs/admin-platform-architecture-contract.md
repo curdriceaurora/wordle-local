@@ -101,24 +101,18 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
       "shardCacheSize": 6
     },
     "limits": {
-      "jsonBodyLimit": "12mb",
       "providerManualMaxFileBytes": 8388608,
       "leaderboardMaxProfiles": 50,
       "leaderboardMaxResultsPerProfile": 400
     },
-    "security": {
-      "trustProxy": null,
-      "trustProxyHops": null,
-      "adminRateLimit": {
-        "windowMs": 900000,
-        "max": 90,
-        "writeWindowMs": 900000,
-        "writeMax": 30
-      }
+    "diagnostics": {
+      "perfLogging": false
     }
   }
 }
 ```
+
+Only the keys whitelisted by `data/app-config.schema.json` and `lib/app-config-store.js` round-trip through `PUT /api/admin/runtime-config`. Anything outside that allowlist (security, body-size limits, deployment-scoped values) stays env-controlled.
 
 ## Persisted Override Keys (`overrides.limits`)
 

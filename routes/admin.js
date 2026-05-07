@@ -109,6 +109,7 @@ function createAdminRouter(deps) {
     LEADERBOARD_MAX_PROFILES_MAX,
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    isLeaderboardMaxProfilesEnvLocked,
     LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,
@@ -325,11 +326,15 @@ function createAdminRouter(deps) {
             error: `overrides.limits.leaderboardMaxProfiles must be an integer between ${LEADERBOARD_MAX_PROFILES_MIN} and ${LEADERBOARD_MAX_PROFILES_MAX}.`
           });
         }
-        const snapshot = await leaderboardStore.getSnapshot();
-        if (parsed < snapshot.profiles.length) {
-          return res.status(409).json({
-            error: `Cannot lower leaderboardMaxProfiles to ${parsed}; ${snapshot.profiles.length} profiles are currently registered.`
-          });
+        // Skip the count check when the env locks the cap — the persisted
+        // override is dormant in that case, so it cannot orphan profiles.
+        if (!isLeaderboardMaxProfilesEnvLocked()) {
+          const snapshot = await leaderboardStore.getSnapshot();
+          if (parsed < snapshot.profiles.length) {
+            return res.status(409).json({
+              error: `Cannot lower leaderboardMaxProfiles to ${parsed}; ${snapshot.profiles.length} profiles are currently registered.`
+            });
+          }
         }
       }
 

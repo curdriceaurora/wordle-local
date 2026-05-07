@@ -255,6 +255,14 @@ function hasValidNonNegativeIntegerEnv(name) {
   return Number.isInteger(parsed) && parsed >= 0;
 }
 
+function hasValidBoundedPositiveIntegerEnv(name, min, max) {
+  if (process.env[name] === undefined) {
+    return false;
+  }
+  const parsed = Number(process.env[name]);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max;
+}
+
 const ENV_CONFIG = Object.freeze({
   definitions: Object.freeze({
     mode: ENV_DEFINITIONS_MODE,
@@ -281,8 +289,16 @@ const ENV_CONFIG_LOCKS = Object.freeze({
   }),
   limits: Object.freeze({
     providerManualMaxFileBytes: hasValidPositiveIntegerEnv("PROVIDER_MANUAL_MAX_FILE_BYTES"),
-    leaderboardMaxProfiles: hasValidPositiveIntegerEnv("LEADERBOARD_MAX_PROFILES"),
-    leaderboardMaxResultsPerProfile: hasValidPositiveIntegerEnv("LEADERBOARD_MAX_RESULTS_PER_PROFILE")
+    leaderboardMaxProfiles: hasValidBoundedPositiveIntegerEnv(
+      "LEADERBOARD_MAX_PROFILES",
+      LEADERBOARD_MAX_PROFILES_MIN,
+      LEADERBOARD_MAX_PROFILES_MAX
+    ),
+    leaderboardMaxResultsPerProfile: hasValidBoundedPositiveIntegerEnv(
+      "LEADERBOARD_MAX_RESULTS_PER_PROFILE",
+      LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+      LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX
+    )
   }),
   diagnostics: Object.freeze({
     perfLogging: process.env.PERF_LOGGING !== undefined
@@ -408,7 +424,38 @@ function resolveRuntimeConfigFromOverrides(rawOverrides) {
 function applyRuntimeConfig(overrides) {
   const previousMode = runtimeConfigState.effective.definitions.mode;
   const previousShardCacheSize = runtimeConfigState.effective.definitions.shardCacheSize;
+  const previousMaxResultsPerProfile =
+    runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile;
   const next = resolveRuntimeConfigFromOverrides(overrides);
+
+  // Apply leaderboard limits to the store first; if it fails (e.g. a hand-edited
+  // app-config sets a cap below the current profile count), keep the previously
+  // effective limits in the runtime snapshot so /api/admin/runtime-config does
+  // not advertise a value the store is not actually enforcing.
+  let limitsApplied = true;
+  try {
+    leaderboardStore.setLimits({
+      maxProfiles: next.effective.limits.leaderboardMaxProfiles,
+      maxResultsPerProfile: next.effective.limits.leaderboardMaxResultsPerProfile
+    });
+  } catch (err) {
+    limitsApplied = false;
+    console.warn(
+      `[runtime-config] Could not apply leaderboard limits: ${err?.message || String(err)}`
+    );
+    next.effective.limits = {
+      ...next.effective.limits,
+      leaderboardMaxProfiles: runtimeConfigState.effective.limits.leaderboardMaxProfiles,
+      leaderboardMaxResultsPerProfile:
+        runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
+    };
+    next.sources.limits = {
+      ...next.sources.limits,
+      leaderboardMaxProfiles: runtimeConfigState.sources.limits.leaderboardMaxProfiles,
+      leaderboardMaxResultsPerProfile:
+        runtimeConfigState.sources.limits.leaderboardMaxResultsPerProfile
+    };
+  }
 
   runtimeConfigState.overrides = next.overrides;
   runtimeConfigState.effective = next.effective;
@@ -435,18 +482,21 @@ function applyRuntimeConfig(overrides) {
     }
   }
 
-  try {
-    leaderboardStore.setLimits({
-      maxProfiles: runtimeConfigState.effective.limits.leaderboardMaxProfiles,
-      maxResultsPerProfile: runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
-    });
-  } catch (err) {
-    // Persisted overrides may conflict with current profile count after a manual edit;
-    // log and continue rather than crash the server. The admin PUT endpoint validates
-    // before persisting, so this only triggers for hand-edited config files.
-    console.warn(
-      `[runtime-config] Could not apply leaderboard limits: ${err?.message || String(err)}`
-    );
+  // If the per-profile result cap was lowered, force a noop mutate so existing
+  // in-memory results past the new cap are pruned-and-persisted right away
+  // instead of waiting for the next gameplay-driven mutation.
+  if (
+    limitsApplied
+    && runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
+      < previousMaxResultsPerProfile
+  ) {
+    leaderboardStore
+      .mutate(() => {})
+      .catch((err) => {
+        console.warn(
+          `[runtime-config] Could not normalize leaderboard after lowering result cap: ${err?.message || String(err)}`
+        );
+      });
   }
 }
 
@@ -2263,6 +2313,9 @@ app.use(
     LEADERBOARD_MAX_PROFILES_MAX,
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
     LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+    isLeaderboardMaxProfilesEnvLocked: () => ENV_CONFIG_LOCKS.limits.leaderboardMaxProfiles,
+    isLeaderboardMaxResultsPerProfileEnvLocked: () =>
+      ENV_CONFIG_LOCKS.limits.leaderboardMaxResultsPerProfile,
     LeaderboardStoreError,
     StatsApiError,
     ProviderUpdateCheckError,

@@ -52,6 +52,8 @@ function loadApp(options = {}) {
           adminJobsStorePath: options.adminJobsStorePath,
           appConfigPath: options.appConfigPath,
           providersRoot: options.providersRoot,
+          leaderboardMaxProfiles: options.leaderboardMaxProfiles,
+          leaderboardMaxResultsPerProfile: options.leaderboardMaxResultsPerProfile,
           clearRuntimeEnv: options.clearRuntimeEnv
         };
 
@@ -123,6 +125,16 @@ function loadApp(options = {}) {
     process.env.PROVIDERS_ROOT = opts.providersRoot;
   } else {
     delete process.env.PROVIDERS_ROOT;
+  }
+  if (opts.leaderboardMaxProfiles !== undefined) {
+    process.env.LEADERBOARD_MAX_PROFILES = String(opts.leaderboardMaxProfiles);
+  } else {
+    delete process.env.LEADERBOARD_MAX_PROFILES;
+  }
+  if (opts.leaderboardMaxResultsPerProfile !== undefined) {
+    process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE = String(opts.leaderboardMaxResultsPerProfile);
+  } else {
+    delete process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE;
   }
   if (opts.clearRuntimeEnv) {
     delete process.env.DEFINITIONS_MODE;
@@ -2508,6 +2520,64 @@ describe("Stats API", () => {
       expect(ok.body.sources.limits.leaderboardMaxProfiles).toBe("override");
     } finally {
       tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("PUT runtime-config skips count check when LEADERBOARD_MAX_PROFILES env locks the cap", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        leaderboardMaxProfiles: 100
+      });
+      await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      await request(app).post("/api/stats/profile").send({ name: "Ben" });
+      await request(app).post("/api/stats/profile").send({ name: "Cal" });
+
+      // Persisted override is below the live profile count, but env-locked so it cannot apply.
+      const allowed = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 2 } } });
+      expect(allowed.status).toBe(200);
+      expect(allowed.body.effective.limits.leaderboardMaxProfiles).toBe(100);
+      expect(allowed.body.sources.limits.leaderboardMaxProfiles).toBe("env");
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
+  test("LEADERBOARD_MAX_PROFILES out of bounds does not lock the override", async () => {
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath,
+        leaderboardMaxProfiles: 5000
+      });
+      const initial = await request(app)
+        .get("/api/admin/runtime-config")
+        .set("x-admin-key", "secret");
+      expect(initial.status).toBe(200);
+      // 5000 is out of bounds (max 1000), env clamps to default 20 and does NOT lock.
+      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(20);
+      expect(initial.body.sources.limits.leaderboardMaxProfiles).toBe("default");
+
+      const update = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxProfiles: 75 } } });
+      expect(update.status).toBe(200);
+      expect(update.body.effective.limits.leaderboardMaxProfiles).toBe(75);
+      expect(update.body.sources.limits.leaderboardMaxProfiles).toBe("override");
+    } finally {
       tempAdminState.cleanup();
     }
   });
