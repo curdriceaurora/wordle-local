@@ -178,6 +178,41 @@ describe("buildManifest", () => {
     }
   });
 
+  test("includeProviders does not duplicate the diagnostic provider-import-manifest schema", async () => {
+    const projectRoot = await tempProject();
+    // Add a provider artifact alongside the schema that's already present
+    // under data/providers/. Without dedup the diagnostic schema would
+    // appear twice in the manifest (once as DIAGNOSTIC, once via the
+    // providers walk), and restore would conflict on the staging path.
+    const providerDir = path.join(projectRoot, "data/providers/en-US/abc123");
+    await fsp.mkdir(providerDir, { recursive: true });
+    await fsp.writeFile(path.join(providerDir, "en_US.dic"), "1\nWORLD\n", "utf8");
+    const manifest = await buildManifest({
+      projectRoot,
+      includeProviders: true,
+      includeDictionaries: false
+    });
+    const counts = new Map();
+    for (const entry of manifest.files) {
+      counts.set(entry.path, (counts.get(entry.path) || 0) + 1);
+    }
+    for (const [archivePath, count] of counts) {
+      expect({ archivePath, count }).toEqual({ archivePath, count: 1 });
+    }
+    // The provider artifact is included with the providers tag;
+    // the diagnostic schema is not double-tagged.
+    const providerEntry = manifest.files.find(
+      (entry) => entry.path === "data/providers/en-US/abc123/en_US.dic"
+    );
+    expect(providerEntry).toBeDefined();
+    expect(providerEntry.optionalSet).toBe("providers");
+    const schemaEntry = manifest.files.find(
+      (entry) => entry.path === "data/providers/provider-import-manifest.schema.json"
+    );
+    expect(schemaEntry).toBeDefined();
+    expect(schemaEntry.optionalSet).toBeUndefined();
+  });
+
   test("attaches schema digest for files that have a schema", async () => {
     const projectRoot = await tempProject();
     const manifest = await buildManifest({

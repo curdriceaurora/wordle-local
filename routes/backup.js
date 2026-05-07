@@ -250,7 +250,10 @@ function createBackupRouter(deps) {
   });
 
   // POST /api/admin/backup/preview
-  router.post("/api/admin/backup/preview", limit, async (req, res) => {
+  // Not gated by the strict backup rate limiter: preview is idempotent
+  // and read-only, and the normal UI flow is preview-then-apply within
+  // a few seconds. The admin write rate limiter still applies.
+  router.post("/api/admin/backup/preview", async (req, res) => {
     let upload;
     try {
       upload = await receiveUpload(req, {

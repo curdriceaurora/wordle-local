@@ -62,14 +62,17 @@ Required fields:
 
 ## Endpoints
 
-All under `/api/admin/*`, gated by `x-admin-key`, rate-limited per
-`BACKUP_RATE_LIMIT_*`.
+All under `/api/admin/*`, gated by `x-admin-key`. The strict
+`BACKUP_RATE_LIMIT_*` bucket guards the bandwidth-heavy export and
+destructive restore operations; preview is idempotent and gated only
+by the standard admin-write rate limit so the normal preview-then-
+apply UI flow never collides with itself.
 
-| Method | Path | Notes |
-| --- | --- | --- |
-| `GET` | `/api/admin/backup` | Streams the archive. Query: `includeProviders=true|false`, `includeDictionaries=true|false`. |
-| `POST` | `/api/admin/backup/preview` | Validates an uploaded archive without applying. Returns `{ manifestVersion, appVersion, createdAt, nodeId, files, totalBytes }`. |
-| `POST` | `/api/admin/restore` | Applies atomically. Requires the header `x-admin-confirm: I-UNDERSTAND` plus a multipart `archive` field. |
+| Method | Path | Backup-rate-limited | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/admin/backup` | Yes | Streams the archive. Query: `includeProviders=true|false`, `includeDictionaries=true|false`. |
+| `POST` | `/api/admin/backup/preview` | No | Validates an uploaded archive without applying. Returns `{ manifestVersion, appVersion, createdAt, nodeId, files, totalBytes }`. |
+| `POST` | `/api/admin/restore` | Yes | Applies atomically. Requires the header `x-admin-confirm: I-UNDERSTAND` plus a multipart `archive` field. |
 
 ## Restore algorithm
 
