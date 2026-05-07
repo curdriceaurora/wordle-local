@@ -259,22 +259,33 @@ const dataMutationLockRef = {
 };
 const waitForDataMutationLock = () => dataMutationLockRef.waitForRelease();
 
-// Atomic claim helper for direct data writers. Loops: wait for the
-// lock, then synchronously verify no restore is in flight and bump
-// the counter. Returns a release fn to call in finally. Without this,
-// a writer that simply awaits waitForDataMutationLock() can race a
-// new restore that claims the lock during the next event-loop tick.
+// Atomic claim helper for direct data writers. Loops: wait for
+// whichever barrier is holding things up, then synchronously verify
+// no restore/lock is in flight and bump the counter. Returns a
+// release fn to call in finally. Without this, a writer that simply
+// awaits waitForDataMutationLock() can race a new restore that claims
+// the lock during the next event-loop tick.
+//
+// Critically, restoreInProgressRef is held across the restore's
+// multipart upload (which can take many seconds) WITHOUT
+// dataMutationLockRef being held. Awaiting only the data-lock barrier
+// would resolve immediately and the loop would spin until the upload
+// finished — busy-looping on already-resolved awaits hangs the event
+// loop and stalls the upload itself. We pick the right barrier per
+// iteration so the wait is real every time.
 async function claimDirectDataWriteSlot() {
   while (true) {
-    await waitForDataMutationLock();
-    // Synchronous check + increment — no awaits in between, so no
-    // other handler can run.
-    if (
-      dataMutationLockRef.value
-      || restoreInProgressRef.value
-    ) {
+    if (dataMutationLockRef.value) {
+      await dataMutationLockRef.waitForRelease();
       continue;
     }
+    if (restoreInProgressRef.value) {
+      await restoreInProgressRef.waitForRelease();
+      continue;
+    }
+    // Neither flag is held — claim the slot in the same synchronous
+    // tick (no awaits between the check and the increment, so JS's
+    // single-threaded model guarantees no other handler interposes).
     directDataWriteActiveRef.value += 1;
     return () => {
       directDataWriteActiveRef.value -= 1;
@@ -1112,6 +1123,38 @@ const providerImportSyncActiveRef = { value: false };
 // staged upload + queued job orphaned. The restore busy check
 // observes this ref and 409s the restore in that window.
 const providerImportEnqueueActiveRef = { value: false };
+// Promise-barrier for restoreInProgressRef so direct writers can
+// `await` for the restore to release without busy-spinning on a
+// resolved data-lock barrier (the data lock isn't held during the
+// restore's upload phase). Mirrors the dataMutationLockRef shape.
+const restoreInProgressRef = (() => {
+  const ref = {
+    _value: false,
+    _resolveRelease: null,
+    _releasePromise: Promise.resolve(),
+    get value() {
+      return this._value;
+    },
+    set value(next) {
+      if (next && !this._value) {
+        this._value = true;
+        this._releasePromise = new Promise((resolve) => {
+          this._resolveRelease = resolve;
+        });
+      } else if (!next && this._value) {
+        this._value = false;
+        const resolve = this._resolveRelease;
+        this._resolveRelease = null;
+        if (resolve) resolve();
+      }
+    },
+    async waitForRelease() {
+      if (!this._value) return;
+      await this._releasePromise;
+    }
+  };
+  return ref;
+})();
 // Counter incremented by direct (non-store-mutate) data writers —
 // PUT /api/admin/runtime-config and POST /api/word — for the duration
 // of their validation+persist sequence. The restore busy check
@@ -1123,15 +1166,11 @@ const providerImportEnqueueActiveRef = { value: false };
 // and increment the counter (no awaits between the check and
 // increment).
 const directDataWriteActiveRef = { value: 0 };
-// Marks the restore route as "claiming" the restore slot — set
-// synchronously after the busy-check, before the multipart upload
-// starts. Separate from dataMutationLockRef so we don't hold the
-// data-mutation barrier (which 503s every other admin write) for the
-// entire upload window. dataMutationLockRef is acquired later, just
-// before the actual swap.
-const restoreInProgressRef = { value: false };
-// dataMutationLockRef and waitForDataMutationLock are defined earlier
-// next to leaderboardStore so the constructor can wire the barrier.
+// dataMutationLockRef, waitForDataMutationLock, restoreInProgressRef,
+// providerImportEnqueueActiveRef, directDataWriteActiveRef, and
+// claimDirectDataWriteSlot are all defined earlier alongside
+// leaderboardStore so the store constructor can wire the barrier and
+// admin/backup routes can share the helpers.
 
 function initializeRuntimeConfig() {
   let normalizePromise;
