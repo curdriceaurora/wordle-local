@@ -1289,12 +1289,21 @@ function buildRuntimeOverridePayload() {
   }
 
   // Preserve overrides owned by the Profiles tab so saving Runtime Settings
-  // doesn't wipe leaderboard caps.
+  // doesn't wipe leaderboard caps. Skip keys whose source is "env" — those
+  // overrides are dormant by definition and copying them forward would
+  // re-activate them as soon as the env lock was removed.
   const persistedLimits = state.runtimeConfig?.overrides?.limits || {};
-  if (Number.isInteger(persistedLimits.leaderboardMaxProfiles)) {
+  const limitSources = state.runtimeConfig?.sources?.limits || {};
+  if (
+    limitSources.leaderboardMaxProfiles !== "env"
+    && Number.isInteger(persistedLimits.leaderboardMaxProfiles)
+  ) {
     limits.leaderboardMaxProfiles = persistedLimits.leaderboardMaxProfiles;
   }
-  if (Number.isInteger(persistedLimits.leaderboardMaxResultsPerProfile)) {
+  if (
+    limitSources.leaderboardMaxResultsPerProfile !== "env"
+    && Number.isInteger(persistedLimits.leaderboardMaxResultsPerProfile)
+  ) {
     limits.leaderboardMaxResultsPerProfile = persistedLimits.leaderboardMaxResultsPerProfile;
   }
 
