@@ -38,6 +38,8 @@ function backupErrorStatus(err) {
     case "MANIFEST_MISMATCH":
     case "MANIFEST_MISSING":
     case "MANIFEST_DUPLICATE_PATH":
+    case "MANIFEST_INCOMPLETE":
+    case "MANIFEST_OPTIONAL_SET_UNDECLARED":
     case "ARCHIVE_DUPLICATE_PATH":
     case "OPTIONAL_SET_PATH_INVALID":
     case "ENTRY_MISSING":
@@ -513,19 +515,28 @@ function createBackupRouter(deps) {
 
     logEvent(req, "backup.restore.start", { bytes: upload.bytes, originalName: upload.originalName });
 
-    // Warm every in-scope store before phase 3 starts. If a store
-    // hasn't loaded yet (cold cache on a fresh process), a GET-side
-    // read fired during the brief rename gap (livePath momentarily
-    // absent between snapshot-rename and staged-rename) would
-    // otherwise see ENOENT and persist default state on top of the
-    // restore. Each load is idempotent. Failure is non-fatal — the
-    // restore can still proceed; warm is just a defense.
+    // Pre-validate the archive BEFORE any side-effecting work
+    // (warm-up, lock acquisition, drain). Without this, a malformed
+    // archive that fails validation inside applyRestore would still
+    // have triggered warmInScopeStores() — which on a cold or
+    // corrupted node persists default/normalized state to disk for
+    // any missing or unparseable in-scope file. That violates the
+    // "failed restore leaves the node untouched" guarantee, even
+    // though we then return a 4xx. Validating first keeps the rest
+    // of the flow side-effect-free until we're sure the archive is
+    // good. applyRestore re-runs validateArchive — that's a small
+    // duplication (hash checks only) but the safety win is worth it.
     try {
-      await warmInScopeStores();
-    } catch (warmErr) {
-      console.warn(
-        `[admin] Pre-restore warm of in-scope stores failed: ${warmErr?.message || String(warmErr)}`
-      );
+      await validateArchive(upload.tempPath, { projectRoot });
+    } catch (err) {
+      logEvent(req, "backup.restore.validate.error", { code: err?.code, error: err?.message });
+      restoreInProgressRef.value = false;
+      try {
+        await fsp.rm(upload.tempPath, { force: true });
+      } catch {
+        // best effort
+      }
+      return res.status(backupErrorStatus(err)).json(backupErrorBody(err));
     }
 
     // Recheck the provider-import refs after the upload window. Even
@@ -552,12 +563,29 @@ function createBackupRouter(deps) {
       });
     }
 
-    // NOW take the data-mutation lock — upload is done, we're about to
-    // start touching live data/. Other /api mutations are 503'd from
-    // here until the apply + reload completes.
+    // NOW take the data-mutation lock — upload is done, archive is
+    // validated, we're about to start touching live data/. Other
+    // /api mutations are 503'd from here until the apply + reload
+    // completes.
     dataMutationLockRef.value = true;
 
     try {
+      // Warm every in-scope store now that we know the archive is
+      // valid. If a store hasn't loaded yet (cold cache on a fresh
+      // process), a GET-side read fired during the brief rename
+      // gap (livePath momentarily absent between snapshot-rename
+      // and staged-rename) would otherwise see ENOENT and persist
+      // default state on top of the restore. Each load is
+      // idempotent. Failure is non-fatal — the restore can still
+      // proceed; warm is just a defense.
+      try {
+        await warmInScopeStores();
+      } catch (warmErr) {
+        console.warn(
+          `[admin] Pre-restore warm of in-scope stores failed: ${warmErr?.message || String(warmErr)}`
+        );
+      }
+
       // Drain in-flight writers that already passed the gate before we
       // took the lock. Without this, an in-progress mutation could
       // rename its stale JSON over the just-swapped restored file
