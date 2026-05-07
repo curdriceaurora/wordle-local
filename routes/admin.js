@@ -1174,7 +1174,6 @@ function createAdminRouter(deps) {
     const resolvedProfileIds = [];
     const intendedReused = [];
     const intendedCreated = [];
-    const { randomUUID } = require("node:crypto");
     let persistedSnapshot;
     try {
       persistedSnapshot = await leaderboardStore.mutate((draft) => {

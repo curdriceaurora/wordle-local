@@ -351,6 +351,28 @@ describe("classes-store: listClasses", () => {
 });
 
 describe("classes-store: normalizeClassesState", () => {
+  test("flags wasPruned when a class exceeds maxMembersPerClass", () => {
+    const oversize = Array.from({ length: 10 }, (_, idx) => `p${idx + 1}`);
+    const payload = {
+      version: 1,
+      updatedAt: isoAt(1),
+      classes: [
+        {
+          id: "class-aaaaaaaaaaaa",
+          name: "Crowded",
+          createdAt: isoAt(1),
+          updatedAt: isoAt(1),
+          archivedAt: null,
+          memberProfileIds: oversize
+        }
+      ]
+    };
+    const result = normalizeClassesState(payload, { maxMembersPerClass: 4 });
+    expect(result.wasPruned).toBe(true);
+    expect(result.state.classes[0].memberProfileIds).toHaveLength(4);
+    expect(result.state.classes[0].memberProfileIds).toEqual(["p1", "p2", "p3", "p4"]);
+  });
+
   test("flags wasPruned when over maxClasses", () => {
     const payload = {
       version: 1,

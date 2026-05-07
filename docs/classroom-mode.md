@@ -57,7 +57,7 @@ Returns one row per member with:
 | Field | Meaning |
 | --- | --- |
 | `profileId`, `name` | Identity (or `(missing profile)` if the leaderboard has dropped it) |
-| `days[]` | Per-day status: `won`, `lost`, `not-started`, plus `attempts`, `submissionCount`, `updatedAt` |
+| `days[]` | Per-day status: `won`, `lost`, `not-started`, or `no-profile` (when the member's profile was deleted from the leaderboard but the class still references it; surfaces alongside the row's `missing: true` flag), plus `attempts`, `submissionCount`, `updatedAt` |
 | `wins`, `playedCount` | Totals across the requested range |
 | `winRate` | Wins ÷ played |
 | `lastPlayedAt` | Newest `updatedAt` across the range |
