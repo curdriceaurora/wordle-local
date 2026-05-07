@@ -168,24 +168,29 @@ function createAdminRouter(deps) {
       const snapshot = await leaderboardStore.getSnapshot();
       const profiles = snapshot.profiles.map((profile) => {
         const results = snapshot.resultsByProfile?.[profile.id] || {};
-        const entries = Object.values(results);
-        const wins = entries.filter((entry) => entry.won === true).length;
-        const totalAttempts = entries.reduce(
-          (sum, entry) => sum + (Number.isInteger(entry.attempts) ? entry.attempts : 0),
-          0
-        );
-        const winsWithAttempts = entries.filter(
-          (entry) => entry.won === true && Number.isInteger(entry.attempts)
-        );
-        const totalWinningAttempts = winsWithAttempts.reduce(
-          (sum, entry) => sum + entry.attempts,
-          0
-        );
-        const lastPlayedAt = entries.reduce((latest, entry) => {
-          if (!entry.updatedAt) return latest;
-          if (!latest || entry.updatedAt > latest) return entry.updatedAt;
-          return latest;
-        }, null);
+        let totalGames = 0;
+        let wins = 0;
+        let totalAttempts = 0;
+        let winningAttemptsSum = 0;
+        let winningAttemptsCount = 0;
+        let lastPlayedAt = null;
+
+        for (const entry of Object.values(results)) {
+          totalGames += 1;
+          if (Number.isInteger(entry.attempts)) {
+            totalAttempts += entry.attempts;
+          }
+          if (entry.won === true) {
+            wins += 1;
+            if (Number.isInteger(entry.attempts)) {
+              winningAttemptsSum += entry.attempts;
+              winningAttemptsCount += 1;
+            }
+          }
+          if (entry.updatedAt && (!lastPlayedAt || entry.updatedAt > lastPlayedAt)) {
+            lastPlayedAt = entry.updatedAt;
+          }
+        }
 
         return {
           id: profile.id,
@@ -193,13 +198,13 @@ function createAdminRouter(deps) {
           createdAt: profile.createdAt,
           updatedAt: profile.updatedAt,
           stats: {
-            totalGames: entries.length,
+            totalGames,
             wins,
-            losses: entries.length - wins,
-            winRate: entries.length > 0 ? wins / entries.length : 0,
-            averageAttempts: entries.length > 0 ? totalAttempts / entries.length : 0,
+            losses: totalGames - wins,
+            winRate: totalGames > 0 ? wins / totalGames : 0,
+            averageAttempts: totalGames > 0 ? totalAttempts / totalGames : 0,
             averageWinningAttempts:
-              winsWithAttempts.length > 0 ? totalWinningAttempts / winsWithAttempts.length : 0,
+              winningAttemptsCount > 0 ? winningAttemptsSum / winningAttemptsCount : 0,
             lastPlayedAt
           }
         };

@@ -67,18 +67,36 @@ const ENV_PROVIDER_MANUAL_MAX_FILE_BYTES = parsePositiveInteger(
   process.env.PROVIDER_MANUAL_MAX_FILE_BYTES,
   8 * 1024 * 1024
 );
-const ENV_LEADERBOARD_MAX_PROFILES = parsePositiveInteger(
-  process.env.LEADERBOARD_MAX_PROFILES,
-  20
-);
-const ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE = parsePositiveInteger(
-  process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE,
-  400
-);
 const LEADERBOARD_MAX_PROFILES_MIN = 1;
 const LEADERBOARD_MAX_PROFILES_MAX = 1000;
 const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN = 1;
 const LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX = 10000;
+
+function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
+  const parsed = parsePositiveInteger(rawValue, defaultValue);
+  if (parsed < min || parsed > max) {
+    console.warn(
+      `${envName}=${rawValue} is outside the documented range (${min}-${max}); using default ${defaultValue}.`
+    );
+    return defaultValue;
+  }
+  return parsed;
+}
+
+const ENV_LEADERBOARD_MAX_PROFILES = clampEnvBounded(
+  process.env.LEADERBOARD_MAX_PROFILES,
+  20,
+  LEADERBOARD_MAX_PROFILES_MIN,
+  LEADERBOARD_MAX_PROFILES_MAX,
+  "LEADERBOARD_MAX_PROFILES"
+);
+const ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE = clampEnvBounded(
+  process.env.LEADERBOARD_MAX_RESULTS_PER_PROFILE,
+  400,
+  LEADERBOARD_MAX_RESULTS_PER_PROFILE_MIN,
+  LEADERBOARD_MAX_RESULTS_PER_PROFILE_MAX,
+  "LEADERBOARD_MAX_RESULTS_PER_PROFILE"
+);
 const ENV_PERF_LOGGING = process.env.PERF_LOGGING === "true";
 
 const DATA_PATH = path.join(__dirname, "data", "word.json");

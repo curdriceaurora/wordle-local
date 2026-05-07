@@ -804,13 +804,17 @@ function renderProfiles() {
     row.appendChild(createdCell);
 
     const actionsCell = document.createElement("td");
+    const actionsWrap = document.createElement("div");
+    actionsWrap.className = "admin-action-stack";
+
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "ghost";
     renameBtn.dataset.action = "rename-profile";
     renameBtn.dataset.profileId = profile.id;
     renameBtn.textContent = "Rename";
-    actionsCell.appendChild(renameBtn);
+    renameBtn.setAttribute("aria-label", `Rename profile ${profile.name}`);
+    actionsWrap.appendChild(renameBtn);
 
     const mergeBtn = document.createElement("button");
     mergeBtn.type = "button";
@@ -819,16 +823,19 @@ function renderProfiles() {
     mergeBtn.dataset.profileId = profile.id;
     mergeBtn.textContent = "Merge into…";
     mergeBtn.disabled = state.profiles.length < 2;
-    actionsCell.appendChild(mergeBtn);
+    mergeBtn.setAttribute("aria-label", `Merge profile ${profile.name} into another`);
+    actionsWrap.appendChild(mergeBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
-    deleteBtn.className = "ghost";
+    deleteBtn.className = "ghost admin-action-destructive";
     deleteBtn.dataset.action = "delete-profile";
     deleteBtn.dataset.profileId = profile.id;
     deleteBtn.textContent = "Delete";
-    actionsCell.appendChild(deleteBtn);
+    deleteBtn.setAttribute("aria-label", `Delete profile ${profile.name} permanently`);
+    actionsWrap.appendChild(deleteBtn);
 
+    actionsCell.appendChild(actionsWrap);
     row.appendChild(actionsCell);
     fragment.appendChild(row);
   });
@@ -1216,6 +1223,16 @@ function buildRuntimeOverridePayload() {
   const limits = {};
   if (providerManualMaxFileBytes !== undefined) {
     limits.providerManualMaxFileBytes = providerManualMaxFileBytes;
+  }
+
+  // Preserve overrides owned by the Profiles tab so saving Runtime Settings
+  // doesn't wipe leaderboard caps.
+  const persistedLimits = state.runtimeConfig?.overrides?.limits || {};
+  if (Number.isInteger(persistedLimits.leaderboardMaxProfiles)) {
+    limits.leaderboardMaxProfiles = persistedLimits.leaderboardMaxProfiles;
+  }
+  if (Number.isInteger(persistedLimits.leaderboardMaxResultsPerProfile)) {
+    limits.leaderboardMaxResultsPerProfile = persistedLimits.leaderboardMaxResultsPerProfile;
   }
 
   return {
