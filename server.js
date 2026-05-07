@@ -96,7 +96,7 @@ function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
 
 const ENV_LEADERBOARD_MAX_PROFILES = clampEnvBounded(
   process.env.LEADERBOARD_MAX_PROFILES,
-  20,
+  50,
   LEADERBOARD_MAX_PROFILES_MIN,
   LEADERBOARD_MAX_PROFILES_MAX,
   "LEADERBOARD_MAX_PROFILES"

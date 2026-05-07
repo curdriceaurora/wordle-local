@@ -2590,8 +2590,8 @@ describe("Stats API", () => {
         .get("/api/admin/runtime-config")
         .set("x-admin-key", "secret");
       expect(initial.status).toBe(200);
-      // 5000 is out of bounds (max 1000), env clamps to default 20 and does NOT lock.
-      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(20);
+      // 5000 is out of bounds (max 1000), env clamps to default and does NOT lock.
+      expect(initial.body.effective.limits.leaderboardMaxProfiles).toBe(50);
       expect(initial.body.sources.limits.leaderboardMaxProfiles).toBe("default");
 
       const update = await request(app)

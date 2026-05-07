@@ -51,7 +51,7 @@ Why this exists:
 - ISO-8601 timestamp for last persisted mutation.
 
 ### `profiles[]`
-- Max retained profiles: `20`.
+- Max retained profiles: `50` (default; configurable via `LEADERBOARD_MAX_PROFILES` env or `overrides.limits.leaderboardMaxProfiles`, bounds `1..1000`).
 - Ordered by `createdAt` ascending for deterministic pruning behavior.
 - Fields:
   - `id`: server-generated opaque stable identifier.
@@ -106,7 +106,7 @@ On load:
 
 ## Retention/Pruning
 ### Profiles
-- If profiles exceed `20`, retain the `20` profiles with the most recent `createdAt` timestamps (keep the last `20` when sorted by `createdAt` ascending) and remove pruned profile result maps.
+- If profiles exceed the configured cap (default `50`), retain the most recent profiles (keep the last N when sorted by `createdAt` ascending) and remove pruned profile result maps.
 
 ### Daily Results
 - If a profile has more than `400` result entries:

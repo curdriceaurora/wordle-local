@@ -987,28 +987,19 @@ function createAdminRouter(deps) {
     const deleteProfilesFlag = req.body?.deleteProfiles === true;
 
     try {
-      const target = await classesStore.getClass(classId);
-      if (!target) {
-        return res.status(404).json({ error: "Class not found." });
-      }
-
+      let carveOutIds = [];
       let removedProfileIds = [];
       if (deleteProfilesFlag) {
-        const allClasses = await classesStore.listClasses({ includeArchived: true });
-        const otherActiveMemberships = new Set();
-        for (const entry of allClasses) {
-          if (entry.id === classId) continue;
-          if (entry.archivedAt) continue;
-          for (const memberId of entry.memberProfileIds) {
-            otherActiveMemberships.add(memberId);
-          }
-        }
-        const candidateIds = target.memberProfileIds.filter(
-          (memberId) => !otherActiveMemberships.has(memberId)
-        );
-        if (candidateIds.length > 0) {
+        // Atomic in classes-store: drops the class, computes which member
+        // IDs are NOT in any other non-archived class, and removes those
+        // from every (archived) class that still references them. The
+        // classes-side state is consistent before we touch the leaderboard.
+        const result = await classesStore.deleteClassWithCarveOut(classId);
+        carveOutIds = result.carveOutIds;
+
+        if (carveOutIds.length > 0) {
           await leaderboardStore.mutate((draft) => {
-            for (const memberId of candidateIds) {
+            for (const memberId of carveOutIds) {
               const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
               if (idx !== -1) {
                 draft.profiles.splice(idx, 1);
@@ -1023,14 +1014,10 @@ function createAdminRouter(deps) {
             }
           });
         }
-        // Make sure those profile ids are also pulled from any other classes
-        // (archived ones, where the profile might still be referenced).
-        for (const memberId of removedProfileIds) {
-          await classesStore.removeMemberEverywhere(memberId);
-        }
+      } else {
+        // Just delete the class without touching profiles.
+        await classesStore.deleteClass(classId);
       }
-
-      await classesStore.deleteClass(classId);
       return res.json({
         ok: true,
         deletedClassId: classId,
@@ -1046,7 +1033,12 @@ function createAdminRouter(deps) {
     if (!classId) {
       return res.status(400).json({ error: "Class id is required." });
     }
-    const target = await classesStore.getClass(classId).catch(() => null);
+    let target;
+    try {
+      target = await classesStore.getClass(classId);
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class lookup failed.");
+    }
     if (!target) {
       return res.status(404).json({ error: "Class not found." });
     }
@@ -1094,10 +1086,15 @@ function createAdminRouter(deps) {
 
     const normalizedNames = [];
     const invalidNames = [];
+    const dedupedLowerSet = new Set();
     for (const candidate of candidateNames) {
       try {
         const next = normalizeProfileNameInput(candidate);
-        normalizedNames.push(next);
+        const key = next.toLowerCase();
+        if (!dedupedLowerSet.has(key)) {
+          dedupedLowerSet.add(key);
+          normalizedNames.push(next);
+        }
       } catch (err) {
         invalidNames.push({ raw: candidate, error: err?.message || "Invalid name." });
       }
@@ -1109,11 +1106,25 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Resolve each name to an existing profile (case-insensitive match) or create
-    // a new profile inside a single mutate so we never half-write. The mutate's
-    // normalizer can prune excess profiles past the leaderboard cap; we use
-    // the persisted snapshot to filter survivors before adding to the class so
-    // we never reference a pruned profile.
+    // Pre-validate the per-class member cap with an upper bound. If even the
+    // best-case (all reused profiles) would exceed the cap, reject before we
+    // touch the leaderboard so a class-side failure can't leave orphan
+    // profile records.
+    const projectedMembers = target.memberProfileIds.length + normalizedNames.length;
+    if (projectedMembers > classesStore.maxMembersPerClass) {
+      return res.status(409).json({
+        error: `Class is at the per-class member cap of ${classesStore.maxMembersPerClass}.`
+      });
+    }
+
+    // Resolve each name to an existing profile (case-insensitive match) or
+    // create a new profile inside a single mutate so we never half-write.
+    // The mutate's normalizer can prune the oldest profiles past the
+    // leaderboard cap — including pre-existing class members — so we
+    // (1) filter the current bulk's resolved IDs against the surviving set
+    // before adding to the class, and (2) reconcile every class against the
+    // surviving set so previously-tracked members that were pruned away
+    // don't remain as dead references.
     const resolvedProfileIds = [];
     const intendedReused = [];
     const intendedCreated = [];
@@ -1125,13 +1136,8 @@ function createAdminRouter(deps) {
         const existingByLowerName = new Map(
           draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
         );
-        const seenInBatch = new Set();
         for (const name of normalizedNames) {
           const key = name.toLowerCase();
-          if (seenInBatch.has(key)) {
-            continue;
-          }
-          seenInBatch.add(key);
           const existing = existingByLowerName.get(key);
           if (existing) {
             resolvedProfileIds.push(existing.id);
@@ -1154,8 +1160,6 @@ function createAdminRouter(deps) {
       return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
     }
 
-    // Filter against the persisted snapshot — any profile pruned by the
-    // leaderboard's max-profiles enforcement must not become a class member.
     const survivingProfileIds = new Set(
       persistedSnapshot.profiles.map((profile) => profile.id)
     );
@@ -1163,6 +1167,18 @@ function createAdminRouter(deps) {
     const droppedDueToCap = resolvedProfileIds.filter((id) => !survivingProfileIds.has(id));
     const reusedProfileIds = intendedReused.filter((id) => survivingProfileIds.has(id));
     const createdProfileIds = intendedCreated.filter((id) => survivingProfileIds.has(id));
+
+    // Reconcile every class against the persisted leaderboard so any
+    // pre-existing class member that the cap-pruner just dropped is
+    // removed from class rosters atomically. Without this, class
+    // detail/report could surface "(missing profile)" rows immediately
+    // after a successful bulk-add that crossed the cap.
+    let reconciliationDrops = [];
+    try {
+      reconciliationDrops = await classesStore.reconcileMissingProfiles(survivingProfileIds);
+    } catch (err) {
+      return handleClassesStoreError(res, err, "Class reconciliation after bulk add failed.");
+    }
 
     let addOutcome;
     try {
@@ -1180,6 +1196,12 @@ function createAdminRouter(deps) {
     };
     if (droppedDueToCap.length > 0) {
       responseBody.droppedDueToCap = droppedDueToCap.length;
+    }
+    if (reconciliationDrops.length > 0) {
+      responseBody.reconciledClasses = reconciliationDrops.map((entry) => ({
+        classId: entry.classId,
+        removedProfileIds: entry.removedProfileIds
+      }));
     }
     return res.json(responseBody);
   });

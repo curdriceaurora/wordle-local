@@ -24,14 +24,14 @@ existing profile when the trimmed/lowercased name matches.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/admin/classes?includeArchived=true|false` | List classes with member counts |
+| `GET` | `/api/admin/classes?includeArchived=true\|false` | List classes with member counts |
 | `POST` | `/api/admin/classes` | Create class — `{ name }` |
 | `GET` | `/api/admin/classes/:id` | Class detail with members hydrated from leaderboard |
 | `PATCH` | `/api/admin/classes/:id` | Rename and/or archive — `{ name?, archived? }` |
 | `DELETE` | `/api/admin/classes/:id` | Delete — `{ confirmed: true, deleteProfiles?: bool }` |
 | `POST` | `/api/admin/classes/:id/members/bulk` | Bulk add — `{ names: string[] }` or `{ csv: string }` |
 | `DELETE` | `/api/admin/classes/:id/members/:profileId` | Remove a member from this class only |
-| `GET` | `/api/admin/classes/:id/report` | Participation report — query: `lang`, `from`, `to`, `format=json|csv`, `bom=true|false` |
+| `GET` | `/api/admin/classes/:id/report` | Participation report — query: `lang`, `from`, `to`, `format=json\|csv`, `bom=true\|false` |
 
 ## Bulk-add formats
 

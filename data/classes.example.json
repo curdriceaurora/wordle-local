@@ -1,5 +1,14 @@
 {
   "version": 1,
   "updatedAt": "1970-01-01T00:00:00.000Z",
-  "classes": []
+  "classes": [
+    {
+      "id": "class-aaaaaaaaaaaa",
+      "name": "Example Class",
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z",
+      "archivedAt": null,
+      "memberProfileIds": []
+    }
+  ]
 }
