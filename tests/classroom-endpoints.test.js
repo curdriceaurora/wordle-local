@@ -272,6 +272,20 @@ describe("Classes API: bulk member add", () => {
       .send({ csv: "\"Carol\"x\r\n" });
     expect(trailing.status).toBe(400);
     expect(trailing.body.parseErrors[0].message).toMatch(/closing quote/);
+
+    // Size-limit breach via CSV must surface as 413, matching the array
+    // path — clients shouldn't have to inspect parseErrors to tell
+    // "too large" from a true CSV syntax error.
+    const lines = [];
+    for (let i = 0; i < 600; i += 1) {
+      lines.push(`Name${i}`);
+    }
+    const oversize = await request(app)
+      .post(`/api/admin/classes/${classId}/members/bulk`)
+      .set("x-admin-key", "secret")
+      .send({ csv: `${lines.join("\r\n")}\r\n` });
+    expect(oversize.status).toBe(413);
+    expect(oversize.body.error).toMatch(/exceeded/);
   });
 
   test("bulk-add to archived class is rejected with 409", async () => {

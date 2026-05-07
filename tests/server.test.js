@@ -1840,6 +1840,7 @@ describe("Admin auth", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         clearRuntimeEnv: true
       });
 
@@ -1896,6 +1897,7 @@ describe("Admin auth", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         definitionsMode: "indexed"
       });
 
@@ -1931,7 +1933,8 @@ describe("Admin auth", () => {
           const app = loadApp({
             adminKey: "secret",
             appConfigPath: tempAdminState.configPath,
-            adminJobsStorePath: tempAdminState.jobsPath
+            adminJobsStorePath: tempAdminState.jobsPath,
+            classesStorePath: tempAdminState.classesPath
           });
           const dicContent = "2\nDOGMA/S\nCRANE\n";
           const affContent = "SET UTF-8\nSFX S Y 1\nSFX S 0 S .\n";
@@ -2522,7 +2525,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       await request(app).post("/api/stats/profile").send({ name: "Ava" });
       await request(app).post("/api/stats/profile").send({ name: "Ben" });
@@ -2557,6 +2561,7 @@ describe("Stats API", () => {
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         leaderboardMaxProfiles: 100
       });
       await request(app).post("/api/stats/profile").send({ name: "Ava" });
@@ -2584,6 +2589,7 @@ describe("Stats API", () => {
         adminKey: "secret",
         appConfigPath: tempAdminState.configPath,
         adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath,
         leaderboardMaxProfiles: 5000
       });
       const initial = await request(app)
@@ -2614,7 +2620,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
       const profileId = profile.body.playerId;
@@ -2676,7 +2683,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
       const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
       await request(app).post("/api/stats/result").send({
@@ -2735,7 +2743,8 @@ describe("Stats API", () => {
         adminKey: "secret",
         statsStorePath: tempStore.filePath,
         appConfigPath: tempAdminState.configPath,
-        adminJobsStorePath: tempAdminState.jobsPath
+        adminJobsStorePath: tempAdminState.jobsPath,
+        classesStorePath: tempAdminState.classesPath
       });
 
       const tooHigh = await request(app)

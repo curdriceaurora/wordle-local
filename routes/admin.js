@@ -1139,6 +1139,17 @@ function createAdminRouter(deps) {
     }
 
     if (parseErrors.length > 0) {
+      // Treat the size-limit breach the same as the explicit-array path so
+      // clients can reliably distinguish "too large" (413) from genuine
+      // CSV syntax errors (400).
+      const sizeBreach = parseErrors.some((entry) =>
+        typeof entry?.message === "string" && entry.message.includes("exceeded")
+      );
+      if (sizeBreach) {
+        return res.status(413).json({
+          error: `Bulk input exceeded ${SUPPORTED_BULK_LIMIT} names per request.`
+        });
+      }
       return res.status(400).json({
         error: "Bulk input could not be parsed.",
         parseErrors

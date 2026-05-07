@@ -141,7 +141,10 @@ const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
   1,
-  10000,
+  // Match data/classes.schema.json's memberProfileIds.maxItems so the
+  // env cap can never produce a persisted classes.json that violates
+  // the on-disk contract.
+  1000,
   "CLASSES_MAX_MEMBERS_PER_CLASS"
 );
 
