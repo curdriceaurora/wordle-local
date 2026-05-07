@@ -1301,12 +1301,26 @@ function createAdminRouter(deps) {
     if (fromDate > toDate) {
       return res.status(400).json({ error: "`from` must be on or before `to`." });
     }
-    const dates = eachDateInRange(fromDate, toDate);
-    if (dates.length > REPORT_MAX_DAYS) {
+    // Cap-check the span BEFORE materializing the date array, so a
+    // syntactically valid but huge range (e.g. from=0100-01-01&to=9999-12-31)
+    // doesn't allocate millions of strings just to return a 400.
+    const fromMs = Date.UTC(
+      Number(fromDate.slice(0, 4)),
+      Number(fromDate.slice(5, 7)) - 1,
+      Number(fromDate.slice(8, 10))
+    );
+    const toMs = Date.UTC(
+      Number(toDate.slice(0, 4)),
+      Number(toDate.slice(5, 7)) - 1,
+      Number(toDate.slice(8, 10))
+    );
+    const projectedDays = Math.floor((toMs - fromMs) / (24 * 60 * 60 * 1000)) + 1;
+    if (projectedDays > REPORT_MAX_DAYS) {
       return res.status(400).json({
         error: `Date range exceeds the ${REPORT_MAX_DAYS}-day cap.`
       });
     }
+    const dates = eachDateInRange(fromDate, toDate);
 
     const format = String(req.query?.format || "json").trim().toLowerCase();
     if (format !== "json" && format !== "csv") {
