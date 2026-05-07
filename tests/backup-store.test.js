@@ -526,6 +526,34 @@ describe("applyRestore happy path", () => {
     const orphans = await findOrphanedRestoreDirs(path.join(projectRoot, "data"));
     expect(orphans).toEqual([]);
   });
+
+  test("provider-inclusive restore preserves the diagnostic provider schema", async () => {
+    // Phase 2.5's optional-root prune walks data/providers/** and
+    // queues for deletion any file that's NOT in restorablePaths. The
+    // diagnostic provider-import-manifest.schema.json lives under that
+    // prefix but is intentionally not restorable — it's bundled as
+    // read-only metadata. The prune must skip it so future schema
+    // checks don't break.
+    const projectRoot = await tempProject();
+    // Add a provider artifact so providers are non-empty in the archive.
+    const providerDir = path.join(projectRoot, "data/providers/en-US/abc123");
+    await fsp.mkdir(providerDir, { recursive: true });
+    await fsp.writeFile(path.join(providerDir, "en_US.dic"), "1\nWORLD\n", "utf8");
+
+    const { archivePath } = await exportArchiveToFile(projectRoot, {
+      includeProviders: true
+    });
+
+    const schemaAbs = path.join(projectRoot, "data/providers/provider-import-manifest.schema.json");
+    expect(await fsp.access(schemaAbs).then(() => true, () => false)).toBe(true);
+
+    const result = await applyRestore({ archivePath, projectRoot });
+    expect(result.rolledBack).toBe(false);
+    expect(result.removed).not.toContain("data/providers/provider-import-manifest.schema.json");
+
+    // Schema file still on disk after the restore.
+    expect(await fsp.access(schemaAbs).then(() => true, () => false)).toBe(true);
+  });
 });
 
 describe("applyRestore rollback on mid-write failure", () => {
