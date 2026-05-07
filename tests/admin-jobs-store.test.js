@@ -8,10 +8,24 @@ const {
   createDefaultState
 } = require("../lib/admin-jobs-store");
 
+const createdTempDirs = [];
+
 function tempFilePath(name = "admin-jobs.json") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-admin-jobs-"));
+  createdTempDirs.push(dir);
   return path.join(dir, name);
 }
+
+afterAll(() => {
+  while (createdTempDirs.length > 0) {
+    const dir = createdTempDirs.pop();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_err) {
+      // best-effort cleanup; CI runners reclaim /tmp anyway
+    }
+  }
+});
 
 function readState(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -350,7 +364,16 @@ describe("admin-jobs-store: status transitions", () => {
 
   test("markSucceeded and markFailed throw JOB_NOT_FOUND for unknown ids", async () => {
     const store = new AdminJobsStore({ filePath: tempFilePath(), logger: silentLogger() });
-    await expect(store.markSucceeded("job-missing-1234")).rejects.toMatchObject({
+    const validArtifacts = {
+      artifacts: {
+        commit: "f".repeat(40),
+        sourceManifestPath: "p/m.json",
+        expandedFormsPath: "p/e.txt",
+        guessPoolPath: "p/g.txt",
+        answerPoolPath: "p/a.txt"
+      }
+    };
+    await expect(store.markSucceeded("job-missing-1234", validArtifacts)).rejects.toMatchObject({
       code: "JOB_NOT_FOUND"
     });
     await expect(store.markFailed("job-missing-1234", { code: "X", message: "y" })).rejects.toMatchObject({
@@ -460,8 +483,10 @@ describe("admin-jobs-store: pruning", () => {
       answerPoolPath: "p/a.txt"
     };
 
+    const succeededIds = [];
     for (let i = 0; i < 3; i += 1) {
       const job = await store.enqueueProviderImportJob(buildRequest());
+      succeededIds.push(job.id);
       clock.advance();
       await store.claimNextQueuedJob();
       clock.advance();
@@ -486,5 +511,12 @@ describe("admin-jobs-store: pruning", () => {
     const ids = snapshot.jobs.map((job) => job.id);
     expect(ids).toContain(running.id);
     expect(ids).toContain(queued.id);
+
+    const retainedSucceeded = snapshot.jobs.filter((job) => job.status === "succeeded");
+    expect(retainedSucceeded).toHaveLength(1);
+    const newestSucceededId = succeededIds[succeededIds.length - 1];
+    expect(retainedSucceeded[0].id).toBe(newestSucceededId);
+    expect(ids).not.toContain(succeededIds[0]);
+    expect(ids).not.toContain(succeededIds[1]);
   });
 });
