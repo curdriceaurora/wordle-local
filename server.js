@@ -223,10 +223,47 @@ const INDEX_LOOKUP_UNAVAILABLE = Symbol("index-lookup-unavailable");
 let fullEnglishDefinitions = null;
 let englishDefinitionIndexManifest = null;
 let hasWarnedAboutDefinitionIndex = false;
+
+// Data-mutation lock used by backup export and restore. Acts as both a
+// boolean flag (the /api gate reads `.value` to 503 mutating requests)
+// AND a Promise barrier (stores call `.waitForRelease()` at the start
+// of every mutate so any in-flight handler that already passed the
+// gate is paused until the lock clears). Without the barrier, a
+// handler that passed the gate, hit an `await` (e.g. getSnapshot),
+// then resumed during a restore could call mutate() and overwrite the
+// just-restored file with cached pre-restore state.
+const dataMutationLockRef = {
+  _value: false,
+  _releaseResolve: null,
+  _releasePromise: Promise.resolve(),
+  get value() {
+    return this._value;
+  },
+  set value(next) {
+    if (next && !this._value) {
+      this._value = true;
+      this._releasePromise = new Promise((resolve) => {
+        this._releaseResolve = resolve;
+      });
+    } else if (!next && this._value) {
+      this._value = false;
+      const resolve = this._releaseResolve;
+      this._releaseResolve = null;
+      if (resolve) resolve();
+    }
+  },
+  async waitForRelease() {
+    if (!this._value) return;
+    await this._releasePromise;
+  }
+};
+const waitForDataMutationLock = () => dataMutationLockRef.waitForRelease();
+
 const leaderboardStore = new LeaderboardStore({
   filePath: LEADERBOARD_DATA_PATH,
   maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
-  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
+  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE,
+  waitForDataMutationLock
 });
 
 function parsePositiveInteger(value, fallback) {
@@ -1032,18 +1069,21 @@ const appConfigStore = new AppConfigStore({
 });
 const adminJobsStore = new AdminJobsStore({
   filePath: ADMIN_JOBS_DATA_PATH,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 const classesStore = new ClassesStore({
   filePath: CLASSES_DATA_PATH,
   maxMembersPerClass: ENV_CLASSES_MAX_MEMBERS_PER_CLASS,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
-const dataMutationLockRef = { value: false };
+// dataMutationLockRef and waitForDataMutationLock are defined earlier
+// next to leaderboardStore so the constructor can wire the barrier.
 
 function initializeRuntimeConfig() {
   let normalizePromise;
