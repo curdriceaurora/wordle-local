@@ -1307,13 +1307,22 @@ async function deleteClassFlow(classId) {
       }
     );
     const carved = Array.isArray(result.deletedProfileIds) ? result.deletedProfileIds.length : 0;
-    setStatus(
-      classesStatusEl,
-      cleanProfiles
-        ? `Deleted "${target.name}". Removed ${carved} profile${carved === 1 ? "" : "s"}.`
-        : `Deleted "${target.name}". Profiles preserved.`,
-      "admin-status-ok"
-    );
+    if (result.partialFailure) {
+      const pending = Array.isArray(result.pendingProfileIds) ? result.pendingProfileIds.length : 0;
+      setStatus(
+        classesStatusEl,
+        `Deleted "${target.name}", but profile cleanup did not complete: ${pending} profile${pending === 1 ? "" : "s"} pending. ${result.message || ""}`.trim(),
+        "admin-status-missing"
+      );
+    } else {
+      setStatus(
+        classesStatusEl,
+        cleanProfiles
+          ? `Deleted "${target.name}". Removed ${carved} profile${carved === 1 ? "" : "s"}.`
+          : `Deleted "${target.name}". Profiles preserved.`,
+        "admin-status-ok"
+      );
+    }
   } catch (err) {
     setStatus(classesStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
     return;

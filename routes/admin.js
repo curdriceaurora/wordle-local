@@ -1042,7 +1042,11 @@ function createAdminRouter(deps) {
       // fails, returning an error would mislead the client into retrying a
       // delete that's already happened (404 on retry). Instead capture the
       // failure as a partial-success signal so callers can reconcile.
+      // Track tentative removals separately so we don't expose them to the
+      // caller until persist completes — a mutator that runs but fails to
+      // persist would otherwise leak unpersisted IDs into deletedProfileIds.
       try {
+        const tentativeRemoved = [];
         await leaderboardStore.mutate((draft) => {
           for (const memberId of carveOutIds) {
             const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
@@ -1054,10 +1058,11 @@ function createAdminRouter(deps) {
               ) {
                 delete draft.resultsByProfile[memberId];
               }
-              removedProfileIds.push(memberId);
+              tentativeRemoved.push(memberId);
             }
           }
         });
+        removedProfileIds = tentativeRemoved;
       } catch (err) {
         leaderboardCleanupError = err;
         console.warn(
