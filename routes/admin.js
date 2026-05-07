@@ -353,7 +353,9 @@ function createAdminRouter(deps) {
       }
 
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
-      applyRuntimeConfig(nextState.overrides || {});
+      // Await any in-flight normalization (e.g. result-cap lowered) so the
+      // response reports caps that the store has actually finished applying.
+      await applyRuntimeConfig(nextState.overrides || {});
       return res.json(buildRuntimeConfigResponse());
     } catch (err) {
       if (err instanceof AppConfigStoreError && err.code === "INVALID_OVERRIDES") {

@@ -483,21 +483,22 @@ function applyRuntimeConfig(overrides) {
   }
 
   // If the per-profile result cap was lowered, force a noop mutate so existing
-  // in-memory results past the new cap are pruned-and-persisted right away
-  // instead of waiting for the next gameplay-driven mutation.
+  // in-memory results past the new cap are pruned-and-persisted right away.
+  // Return the promise so callers (admin PUT) can await it before reporting
+  // the new cap as applied; boot paths can ignore the return value safely.
   if (
     limitsApplied
     && runtimeConfigState.effective.limits.leaderboardMaxResultsPerProfile
       < previousMaxResultsPerProfile
   ) {
-    leaderboardStore
-      .mutate(() => {})
-      .catch((err) => {
-        console.warn(
-          `[runtime-config] Could not normalize leaderboard after lowering result cap: ${err?.message || String(err)}`
-        );
-      });
+    return leaderboardStore.mutate(() => {}).catch((err) => {
+      console.warn(
+        `[runtime-config] Could not normalize leaderboard after lowering result cap: ${err?.message || String(err)}`
+      );
+    });
   }
+
+  return undefined;
 }
 
 function getRuntimeConfigSnapshot() {

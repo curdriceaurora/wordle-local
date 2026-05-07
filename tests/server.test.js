@@ -2582,6 +2582,68 @@ describe("Stats API", () => {
     }
   });
 
+  test("PUT runtime-config awaits normalize before reporting a lowered result cap", async () => {
+    const tempStore = createTempStatsStore();
+    const tempAdminState = createTempAdminState();
+    try {
+      const app = loadApp({
+        adminKey: "secret",
+        statsStorePath: tempStore.filePath,
+        appConfigPath: tempAdminState.configPath,
+        adminJobsStorePath: tempAdminState.jobsPath
+      });
+      const profile = await request(app).post("/api/stats/profile").send({ name: "Ava" });
+      const profileId = profile.body.playerId;
+
+      // Seed five distinct daily results for the profile.
+      const dates = [
+        "2026-02-20",
+        "2026-02-21",
+        "2026-02-22",
+        "2026-02-23",
+        "2026-02-24"
+      ];
+      for (const date of dates) {
+        const dailyKey = `${date}|en|abcde`;
+        const submission = await request(app).post("/api/stats/result").send({
+          profileId,
+          dailyKey,
+          won: true,
+          attempts: 3,
+          maxGuesses: 6
+        });
+        expect(submission.status).toBe(200);
+      }
+
+      const before = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(before.status).toBe(200);
+      expect(before.body.profiles[0].stats.totalGames).toBe(5);
+
+      const lowered = await request(app)
+        .put("/api/admin/runtime-config")
+        .set("x-admin-key", "secret")
+        .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 2 } } });
+      expect(lowered.status).toBe(200);
+      expect(lowered.body.effective.limits.leaderboardMaxResultsPerProfile).toBe(2);
+
+      // No await between PUT and GET on the test side: the PUT must have
+      // already pruned in-memory state before responding.
+      const after = await request(app)
+        .get("/api/admin/stats/profiles")
+        .set("x-admin-key", "secret");
+      expect(after.status).toBe(200);
+      expect(after.body.profiles[0].stats.totalGames).toBe(2);
+
+      const persisted = JSON.parse(fs.readFileSync(tempStore.filePath, "utf8"));
+      expect(Object.keys(persisted.resultsByProfile[profileId])).toHaveLength(2);
+    } finally {
+      tempStore.cleanup();
+      tempAdminState.cleanup();
+    }
+  });
+
   test("PUT runtime-config validates leaderboardMaxProfiles bounds and integer type", async () => {
     const tempStore = createTempStatsStore();
     const tempAdminState = createTempAdminState();
