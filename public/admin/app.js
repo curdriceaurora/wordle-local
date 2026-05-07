@@ -2047,19 +2047,17 @@ if (backupExportFormEl) {
     backupExportBtnEl.disabled = true;
     setStatus(backupExportStatusEl, "Building backup archive…", "");
     try {
-      // Only set explicit `true` flags. Sending `false` would override
-      // server-side defaults like BACKUP_INCLUDE_PROVIDERS_DEFAULT and
-      // silently produce a narrower archive than the operator
-      // configured.
-      const params = new URLSearchParams();
-      if (backupIncludeProvidersEl?.checked) {
-        params.set("includeProviders", "true");
-      }
-      if (backupIncludeDictionariesEl?.checked) {
-        params.set("includeDictionaries", "true");
-      }
-      const query = params.toString();
-      const url = `/api/admin/backup${query ? `?${query}` : ""}`;
+      // Send the explicit checkbox state every time. The UI is the
+      // operator's intent at the moment of export — they should be
+      // able to uncheck a box and see providers excluded even when the
+      // env sets BACKUP_INCLUDE_PROVIDERS_DEFAULT=true. Non-UI
+      // callers (curl/scripts) that omit the query param still get
+      // the env default.
+      const params = new URLSearchParams({
+        includeProviders: backupIncludeProvidersEl?.checked ? "true" : "false",
+        includeDictionaries: backupIncludeDictionariesEl?.checked ? "true" : "false"
+      });
+      const url = `/api/admin/backup?${params.toString()}`;
       const response = await fetchAdminBlob(url);
       const blob = await response.blob();
       const filename =
