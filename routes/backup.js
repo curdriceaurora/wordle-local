@@ -513,6 +513,21 @@ function createBackupRouter(deps) {
 
     logEvent(req, "backup.restore.start", { bytes: upload.bytes, originalName: upload.originalName });
 
+    // Warm every in-scope store before phase 3 starts. If a store
+    // hasn't loaded yet (cold cache on a fresh process), a GET-side
+    // read fired during the brief rename gap (livePath momentarily
+    // absent between snapshot-rename and staged-rename) would
+    // otherwise see ENOENT and persist default state on top of the
+    // restore. Each load is idempotent. Failure is non-fatal — the
+    // restore can still proceed; warm is just a defense.
+    try {
+      await warmInScopeStores();
+    } catch (warmErr) {
+      console.warn(
+        `[admin] Pre-restore warm of in-scope stores failed: ${warmErr?.message || String(warmErr)}`
+      );
+    }
+
     // Recheck the provider-import refs after the upload window. Even
     // though restoreInProgressRef has been claimed since the busy
     // check, a provider import that started AFTER restoreInProgressRef

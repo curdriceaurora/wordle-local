@@ -2476,7 +2476,7 @@ function isDataLockExemptPath(reqUrl) {
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
 }
-function gateDataMutationsDuringRestore(req, res, next) {
+function gateDataMutationsDuringDataLock(req, res, next) {
   const isMutating = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
   if (!isMutating) {
     next();
@@ -2498,7 +2498,7 @@ function gateDataMutationsDuringRestore(req, res, next) {
     code: "DATA_LOCK_HELD"
   });
 }
-app.use("/api", gateDataMutationsDuringRestore);
+app.use("/api", gateDataMutationsDuringDataLock);
 app.use("/api/admin", adminRateLimiter, requireAdminAccess, limitAdminWrites);
 
 function resolveAdminShellAssets() {
