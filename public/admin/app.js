@@ -877,10 +877,21 @@ async function renameProfile(profileId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed })
     });
-    setStatus(profilesStatusEl, `Renamed to "${trimmed}".`, "admin-status-ok");
-    await loadProfiles({ announce: false });
   } catch (err) {
     setStatus(profilesStatusEl, `Rename failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  // The mutation committed; if the refresh fails, surface that as a softer
+  // warning so the admin doesn't think the rename itself failed.
+  setStatus(profilesStatusEl, `Renamed to "${trimmed}".`, "admin-status-ok");
+  try {
+    await loadProfiles({ announce: false });
+  } catch (refreshErr) {
+    setStatus(
+      profilesStatusEl,
+      `Renamed to "${trimmed}". Could not refresh list: ${refreshErr.message}`,
+      "admin-status-off"
+    );
   }
 }
 
@@ -901,10 +912,19 @@ async function deleteProfile(profileId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmName: profile.name, confirmed: true })
     });
-    setStatus(profilesStatusEl, `Deleted "${profile.name}".`, "admin-status-ok");
-    await loadProfiles({ announce: false });
   } catch (err) {
     setStatus(profilesStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(profilesStatusEl, `Deleted "${profile.name}".`, "admin-status-ok");
+  try {
+    await loadProfiles({ announce: false });
+  } catch (refreshErr) {
+    setStatus(
+      profilesStatusEl,
+      `Deleted "${profile.name}". Could not refresh list: ${refreshErr.message}`,
+      "admin-status-off"
+    );
   }
 }
 
@@ -946,14 +966,23 @@ async function mergeProfileFlow(sourceId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ targetProfileId: target.id, confirmed: true })
     });
-    setStatus(
-      profilesStatusEl,
-      `Merged "${source.name}" into "${target.name}".`,
-      "admin-status-ok"
-    );
-    await loadProfiles({ announce: false });
   } catch (err) {
     setStatus(profilesStatusEl, `Merge failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(
+    profilesStatusEl,
+    `Merged "${source.name}" into "${target.name}".`,
+    "admin-status-ok"
+  );
+  try {
+    await loadProfiles({ announce: false });
+  } catch (refreshErr) {
+    setStatus(
+      profilesStatusEl,
+      `Merged "${source.name}" into "${target.name}". Could not refresh list: ${refreshErr.message}`,
+      "admin-status-off"
+    );
   }
 }
 
@@ -975,11 +1004,13 @@ async function saveProfilesLimits() {
   const sources = state.runtimeConfig?.sources?.limits || {};
   const nextLimits = { ...(overrides.limits || {}) };
 
-  // When an env var locks the cap, the input is disabled and pre-filled with
-  // the effective env value for display. Reading and persisting that value
-  // would write a dormant ghost override — silently re-activating with the
-  // env's value the next time the env is unset. Skip the field instead.
-  if (sources.leaderboardMaxProfiles !== "env") {
+  // When an env var locks the cap, drop any existing override for that field
+  // entirely. Preserving a dormant override would silently re-activate as
+  // soon as the env var was unset; admins can re-set the value explicitly
+  // once the env lock is removed.
+  if (sources.leaderboardMaxProfiles === "env") {
+    delete nextLimits.leaderboardMaxProfiles;
+  } else {
     const maxProfilesParse = parseOptionalCapValue(profilesMaxProfilesEl, "Max profiles");
     if (maxProfilesParse.mode === "invalid") {
       setStatus(profilesLimitsStatusEl, maxProfilesParse.message, "admin-status-missing");
@@ -992,7 +1023,9 @@ async function saveProfilesLimits() {
     }
   }
 
-  if (sources.leaderboardMaxResultsPerProfile !== "env") {
+  if (sources.leaderboardMaxResultsPerProfile === "env") {
+    delete nextLimits.leaderboardMaxResultsPerProfile;
+  } else {
     const maxResultsParse = parseOptionalCapValue(profilesMaxResultsEl, "Max results per profile");
     if (maxResultsParse.mode === "invalid") {
       setStatus(profilesLimitsStatusEl, maxResultsParse.message, "admin-status-missing");

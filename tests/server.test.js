@@ -2685,8 +2685,9 @@ describe("Stats API", () => {
       const dir = path.dirname(tempStore.filePath);
       fs.chmodSync(dir, 0o500);
 
+      let response;
       try {
-        const response = await request(app)
+        response = await request(app)
           .put("/api/admin/runtime-config")
           .set("x-admin-key", "secret")
           .send({ overrides: { limits: { leaderboardMaxResultsPerProfile: 1 } } });
@@ -2694,6 +2695,17 @@ describe("Stats API", () => {
       } finally {
         fs.chmodSync(dir, 0o700);
       }
+
+      // After the 503, GET should still report the previous (default) cap and
+      // the persisted app-config.json must NOT carry the failed override.
+      const after = await request(app)
+        .get("/api/admin/runtime-config")
+        .set("x-admin-key", "secret");
+      expect(after.status).toBe(200);
+      expect(after.body.effective.limits.leaderboardMaxResultsPerProfile).toBe(400);
+      expect(after.body.overrides.limits?.leaderboardMaxResultsPerProfile).toBeUndefined();
+      const persistedConfig = JSON.parse(fs.readFileSync(tempAdminState.configPath, "utf8"));
+      expect(persistedConfig.overrides.limits?.leaderboardMaxResultsPerProfile).toBeUndefined();
     } finally {
       tempStore.cleanup();
       tempAdminState.cleanup();

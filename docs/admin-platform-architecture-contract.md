@@ -122,7 +122,7 @@ Only the keys whitelisted by `data/app-config.schema.json` and `lib/app-config-s
 | `leaderboardMaxProfiles` | 1 – 1000 | Lowering below current registered profile count is rejected (`409`). Env: `LEADERBOARD_MAX_PROFILES`. |
 | `leaderboardMaxResultsPerProfile` | 1 – 10000 | Excess results are pruned (oldest first) on next mutation. Env: `LEADERBOARD_MAX_RESULTS_PER_PROFILE`. |
 
-Whitelisted keys must round-trip the schema (`data/app-config.schema.json`) and the `normalizeLimitsOverrides` validator (`lib/app-config-store.js`). Env values lock the corresponding override key when set.
+Whitelisted keys must round-trip the schema (`data/app-config.schema.json`) and the `normalizeLimitsOverrides` validator (`lib/app-config-store.js`). For the leaderboard caps, an env value only locks the corresponding override key when it parses to an integer that falls inside the documented bounds — out-of-range or non-integer env values warn at startup, fall back to defaults, and leave admin overrides editable so operators can correct the lock.
 
 ## Re-entry Criteria For Deferred Work
 - `#9` queue work resumes only if import concurrency/reliability requirements exceed single-import mutex behavior.

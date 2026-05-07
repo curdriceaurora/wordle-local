@@ -356,10 +356,25 @@ function createAdminRouter(deps) {
         }
       }
 
+      // Snapshot the current overrides so a failed normalize can roll back
+      // both disk and in-memory state, keeping GET /api/admin/runtime-config
+      // honest about what the store is actually enforcing.
+      const previousOverrides = appConfigStore.getOverridesSync();
       const nextState = appConfigStore.replaceOverridesSync(req.body?.overrides || {});
-      // Await any in-flight normalization (e.g. result-cap lowered) so the
-      // response reports caps that the store has actually finished applying.
-      await applyRuntimeConfig(nextState.overrides || {});
+      try {
+        await applyRuntimeConfig(nextState.overrides || {});
+      } catch (applyErr) {
+        try {
+          appConfigStore.replaceOverridesSync(previousOverrides);
+          applyRuntimeConfig(previousOverrides);
+        } catch (rollbackErr) {
+          console.error(
+            "[runtime-config] Rollback after apply failure also failed.",
+            rollbackErr
+          );
+        }
+        throw applyErr;
+      }
       return res.json(buildRuntimeConfigResponse());
     } catch (err) {
       if (err instanceof AppConfigStoreError && err.code === "INVALID_OVERRIDES") {
