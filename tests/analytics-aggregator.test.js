@@ -4,7 +4,7 @@ const { aggregate, SUPPORTED_WINDOWS } = require("../lib/analytics-aggregator");
 
 const FIXED_GENERATED_AT = "2026-05-07T12:00:00.000Z";
 
-function makeProfile(id, name, createdAt = "2026-04-01T00:00:00Z") {
+function makeProfile(id, name, createdAt = "2026-04-01T12:00:00Z") {
   return {
     id,
     name,
@@ -126,9 +126,9 @@ describe("analytics-aggregator", () => {
   describe("aggregate() dense fixture", () => {
     test("daily series sums match across the window", () => {
       const profiles = [
-        makeProfile("p1", "Alice", "2026-04-01T00:00:00Z"),
-        makeProfile("p2", "Bob", "2026-04-15T00:00:00Z"),
-        makeProfile("p3", "Carol", "2026-05-04T00:00:00Z")
+        makeProfile("p1", "Alice", "2026-04-01T12:00:00Z"),
+        makeProfile("p2", "Bob", "2026-04-15T12:00:00Z"),
+        makeProfile("p3", "Carol", "2026-05-04T12:00:00Z")
       ];
       const results = { p1: {}, p2: {}, p3: {} };
       const dates = ["2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"];
@@ -182,7 +182,7 @@ describe("analytics-aggregator", () => {
 
     test("all window starts at earliest result date", () => {
       const r1 = makeResult({ date: "2026-04-29", won: true, attempts: 4 });
-      const profiles = [makeProfile("p1", "Alice", "2026-04-29T00:00:00Z")];
+      const profiles = [makeProfile("p1", "Alice", "2026-04-29T12:00:00Z")];
       const results = { p1: { [r1.key]: r1.entry } };
 
       const out = aggregate(snapshotWith(profiles, results), {
@@ -228,7 +228,7 @@ describe("analytics-aggregator", () => {
   describe("aggregate() leap-day boundary", () => {
     test("includes 2024-02-29 in a window straddling the leap day", () => {
       const r1 = makeResult({ date: "2024-02-29", won: true, attempts: 4 });
-      const profiles = [makeProfile("p1", "Alice", "2024-02-01T00:00:00Z")];
+      const profiles = [makeProfile("p1", "Alice", "2024-02-01T12:00:00Z")];
       const results = { p1: { [r1.key]: r1.entry } };
       const out = aggregate(snapshotWith(profiles, results), {
         window: "7d",
@@ -358,6 +358,27 @@ describe("analytics-aggregator", () => {
       // Histogram values should sum to total wins (no silent drops).
       const total = Object.values(byBucket).reduce((sum, v) => sum + v, 0);
       expect(total).toBe(out.summary.gamesInWindow);
+    });
+  });
+
+  describe("aggregate() profile-growth date conversion", () => {
+    test("treats createdAt as server-local, not UTC slice", () => {
+      // Profile was created locally at 2024-06-15 (whatever server tz).
+      // We synthesize an ISO that, when parsed and converted via server
+      // local Date methods, falls on that day; the aggregator should
+      // place this profile in the 2024-06-15 growth bucket regardless
+      // of how the ISO's UTC slice would read.
+      const localDate = new Date(2024, 5, 15, 12, 0, 0); // local June 15
+      const profiles = [makeProfile("p1", "Alice", localDate.toISOString())];
+      const out = aggregate(snapshotWith(profiles, {}), {
+        window: "7d",
+        today: "2024-06-15",
+        tz: "UTC",
+        generatedAt: FIXED_GENERATED_AT
+      });
+      const lastDay = out.series.profileGrowth[out.series.profileGrowth.length - 1];
+      expect(lastDay.date).toBe("2024-06-15");
+      expect(lastDay.value).toBe(1);
     });
   });
 
