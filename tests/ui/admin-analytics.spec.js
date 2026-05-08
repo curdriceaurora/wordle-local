@@ -47,7 +47,7 @@ const CLASSES_RESPONSE = { classes: [] };
 function buildAnalyticsResponse(window) {
   const dayCount = window === "30d" ? 30 : window === "all" ? 14 : 7;
   const today = new Date("2026-05-07");
-  const series = (label, baseValue) => {
+  const series = (_label, baseValue) => {
     const out = [];
     for (let i = dayCount - 1; i >= 0; i -= 1) {
       const d = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);

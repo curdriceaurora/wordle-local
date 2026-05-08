@@ -73,14 +73,16 @@ boundary so a payload generated yesterday never serves today's request.
 
 - Cache hit responses set `X-Analytics-Cache: HIT`.
 - Cache misses set `X-Analytics-Cache: MISS`.
-- TTL: `ANALYTICS_CACHE_TTL_MS` env var (default `60000`, range `1000`
-  – `3600000`).
+- TTL: `ANALYTICS_CACHE_TTL_MS` env var (default `60000`, range `1`
+  – `3600000`). A value of `1` effectively disables the cache —
+  sequential requests cross more than a millisecond, so any entry
+  is already expired by the next call.
 
 ## Environment variables
 
 | Var | Default | Range / values | Purpose |
 | --- | --- | --- | --- |
-| `ANALYTICS_CACHE_TTL_MS` | `60000` | 1000 to 3600000 | Server-side cache TTL for the aggregated payload. |
+| `ANALYTICS_CACHE_TTL_MS` | `60000` | 1 to 3600000 | Server-side cache TTL for the aggregated payload. Use `1` to effectively disable caching (subsequent requests cross more than a millisecond and miss). |
 | `ANALYTICS_TIMEZONE` | `process.env.TZ` or `UTC` | IANA timezone name (e.g. `America/New_York`) | Timezone used for the **time-of-day histogram only**. Invalid zones fall back to UTC and a warning is logged at boot. |
 
 `ANALYTICS_TIMEZONE` is hour-of-day-only. The window-edge "today" is
