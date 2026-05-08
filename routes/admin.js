@@ -158,34 +158,16 @@ function createAdminRouter(deps) {
     ? analyticsTimezone
     : "UTC";
 
-  // Format the operator's "today" in ANALYTICS_TZ, not server-local. If the
-  // two zones disagree (e.g. UTC server with ANALYTICS_TIMEZONE=
-  // America/Los_Angeles), getLocalDateString() would return the server-side
-  // date and the aggregator would shift the 7d/30d windows by a day around
-  // midnight. Intl.DateTimeFormat with `en-CA` returns ISO YYYY-MM-DD parts
-  // we can join cleanly. Falls back to getLocalDateString if Intl is
-  // unavailable for the configured zone.
-  const analyticsDateFormatter = (() => {
-    try {
-      return new Intl.DateTimeFormat("en-CA", {
-        timeZone: ANALYTICS_TZ,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      });
-    } catch (_err) {
-      return null;
-    }
-  })();
-
-  function todayInAnalyticsZone(now = new Date()) {
-    if (analyticsDateFormatter) {
-      const parts = analyticsDateFormatter.formatToParts(now);
-      const y = parts.find((p) => p.type === "year")?.value;
-      const m = parts.find((p) => p.type === "month")?.value;
-      const d = parts.find((p) => p.type === "day")?.value;
-      if (y && m && d) return `${y}-${m}-${d}`;
-    }
+  // ANALYTICS_TZ controls hour-of-day bucketing only — NOT the date math
+  // that defines window edges. The game stores daily-key dates via
+  // getLocalDateString(new Date()), i.e. the server's local timezone. If
+  // we computed "today" in a different zone, the aggregator's "today"
+  // could disagree with the dates the storage actually uses, leaving the
+  // most recent plays bucketed under "yesterday" from the dashboard's
+  // perspective. Aligning "today" with the storage convention is the
+  // important invariant; ANALYTICS_TZ still gives operators meaningful
+  // hour-of-day buckets in their preferred zone (it's purely display).
+  function todayForAnalytics(now = new Date()) {
     return getLocalDateString(now);
   }
 
@@ -315,7 +297,7 @@ function createAdminRouter(deps) {
     // operator-local day boundary even when the snapshot/TTL haven't
     // budged.
     const nowDate = new Date();
-    const today = todayInAnalyticsZone(nowDate);
+    const today = todayForAnalytics(nowDate);
     const cacheKey = `${windowName}|${snapshot.updatedAt || ""}|${today}`;
     const now = nowDate.getTime();
     const cached = analyticsCache.get(cacheKey);

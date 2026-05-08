@@ -2826,14 +2826,25 @@ function renderAnalyticsPayload(payload) {
 
 async function loadAnalytics(options = {}) {
   if (!state.unlocked || !analyticsCardsEl) return;
+  // Pin the window we're about to fetch. If the operator clicks 7d → all in
+  // quick succession on a slow connection, the slower 7d response would
+  // otherwise resolve last and overwrite the all-window cards/charts even
+  // though the UI already shows "all" as selected. We compare the captured
+  // window against state.analyticsWindow at render time and skip stale
+  // responses.
+  const requestedWindow = state.analyticsWindow;
   state.analyticsLoading = true;
   if (options.announce !== false) {
     setStatus(analyticsStatusEl, "Loading analytics…", "");
   }
   try {
     const payload = await requestAdminJson(
-      `/api/admin/analytics?window=${encodeURIComponent(state.analyticsWindow)}`
+      `/api/admin/analytics?window=${encodeURIComponent(requestedWindow)}`
     );
+    if (state.analyticsWindow !== requestedWindow) {
+      // A newer request superseded us — drop the result silently.
+      return payload;
+    }
     renderAnalyticsPayload(payload);
     if (options.announce !== false) {
       const total = payload?.summary?.gamesInWindow ?? 0;
@@ -2847,7 +2858,7 @@ async function loadAnalytics(options = {}) {
     }
     return payload;
   } catch (err) {
-    if (options.announce !== false) {
+    if (options.announce !== false && state.analyticsWindow === requestedWindow) {
       setStatus(analyticsStatusEl, `Analytics failed: ${err.message}`, "admin-status-missing");
     }
     throw err;

@@ -207,7 +207,12 @@ describe("GET /api/admin/analytics", () => {
     expect(b.headers["x-analytics-cache"]).toBe("MISS");
   });
 
-  test("today is computed in ANALYTICS_TIMEZONE, not server-local time", async () => {
+  test("today aligns with the daily-key storage convention (server-local)", async () => {
+    // The game writes daily-key dates via getLocalDateString(new Date()),
+    // i.e. server-local time. The aggregator's "today" must match that
+    // convention or the most recent plays would be bucketed under
+    // "yesterday" from the dashboard. ANALYTICS_TIMEZONE stays for
+    // hour-of-day display only.
     const statsPath = tempStatsPath();
     seedLeaderboard(statsPath, {
       version: 1,
@@ -216,18 +221,17 @@ describe("GET /api/admin/analytics", () => {
       resultsByProfile: {}
     });
 
-    // Pick a timezone deliberately offset from the test runner's likely zone.
-    // We assert: the last day in the 7d series matches what Intl says is
-    // "today" in that zone — not what new Date().getDate() says locally.
-    const tz = "America/Los_Angeles";
-    const expectedToday = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    }).format(new Date());
+    const expectedToday = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    })();
 
-    const app = loadApp(statsPath, { timezone: tz });
+    // Even with ANALYTICS_TIMEZONE explicitly different, today should
+    // still be server-local — the env var only governs hour buckets.
+    const app = loadApp(statsPath, { timezone: "America/Los_Angeles" });
     const res = await request(app).get("/api/admin/analytics?window=7d");
     expect(res.status).toBe(200);
     const lastDay = res.body.series.dailyActive[res.body.series.dailyActive.length - 1].date;

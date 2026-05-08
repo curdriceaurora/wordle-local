@@ -76,13 +76,17 @@ same payload across calls within the TTL. Any leaderboard mutation bumps
 | Var | Default | Range / values | Purpose |
 | --- | --- | --- | --- |
 | `ANALYTICS_CACHE_TTL_MS` | `60000` | 1000 to 3600000 | Server-side cache TTL for the aggregated payload. |
-| `ANALYTICS_TIMEZONE` | `process.env.TZ` or `UTC` | IANA timezone name (e.g. `America/New_York`) | Timezone used for the time-of-day histogram. Invalid zones fall back to UTC and a warning is logged at boot. |
+| `ANALYTICS_TIMEZONE` | `process.env.TZ` or `UTC` | IANA timezone name (e.g. `America/New_York`) | Timezone used for the **time-of-day histogram only**. Invalid zones fall back to UTC and a warning is logged at boot. |
 
-`ANALYTICS_TIMEZONE` only affects hour bucketing. Date bucketing uses the
-date strings already stored in the leaderboard's daily-key (which are
-authored in the operator's local time when the result is recorded), so
-the per-day series is naturally aligned with how the operator thinks
-about "yesterday" vs "today".
+`ANALYTICS_TIMEZONE` is hour-of-day-only. The window-edge "today" is
+computed via `getLocalDateString(new Date())`, the same helper the game
+uses when it writes daily-key dates into the leaderboard. Aligning the
+aggregator's "today" with the storage convention is the important
+invariant — otherwise a play that just landed in the storage as `2026-05-08`
+could end up bucketed under "yesterday" from the dashboard's perspective
+when the window edge said today is `2026-05-07` in some other zone. Set
+the **server's** TZ (`process.env.TZ`) to the operator's calendar if you
+want both the storage and the dashboard's date math to follow it.
 
 ## CSP and offline
 
