@@ -2889,7 +2889,13 @@ async function loadAnalytics(options = {}) {
     }
     throw err;
   } finally {
-    state.analyticsLoading = false;
+    // Only the most-recent fetch should clear the loading flag; otherwise
+    // an earlier overlapping call's finally would set "not loading" while
+    // a newer call is still in flight, and the activateTab gate (which
+    // checks !analyticsLoading) could fire a third redundant load.
+    if (requestId === state.analyticsRequestId) {
+      state.analyticsLoading = false;
+    }
   }
 }
 

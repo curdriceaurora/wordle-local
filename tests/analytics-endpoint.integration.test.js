@@ -31,7 +31,10 @@ function makeProfile(id, name, createdAt) {
   return { id, name, createdAt, updatedAt: createdAt };
 }
 
-function makeEntry(date, lang, won, attempts, hour = 12) {
+// Lang isn't on the entry — it's encoded in the dailyKey at the call
+// site (`${date}|${lang}|${code}`) — so it's not part of this helper's
+// signature.
+function makeEntry(date, won, attempts, hour = 12) {
   return {
     date,
     won,
@@ -80,8 +83,8 @@ describe("GET /api/admin/analytics", () => {
         makeProfile("p2", "Bob", "2026-04-15T00:00:00.000Z")
       ],
       resultsByProfile: {
-        p1: { "2026-05-06|en|base": makeEntry("2026-05-06", "en", true, 3) },
-        p2: { "2026-05-06|es|base": makeEntry("2026-05-06", "es", false) }
+        p1: { "2026-05-06|en|base": makeEntry("2026-05-06", true, 3) },
+        p2: { "2026-05-06|es|base": makeEntry("2026-05-06", false) }
       }
     });
     const app = loadApp(statsPath);
@@ -178,7 +181,7 @@ describe("GET /api/admin/analytics", () => {
       updatedAt: "2026-05-07T12:00:00.000Z",
       profiles: [makeProfile("p1", "Alice", "2026-04-01T00:00:00.000Z")],
       resultsByProfile: {
-        p1: { "2026-05-06|en|base": makeEntry("2026-05-06", "en", true, 3) }
+        p1: { "2026-05-06|en|base": makeEntry("2026-05-06", true, 3) }
       }
     });
     const app = loadApp(statsPath, { cacheTtlMs: 60_000 });
@@ -250,7 +253,7 @@ describe("GET /api/admin/analytics", () => {
         const offset = (i * 7 + j * 3) % 30;
         const d = new Date(baseDate.getTime() + offset * 24 * 60 * 60 * 1000);
         const dateStr = d.toISOString().slice(0, 10);
-        entries[`${dateStr}|en|base`] = makeEntry(dateStr, "en", j % 2 === 0, 4);
+        entries[`${dateStr}|en|base`] = makeEntry(dateStr, j % 2 === 0, 4);
       }
       resultsByProfile[id] = entries;
     }

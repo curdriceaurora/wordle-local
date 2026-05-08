@@ -145,11 +145,13 @@ function createAdminRouter(deps) {
 
   const router = express.Router();
 
-  // Per-router analytics cache. Keyed by `(window | snapshot.updatedAt)` so
-  // any leaderboard mutation invalidates instantly via the snapshot's own
-  // updatedAt bump. The TTL is a coarse second-tier guard for cases where
-  // the cache lives across long no-write stretches and we still want a
-  // "fresh" generatedAt timestamp on the response.
+  // Per-router analytics cache. Keyed by
+  // `(window | snapshot.updatedAt | today)` so any leaderboard mutation
+  // invalidates instantly via the snapshot's own updatedAt bump, and the
+  // entry naturally falls off the server-local day boundary so a
+  // pre-midnight payload never serves a post-midnight request even when
+  // the snapshot is otherwise unchanged. The TTL is a coarse second-tier
+  // guard for stretches with no writes and no day rollover.
   const analyticsCache = new Map();
   const ANALYTICS_CACHE_TTL = Number.isInteger(analyticsCacheTtlMs) && analyticsCacheTtlMs > 0
     ? analyticsCacheTtlMs

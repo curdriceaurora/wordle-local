@@ -13,7 +13,7 @@ tab reads.
 
 | Metric | Definition |
 | --- | --- |
-| **DAU** | Distinct profiles that submitted a result on the operator's *today* (in `ANALYTICS_TIMEZONE`). |
+| **DAU** | Distinct profiles that submitted a result on the operator's *today* (server-local, matching the date the daily-key was written with). |
 | **WAU** | Distinct profiles with a result in the trailing 7 days, regardless of the selected window. |
 | **Games in window** | Total result rows submitted within the selected window. |
 | **Win rate** | `wins / games` over the window. Wins are entries with `won=true`. |
