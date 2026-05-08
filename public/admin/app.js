@@ -2308,6 +2308,26 @@ lockSessionBtnEl.addEventListener("click", () => {
   if (backupRestoreFileEl) backupRestoreFileEl.value = "";
   if (backupIncludeProvidersEl) backupIncludeProvidersEl.checked = false;
   if (backupIncludeDictionariesEl) backupIncludeDictionariesEl.checked = false;
+  // Invalidate any in-flight analytics fetch so a late response can't
+  // write admin-only metrics into the (now hidden) DOM after lock,
+  // which would surface as a stale panel on the next unlock without a
+  // fresh authorized fetch. Bumping the token also ensures the next
+  // unlock's first loadAnalytics() doesn't see a matching id from a
+  // pre-lock request.
+  state.analyticsRequestId += 1;
+  state.analyticsLoading = false;
+  destroyAllAnalyticsCharts();
+  if (analyticsCardsEl) {
+    analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
+      el.textContent = "—";
+    });
+  }
+  if (analyticsActivityTableBody) clearTbody(analyticsActivityTableBody);
+  if (analyticsAttemptsTableBody) clearTbody(analyticsAttemptsTableBody);
+  if (analyticsLanguageTableBody) clearTbody(analyticsLanguageTableBody);
+  if (analyticsHourTableBody) clearTbody(analyticsHourTableBody);
+  if (analyticsAsOfEl) analyticsAsOfEl.textContent = "";
+  setStatus(analyticsStatusEl, "");
   resetRestoreDialog();
   if (backupRestoreDialogEl?.close && backupRestoreDialogEl.open) backupRestoreDialogEl.close();
   setStatus(profilesStatusEl, "");
