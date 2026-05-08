@@ -1982,6 +1982,14 @@ async function unlockWorkspace() {
         setStatus(runtimeStatusEl, `Could not load runtime config: ${err.message}`, "admin-status-missing");
       })
     ]);
+    // If the operator was on the Analytics tab when they locked, the
+    // panel was wiped. Activating providers via renderWorkspace doesn't
+    // re-enter activateTab(), so loadAnalytics() never re-fires for the
+    // preserved active tab. Trigger it here so re-unlock leaves the
+    // Analytics panel populated instead of blank-until-tab-switch.
+    if (state.unlocked && state.activeTab === "analytics") {
+      loadAnalytics({ announce: true }).catch(() => {});
+    }
   } finally {
     state.loading = false;
     renderWorkspace();
