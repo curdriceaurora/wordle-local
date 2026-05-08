@@ -79,7 +79,7 @@ describe("analytics-aggregator", () => {
       expect(out.series.dailyActive[6]).toEqual({ date: "2026-05-07", value: 0 });
       expect(out.series.dailyGames).toHaveLength(7);
       expect(out.series.profileGrowth).toHaveLength(7);
-      expect(out.distributions.attempts).toHaveLength(11); // 1..10 + dnf
+      expect(out.distributions.attempts).toHaveLength(12); // 1..10 + 11+ + dnf
       expect(out.distributions.languageMix).toEqual([]);
       expect(out.distributions.hourOfDay).toHaveLength(24);
       // Every hour bucket present, all zero.
@@ -288,6 +288,26 @@ describe("analytics-aggregator", () => {
   });
 
   describe("aggregate() attempts bucketing for higher maxGuesses", () => {
+    test("wins with attempts > 10 land in the 11+ overflow bucket", () => {
+      const profiles = [makeProfile("p1", "Alice")];
+      const r1 = makeResult({ date: "2026-05-07", won: true, attempts: 11, maxGuesses: 12 });
+      const r2 = makeResult({ date: "2026-05-06", won: true, attempts: 25, maxGuesses: 30 });
+      const results = { p1: { [r1.key]: r1.entry, [r2.key]: r2.entry } };
+      const out = aggregate(snapshotWith(profiles, results), {
+        window: "7d",
+        today: "2026-05-07",
+        tz: "UTC",
+        generatedAt: FIXED_GENERATED_AT
+      });
+      const byBucket = Object.fromEntries(
+        out.distributions.attempts.map((row) => [row.bucket, row.value])
+      );
+      expect(byBucket["11+"]).toBe(2);
+      // Histogram totals must still equal gamesInWindow.
+      const total = Object.values(byBucket).reduce((sum, v) => sum + v, 0);
+      expect(total).toBe(out.summary.gamesInWindow);
+    });
+
     test("wins with attempts 7-10 land in their own bucket", () => {
       const profiles = [makeProfile("p1", "Alice")];
       const results = {

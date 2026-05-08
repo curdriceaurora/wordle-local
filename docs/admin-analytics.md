@@ -26,9 +26,12 @@ tab reads.
 1. **Activity over time** — line chart with two series (`dailyActive`,
    `dailyGames`). Shares an x-axis (date) with two y-axes so DAU and game
    counts don't squash each other when the scales diverge.
-2. **Attempts distribution** — bar chart over `1, 2, 3, 4, 5, 6, DNF`. The
-   DNF bucket is for non-wins (`won === false`) regardless of attempt
-   count.
+2. **Attempts distribution** — bar chart with one bucket per attempt
+   count from `1` to `10` (matching the server's `MAX_GUESSES`), plus
+   an `11+` overflow bucket for any wins beyond that, plus `DNF` for
+   non-wins (`won === false`) regardless of attempt count. Histogram
+   bar values always sum to `gamesInWindow` — no result is silently
+   dropped.
 3. **Language mix** — horizontal bar chart, count of games per `lang` code.
    Sorted by count (desc), then alphabetical.
 4. **Time-of-day** — 24-bucket histogram of result `updatedAt`, bucketed
@@ -62,9 +65,11 @@ GET /api/admin/analytics?window=7d|30d|all
 
 ### Cache
 
-A per-router cache keyed by `(window | snapshot.updatedAt)` returns the
-same payload across calls within the TTL. Any leaderboard mutation bumps
-`snapshot.updatedAt` and invalidates the entry instantly.
+A per-router cache keyed by `(window | snapshot.updatedAt | today)`
+returns the same payload across calls within the TTL. Any leaderboard
+mutation bumps `snapshot.updatedAt` and invalidates the entry instantly;
+the `today` term causes the cache to roll over at the server-local day
+boundary so a payload generated yesterday never serves today's request.
 
 - Cache hit responses set `X-Analytics-Cache: HIT`.
 - Cache misses set `X-Analytics-Cache: MISS`.

@@ -221,19 +221,17 @@ describe("GET /api/admin/analytics", () => {
       resultsByProfile: {}
     });
 
-    const expectedToday = (() => {
-      const d = new Date();
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
-    })();
-
     // Even with ANALYTICS_TIMEZONE explicitly different, today should
     // still be server-local — the env var only governs hour buckets.
     const app = loadApp(statsPath, { timezone: "America/Los_Angeles" });
     const res = await request(app).get("/api/admin/analytics?window=7d");
     expect(res.status).toBe(200);
+    // Derive expectedToday from the SAME timestamp the server captured
+    // (generatedAt) — computing it from a separate `new Date()` could
+    // straddle midnight in a server-local sense and make the assertion
+    // flaky right at the boundary.
+    const generatedAt = new Date(res.body.generatedAt);
+    const expectedToday = `${generatedAt.getFullYear()}-${String(generatedAt.getMonth() + 1).padStart(2, "0")}-${String(generatedAt.getDate()).padStart(2, "0")}`;
     const lastDay = res.body.series.dailyActive[res.body.series.dailyActive.length - 1].date;
     expect(lastDay).toBe(expectedToday);
   });

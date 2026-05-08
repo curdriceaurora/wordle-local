@@ -84,6 +84,7 @@ function buildAnalyticsResponse(window) {
         { bucket: "8", value: 0 },
         { bucket: "9", value: 0 },
         { bucket: "10", value: 0 },
+        { bucket: "11+", value: 0 },
         { bucket: "dnf", value: 3 }
       ],
       languageMix: [
@@ -131,6 +132,7 @@ const EMPTY_ANALYTICS = {
       { bucket: "8", value: 0 },
       { bucket: "9", value: 0 },
       { bucket: "10", value: 0 },
+      { bucket: "11+", value: 0 },
       { bucket: "dnf", value: 0 }
     ],
     languageMix: [],
