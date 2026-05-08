@@ -288,6 +288,32 @@ describe("analytics-aggregator", () => {
   });
 
   describe("aggregate() attempts bucketing for higher maxGuesses", () => {
+    test("submissionCount > 1 on a single row counts as a replay", () => {
+      // /api/stats/result merges replays of the same daily into a single
+      // row + submissionCount. Counting rows alone would report this
+      // profile as not having replayed, deflating replay rate to 0.
+      const profiles = [makeProfile("p1", "Alice"), makeProfile("p2", "Bob")];
+      const replayed = makeResult({
+        date: "2026-05-07",
+        won: true,
+        attempts: 4
+      });
+      replayed.entry.submissionCount = 5; // five attempts at same puzzle
+      const single = makeResult({ date: "2026-05-07", won: true, attempts: 3 });
+      const results = {
+        p1: { [replayed.key]: replayed.entry },
+        p2: { [single.key]: single.entry }
+      };
+      const out = aggregate(snapshotWith(profiles, results), {
+        window: "7d",
+        today: "2026-05-07",
+        tz: "UTC",
+        generatedAt: FIXED_GENERATED_AT
+      });
+      // p1 replayed (5 submissions); p2 didn't. 1 of 2 active = 0.5.
+      expect(out.summary.replayRate).toBeCloseTo(0.5, 4);
+    });
+
     test("wins with attempts > 10 land in the 11+ overflow bucket", () => {
       const profiles = [makeProfile("p1", "Alice")];
       const r1 = makeResult({ date: "2026-05-07", won: true, attempts: 11, maxGuesses: 12 });
