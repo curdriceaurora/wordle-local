@@ -178,15 +178,15 @@ function createAdminRouter(deps) {
     }
   })();
 
-  function todayInAnalyticsZone() {
+  function todayInAnalyticsZone(now = new Date()) {
     if (analyticsDateFormatter) {
-      const parts = analyticsDateFormatter.formatToParts(new Date());
+      const parts = analyticsDateFormatter.formatToParts(now);
       const y = parts.find((p) => p.type === "year")?.value;
       const m = parts.find((p) => p.type === "month")?.value;
       const d = parts.find((p) => p.type === "day")?.value;
       if (y && m && d) return `${y}-${m}-${d}`;
     }
-    return getLocalDateString(new Date());
+    return getLocalDateString(now);
   }
 
   router.get("/admin", (req, res) => {
@@ -306,15 +306,18 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Resolve today before the cache lookup so the date is part of the key.
-    // Without this, a payload generated before operator-local midnight
-    // would be served to a request after midnight if neither the TTL
-    // expired nor the snapshot mutated — the new "today" would render
-    // yesterday's date range. With ANALYTICS_CACHE_TTL_MS configurable up
-    // to an hour, that staleness window is real.
-    const today = todayInAnalyticsZone();
+    // Capture a single Date and reuse it for the operator-local "today"
+    // string AND the generatedAt timestamp. Two separate new Date() calls
+    // could straddle midnight in ANALYTICS_TZ in rare cases, leaving the
+    // payload internally inconsistent (e.g. window dates from yesterday
+    // but generatedAt from today). Resolving today first also lets the
+    // cache key include it so the stored payload naturally falls off the
+    // operator-local day boundary even when the snapshot/TTL haven't
+    // budged.
+    const nowDate = new Date();
+    const today = todayInAnalyticsZone(nowDate);
     const cacheKey = `${windowName}|${snapshot.updatedAt || ""}|${today}`;
-    const now = Date.now();
+    const now = nowDate.getTime();
     const cached = analyticsCache.get(cacheKey);
     if (cached && now - cached.cachedAt < ANALYTICS_CACHE_TTL) {
       res.setHeader("X-Analytics-Cache", "HIT");
@@ -327,7 +330,7 @@ function createAdminRouter(deps) {
         window: windowName,
         today,
         tz: ANALYTICS_TZ,
-        generatedAt: new Date().toISOString()
+        generatedAt: nowDate.toISOString()
       });
     } catch (err) {
       console.error("Analytics aggregation failed.", err);

@@ -2746,6 +2746,17 @@ app.use("/manifest.json", (req, res, next) => {
   res.setHeader("Content-Type", "application/manifest+json");
   next();
 });
+// Mount the vendored bundles directly so /dist/vendor/... resolves the same
+// way regardless of whether PUBLIC_PATH points at public/ (dev) or
+// public/dist/ (post-build). Without this, dist-mode would resolve the URL
+// to public/dist/dist/vendor/... and 404 the admin shell's chart.umd.min.js.
+app.use(
+  "/dist/vendor",
+  express.static(path.join(PUBLIC_ROOT, "dist", "vendor"), {
+    etag: true,
+    maxAge: STATIC_MAX_AGE
+  })
+);
 app.use(
   express.static(PUBLIC_PATH, {
     etag: true,

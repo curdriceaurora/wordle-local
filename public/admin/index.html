@@ -864,7 +864,12 @@
       <span id="adminUpdated">Session locked</span>
     </footer>
 
-    <script src="/dist/vendor/chart.umd.min.js" defer></script>
+    <!-- No defer here: app.js below is parser-blocking, so it runs DURING
+         parsing while a deferred Chart.js would run AFTER. That ordering
+         left window.Chart undefined on the first analytics render and the
+         charts only appeared on a window-switch re-render. Both scripts
+         execute in source order without defer. -->
+    <script src="/dist/vendor/chart.umd.min.js"></script>
     <script src="/admin/app.js"></script>
   </body>
 </html>
