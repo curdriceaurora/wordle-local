@@ -306,7 +306,14 @@ function createAdminRouter(deps) {
       });
     }
 
-    const cacheKey = `${windowName}|${snapshot.updatedAt || ""}`;
+    // Resolve today before the cache lookup so the date is part of the key.
+    // Without this, a payload generated before operator-local midnight
+    // would be served to a request after midnight if neither the TTL
+    // expired nor the snapshot mutated — the new "today" would render
+    // yesterday's date range. With ANALYTICS_CACHE_TTL_MS configurable up
+    // to an hour, that staleness window is real.
+    const today = todayInAnalyticsZone();
+    const cacheKey = `${windowName}|${snapshot.updatedAt || ""}|${today}`;
     const now = Date.now();
     const cached = analyticsCache.get(cacheKey);
     if (cached && now - cached.cachedAt < ANALYTICS_CACHE_TTL) {
@@ -318,7 +325,7 @@ function createAdminRouter(deps) {
     try {
       payload = aggregateAnalytics(snapshot, {
         window: windowName,
-        today: todayInAnalyticsZone(),
+        today,
         tz: ANALYTICS_TZ,
         generatedAt: new Date().toISOString()
       });
