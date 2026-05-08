@@ -124,7 +124,10 @@ function createAdminRouter(deps) {
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
-    getLocalDateString
+    getLocalDateString,
+    aggregateAnalytics,
+    analyticsCacheTtlMs,
+    analyticsTimezone
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -136,8 +139,24 @@ function createAdminRouter(deps) {
   if (typeof claimDirectDataWriteSlot !== "function") {
     throw new TypeError("createAdminRouter: claimDirectDataWriteSlot dep is required.");
   }
+  if (typeof aggregateAnalytics !== "function") {
+    throw new TypeError("createAdminRouter: aggregateAnalytics dep is required.");
+  }
 
   const router = express.Router();
+
+  // Per-router analytics cache. Keyed by `(window | snapshot.updatedAt)` so
+  // any leaderboard mutation invalidates instantly via the snapshot's own
+  // updatedAt bump. The TTL is a coarse second-tier guard for cases where
+  // the cache lives across long no-write stretches and we still want a
+  // "fresh" generatedAt timestamp on the response.
+  const analyticsCache = new Map();
+  const ANALYTICS_CACHE_TTL = Number.isInteger(analyticsCacheTtlMs) && analyticsCacheTtlMs > 0
+    ? analyticsCacheTtlMs
+    : 60 * 1000;
+  const ANALYTICS_TZ = (typeof analyticsTimezone === "string" && analyticsTimezone)
+    ? analyticsTimezone
+    : "UTC";
 
   router.get("/admin", (req, res) => {
     // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
@@ -234,6 +253,61 @@ function createAdminRouter(deps) {
       console.error("Admin profile list failed.", err);
       return res.status(503).json({ error: "Profile list unavailable right now. Try again soon." });
     }
+  });
+
+  router.get("/api/admin/analytics", async (req, res) => {
+    const rawWindow = typeof req.query.window === "string" ? req.query.window : "";
+    const windowName = rawWindow === "" ? "7d" : rawWindow;
+    if (!["7d", "30d", "all"].includes(windowName)) {
+      return res.status(400).json({
+        error: "window must be one of 7d, 30d, all.",
+        code: "INVALID_WINDOW"
+      });
+    }
+
+    let snapshot;
+    try {
+      snapshot = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      console.error("Analytics snapshot read failed.", err);
+      return res.status(503).json({
+        error: "Analytics unavailable right now. Try again soon."
+      });
+    }
+
+    const cacheKey = `${windowName}|${snapshot.updatedAt || ""}`;
+    const now = Date.now();
+    const cached = analyticsCache.get(cacheKey);
+    if (cached && now - cached.cachedAt < ANALYTICS_CACHE_TTL) {
+      res.setHeader("X-Analytics-Cache", "HIT");
+      return res.json(cached.payload);
+    }
+
+    let payload;
+    try {
+      payload = aggregateAnalytics(snapshot, {
+        window: windowName,
+        today: getLocalDateString(new Date()),
+        tz: ANALYTICS_TZ,
+        generatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Analytics aggregation failed.", err);
+      return res.status(500).json({
+        error: "Analytics aggregation failed."
+      });
+    }
+
+    // Bound cache size: keep at most 6 entries (3 windows × ~2 mtime bumps
+    // worth of headroom). Anything older just falls out so a hot
+    // workload's churn doesn't grow the map unboundedly.
+    if (analyticsCache.size > 6) {
+      const oldestKey = analyticsCache.keys().next().value;
+      if (oldestKey !== undefined) analyticsCache.delete(oldestKey);
+    }
+    analyticsCache.set(cacheKey, { cachedAt: now, payload });
+    res.setHeader("X-Analytics-Cache", "MISS");
+    return res.json(payload);
   });
 
   router.delete("/api/admin/stats/profile/:id", async (req, res) => {

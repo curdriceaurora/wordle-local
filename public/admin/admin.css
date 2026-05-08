@@ -129,3 +129,131 @@
     align-items: stretch;
   }
 }
+
+.analytics-window {
+  display: inline-flex;
+  border: 1px solid var(--bg-accent);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+
+.analytics-window-btn {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-right: 1px solid var(--bg-accent);
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font: inherit;
+  min-width: 4.5rem;
+}
+
+.analytics-window-btn:last-child {
+  border-right: none;
+}
+
+.analytics-window-btn[aria-checked="true"] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.analytics-window-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.analytics-as-of {
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.analytics-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.analytics-card {
+  background: var(--bg-accent);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid transparent;
+}
+
+.analytics-card h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.analytics-card-value {
+  margin: 0.25rem 0 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-chart-block {
+  margin: 1rem 0;
+  background: var(--bg-accent);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.analytics-chart-block h4 {
+  margin: 0 0 0.5rem;
+}
+
+.analytics-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 16rem;
+}
+
+.analytics-chart-wrap canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.analytics-chart-block details {
+  margin-top: 0.75rem;
+}
+
+.analytics-chart-block details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.analytics-empty {
+  background: var(--bg-accent);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--muted);
+  margin: 1rem 0;
+}
+
+@media (max-width: 480px) {
+  .analytics-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-chart-wrap {
+    height: 13rem;
+  }
+
+  .analytics-window {
+    display: flex;
+  }
+
+  .analytics-window-btn {
+    flex: 1;
+  }
+}

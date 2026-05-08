@@ -17,6 +17,7 @@ const { ClassesStore, ClassesStoreError } = require("./lib/classes-store");
 const { buildCsv, parseBulkNames, UTF8_BOM } = require("./lib/csv-format");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
+const { aggregate: aggregateAnalytics } = require("./lib/analytics-aggregator");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -115,7 +116,14 @@ const DATA_PATH = path.join(__dirname, "data", "word.json");
 const DATA_ROOT = path.join(__dirname, "data");
 const PUBLIC_ROOT = path.join(__dirname, "public");
 const PUBLIC_DIST = path.join(PUBLIC_ROOT, "dist");
-const PUBLIC_PATH = fs.existsSync(PUBLIC_DIST) ? PUBLIC_DIST : PUBLIC_ROOT;
+// Only flip to dist-mode if the build pipeline has produced an index.html
+// there. Otherwise vendor-only subdirectories (e.g. public/dist/vendor/)
+// would silently hijack the public root and 404 manifest.json / icons /
+// sw.js — which the express.static mount on PUBLIC_ROOT already serves
+// correctly, including their nested /dist/ subpath.
+const PUBLIC_PATH = fs.existsSync(path.join(PUBLIC_DIST, "index.html"))
+  ? PUBLIC_DIST
+  : PUBLIC_ROOT;
 const DICT_PATH = path.join(DATA_ROOT, "dictionaries");
 const PROVIDERS_ROOT = process.env.PROVIDERS_ROOT
   ? path.resolve(process.env.PROVIDERS_ROOT)
@@ -172,6 +180,30 @@ const ENV_BACKUP_RATE_LIMIT_MAX = clampEnvBounded(
   100,
   "BACKUP_RATE_LIMIT_MAX"
 );
+const ENV_ANALYTICS_CACHE_TTL_MS = clampEnvBounded(
+  process.env.ANALYTICS_CACHE_TTL_MS,
+  60 * 1000,
+  1000,
+  60 * 60 * 1000,
+  "ANALYTICS_CACHE_TTL_MS"
+);
+// Operator's IANA timezone for analytics date/hour bucketing. Defaults to
+// the server's local zone (process.env.TZ → host) when unset. Validated
+// lazily by the aggregator: an unrecognised zone falls back to UTC and the
+// boot warning below makes the misconfiguration loud.
+const ENV_ANALYTICS_TIMEZONE = (() => {
+  const raw = String(process.env.ANALYTICS_TIMEZONE || "").trim();
+  if (!raw) return process.env.TZ || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: raw });
+    return raw;
+  } catch (_err) {
+    console.warn(
+      `ANALYTICS_TIMEZONE=${raw} is not a recognised IANA zone; falling back to UTC.`
+    );
+    return "UTC";
+  }
+})();
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -2692,7 +2724,10 @@ app.use(
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
-    getLocalDateString
+    getLocalDateString,
+    aggregateAnalytics,
+    analyticsCacheTtlMs: ENV_ANALYTICS_CACHE_TTL_MS,
+    analyticsTimezone: ENV_ANALYTICS_TIMEZONE
   })
 );
 

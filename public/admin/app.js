@@ -138,7 +138,15 @@ const state = {
   activeClassId: null,
   activeClassDetail: null,
   classMembersLoading: false,
-  activeTab: "providers"
+  activeTab: "providers",
+  analyticsWindow: "7d",
+  analyticsLoading: false,
+  analyticsCharts: {
+    activity: null,
+    attempts: null,
+    language: null,
+    hour: null
+  }
 };
 
 let jobsRefreshTimer = null;
@@ -302,6 +310,9 @@ function activateTab(nextTab, focus = false) {
   }
   if (tabId === "classes" && state.unlocked && !state.classesLoading) {
     loadClasses({ announce: true }).catch(() => {});
+  }
+  if (tabId === "analytics" && state.unlocked && !state.analyticsLoading) {
+    loadAnalytics({ announce: true }).catch(() => {});
   }
 }
 
@@ -2564,6 +2575,332 @@ if (importSourceTypeEl) {
 
 updateImportModeUi();
 renderWorkspace();
+
+const analyticsWindowControlEl = document.getElementById("analyticsWindowControl");
+const analyticsCardsEl = document.getElementById("analyticsCards");
+const analyticsAsOfEl = document.getElementById("analyticsAsOf");
+const analyticsStatusEl = document.getElementById("analyticsStatus");
+const analyticsActivityCanvas = document.getElementById("analyticsActivityChart");
+const analyticsAttemptsCanvas = document.getElementById("analyticsAttemptsChart");
+const analyticsLanguageCanvas = document.getElementById("analyticsLanguageChart");
+const analyticsHourCanvas = document.getElementById("analyticsHourChart");
+const analyticsActivityTableBody = document.querySelector("#analyticsActivityTable tbody");
+const analyticsAttemptsTableBody = document.querySelector("#analyticsAttemptsTable tbody");
+const analyticsLanguageTableBody = document.querySelector("#analyticsLanguageTable tbody");
+const analyticsHourTableBody = document.querySelector("#analyticsHourTable tbody");
+
+function formatAnalyticsNumber(value) {
+  if (!Number.isFinite(value)) return "0";
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function setAnalyticsCard(metric, text) {
+  const el = analyticsCardsEl?.querySelector(`[data-metric="${metric}"]`);
+  if (el) el.textContent = text;
+}
+
+function clearTbody(tbody) {
+  if (!tbody) return;
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+}
+
+function fillTbody(tbody, rows) {
+  clearTbody(tbody);
+  if (!tbody) return;
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const cell of row) {
+      const td = document.createElement("td");
+      td.textContent = String(cell);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function destroyAnalyticsChart(slot) {
+  const existing = state.analyticsCharts[slot];
+  if (existing && typeof existing.destroy === "function") {
+    existing.destroy();
+  }
+  state.analyticsCharts[slot] = null;
+}
+
+function destroyAllAnalyticsCharts() {
+  for (const slot of Object.keys(state.analyticsCharts)) {
+    destroyAnalyticsChart(slot);
+  }
+}
+
+function renderActivityChart(series) {
+  const labels = series.dailyActive.map((entry) => entry.date);
+  const dau = series.dailyActive.map((entry) => entry.value);
+  const games = series.dailyGames.map((entry) => entry.value);
+  if (typeof window.Chart === "function" && analyticsActivityCanvas) {
+    destroyAnalyticsChart("activity");
+    state.analyticsCharts.activity = new window.Chart(analyticsActivityCanvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "DAU",
+            data: dau,
+            borderColor: "#38bdf8",
+            backgroundColor: "rgba(56, 189, 248, 0.2)",
+            tension: 0.25,
+            yAxisID: "y"
+          },
+          {
+            label: "Games",
+            data: games,
+            borderColor: "#a78bfa",
+            backgroundColor: "rgba(167, 139, 250, 0.2)",
+            tension: 0.25,
+            yAxisID: "y1"
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { beginAtZero: true, position: "left", title: { display: true, text: "DAU" } },
+          y1: {
+            beginAtZero: true,
+            position: "right",
+            title: { display: true, text: "Games" },
+            grid: { drawOnChartArea: false }
+          }
+        },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+  }
+  fillTbody(
+    analyticsActivityTableBody,
+    labels.map((date, i) => [date, dau[i], games[i]])
+  );
+  if (analyticsActivityCanvas) {
+    const latest = labels.length ? `${labels[labels.length - 1]}: DAU ${dau[dau.length - 1]}, Games ${games[games.length - 1]}` : "no data";
+    analyticsActivityCanvas.setAttribute("aria-label", `Activity over time. ${latest}.`);
+  }
+}
+
+function renderAttemptsChart(distribution) {
+  const labels = distribution.map((entry) => entry.bucket === "dnf" ? "DNF" : entry.bucket);
+  const values = distribution.map((entry) => entry.value);
+  if (typeof window.Chart === "function" && analyticsAttemptsCanvas) {
+    destroyAnalyticsChart("attempts");
+    state.analyticsCharts.attempts = new window.Chart(analyticsAttemptsCanvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Games",
+          data: values,
+          backgroundColor: "#38bdf8"
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+  fillTbody(
+    analyticsAttemptsTableBody,
+    distribution.map((entry) => [entry.bucket === "dnf" ? "DNF" : entry.bucket, entry.value])
+  );
+  if (analyticsAttemptsCanvas) {
+    const total = values.reduce((sum, n) => sum + n, 0);
+    analyticsAttemptsCanvas.setAttribute("aria-label", `Attempts distribution, ${total} games total.`);
+  }
+}
+
+function renderLanguageChart(distribution) {
+  const labels = distribution.map((entry) => entry.lang);
+  const values = distribution.map((entry) => entry.value);
+  if (typeof window.Chart === "function" && analyticsLanguageCanvas) {
+    destroyAnalyticsChart("language");
+    if (labels.length) {
+      state.analyticsCharts.language = new window.Chart(analyticsLanguageCanvas, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{
+            label: "Games",
+            data: values,
+            backgroundColor: "#a78bfa"
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: "y",
+          scales: { x: { beginAtZero: true } },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+  }
+  fillTbody(
+    analyticsLanguageTableBody,
+    labels.length ? labels.map((lang, i) => [lang, values[i]]) : [["—", 0]]
+  );
+  if (analyticsLanguageCanvas) {
+    analyticsLanguageCanvas.setAttribute(
+      "aria-label",
+      labels.length
+        ? `Language mix across ${labels.length} languages, top: ${labels[0]} (${values[0]} games).`
+        : "Language mix: no data in window."
+    );
+  }
+}
+
+function renderHourChart(distribution) {
+  const labels = distribution.map((entry) => String(entry.hour).padStart(2, "0"));
+  const values = distribution.map((entry) => entry.value);
+  if (typeof window.Chart === "function" && analyticsHourCanvas) {
+    destroyAnalyticsChart("hour");
+    state.analyticsCharts.hour = new window.Chart(analyticsHourCanvas, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Games",
+          data: values,
+          backgroundColor: "#38bdf8"
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+  fillTbody(
+    analyticsHourTableBody,
+    distribution.map((entry) => [`${String(entry.hour).padStart(2, "0")}:00`, entry.value])
+  );
+  if (analyticsHourCanvas) {
+    const peak = distribution.reduce(
+      (best, entry) => (entry.value > best.value ? entry : best),
+      { hour: 0, value: 0 }
+    );
+    analyticsHourCanvas.setAttribute(
+      "aria-label",
+      peak.value === 0
+        ? "Time-of-day histogram: no data in window."
+        : `Time-of-day histogram, peak hour ${String(peak.hour).padStart(2, "0")}:00 with ${peak.value} games.`
+    );
+  }
+}
+
+function renderAnalyticsPayload(payload) {
+  if (!payload || !payload.summary) return;
+  const summary = payload.summary;
+  setAnalyticsCard("dau", formatAnalyticsNumber(summary.dau));
+  setAnalyticsCard("wau", formatAnalyticsNumber(summary.wau));
+  setAnalyticsCard("gamesInWindow", formatAnalyticsNumber(summary.gamesInWindow));
+  setAnalyticsCard("winRate", formatPercent(summary.winRate));
+  setAnalyticsCard("avgAttempts", formatAnalyticsNumber(summary.avgAttempts));
+  setAnalyticsCard("replayRate", formatPercent(summary.replayRate));
+  setAnalyticsCard("profileCount", formatAnalyticsNumber(summary.profileCount));
+  if (analyticsAsOfEl) {
+    const asOf = payload.generatedAt
+      ? new Date(payload.generatedAt).toLocaleString()
+      : "now";
+    analyticsAsOfEl.textContent = `Window: ${payload.window || "—"} · As of ${asOf}`;
+  }
+  renderActivityChart(payload.series || { dailyActive: [], dailyGames: [], profileGrowth: [] });
+  renderAttemptsChart(payload.distributions?.attempts || []);
+  renderLanguageChart(payload.distributions?.languageMix || []);
+  renderHourChart(payload.distributions?.hourOfDay || []);
+}
+
+async function loadAnalytics(options = {}) {
+  if (!state.unlocked || !analyticsCardsEl) return;
+  state.analyticsLoading = true;
+  if (options.announce !== false) {
+    setStatus(analyticsStatusEl, "Loading analytics…", "");
+  }
+  try {
+    const payload = await requestAdminJson(
+      `/api/admin/analytics?window=${encodeURIComponent(state.analyticsWindow)}`
+    );
+    renderAnalyticsPayload(payload);
+    if (options.announce !== false) {
+      const total = payload?.summary?.gamesInWindow ?? 0;
+      setStatus(
+        analyticsStatusEl,
+        total === 0
+          ? "No games recorded in the selected window yet."
+          : `Loaded analytics: ${total} games in window.`,
+        total === 0 ? "admin-status-off" : "admin-status-ok"
+      );
+    }
+    return payload;
+  } catch (err) {
+    if (options.announce !== false) {
+      setStatus(analyticsStatusEl, `Analytics failed: ${err.message}`, "admin-status-missing");
+    }
+    throw err;
+  } finally {
+    state.analyticsLoading = false;
+  }
+}
+
+function setAnalyticsWindow(nextWindow) {
+  if (!["7d", "30d", "all"].includes(nextWindow)) return;
+  if (state.analyticsWindow === nextWindow) return;
+  state.analyticsWindow = nextWindow;
+  if (analyticsWindowControlEl) {
+    const buttons = analyticsWindowControlEl.querySelectorAll(".analytics-window-btn");
+    buttons.forEach((btn) => {
+      const isActive = btn.dataset.window === nextWindow;
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+      btn.tabIndex = isActive ? 0 : -1;
+    });
+  }
+  if (state.unlocked) {
+    loadAnalytics({ announce: true }).catch(() => {});
+  }
+}
+
+if (analyticsWindowControlEl) {
+  const buttons = Array.from(analyticsWindowControlEl.querySelectorAll(".analytics-window-btn"));
+  buttons.forEach((btn) => {
+    btn.addEventListener("click", () => setAnalyticsWindow(btn.dataset.window || "7d"));
+    btn.addEventListener("keydown", (event) => {
+      const idx = buttons.indexOf(btn);
+      if (idx < 0) return;
+      let nextIdx = idx;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        nextIdx = (idx + 1) % buttons.length;
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        nextIdx = (idx - 1 + buttons.length) % buttons.length;
+      } else if (event.key === "Home") {
+        nextIdx = 0;
+      } else if (event.key === "End") {
+        nextIdx = buttons.length - 1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      const next = buttons[nextIdx];
+      next.focus();
+      setAnalyticsWindow(next.dataset.window || "7d");
+    });
+  });
+}
+
+window.addEventListener("beforeunload", destroyAllAnalyticsCharts);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
