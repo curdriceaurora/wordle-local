@@ -86,6 +86,10 @@ function createAdminRouter(deps) {
     appConfigStore,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
+    dataMutationLockRef,
+    restoreInProgressRef,
+    claimDirectDataWriteSlot,
     buildRuntimeConfigResponse,
     applyRuntimeConfig,
     buildImportQueueSummary,
@@ -122,6 +126,16 @@ function createAdminRouter(deps) {
     normalizeLang,
     getLocalDateString
   } = deps;
+
+  // Required dep — the toggle and runtime-config handlers depend on
+  // it to close the restore/direct-write TOCTOU. The earlier defensive
+  // `typeof === "function"` fallbacks would have degraded silently to
+  // a no-op release fn if a stale server.js failed to inject this,
+  // re-introducing the very race we documented. Fail loudly at wiring
+  // time so the bug surfaces in tests, not in production under load.
+  if (typeof claimDirectDataWriteSlot !== "function") {
+    throw new TypeError("createAdminRouter: claimDirectDataWriteSlot dep is required.");
+  }
 
   const router = express.Router();
 
@@ -358,6 +372,13 @@ function createAdminRouter(deps) {
   });
 
   router.put("/api/admin/runtime-config", async (req, res) => {
+    // Atomic claim: wait for the data-mutation lock, then bump the
+    // direct-write counter under one synchronous tick so a restore
+    // can't race in between our lock-wait and the cap validation +
+    // persist. Restore observes the counter and 409s while we hold
+    // the slot. The slot is released in the finally below regardless
+    // of success/failure.
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const requestedManualUploadMaxBytes = req.body?.overrides?.limits?.providerManualMaxFileBytes;
       if (requestedManualUploadMaxBytes !== undefined) {
@@ -445,6 +466,8 @@ function createAdminRouter(deps) {
       }
       console.error("Runtime config update failed.", err);
       return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });
+    } finally {
+      releaseSlot();
     }
   });
 
@@ -543,13 +566,32 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Refuse to start (or enqueue) any import while a restore is in
+    // flight. The async path below would otherwise persist a job into
+    // data/admin-jobs.json during the restore upload window; the
+    // restore would then overwrite that file with the archive's
+    // contents and the just-enqueued job (plus any staged manual
+    // upload) would vanish.
+    if (dataMutationLockRef?.value || restoreInProgressRef?.value) {
+      return providerAdminError(
+        res,
+        new StatsApiError(
+          409,
+          "A backup or restore is currently running; provider imports are paused. Retry once it completes."
+        )
+      );
+    }
+
     if (!importAsync) {
-      if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
+      if (
+        providerImportQueueActiveRef.value
+        || providerImportSyncActiveRef.value
+      ) {
         return providerAdminError(
           res,
           new StatsApiError(
             409,
-            "Another queued import is currently running. Retry with async=true or wait for completion."
+            "Another import is currently running. Retry with async=true or wait for completion."
           )
         );
       }
@@ -578,7 +620,14 @@ function createAdminRouter(deps) {
       }
     }
 
-    // Async path: enqueue job
+    // Async path: enqueue job. Claim the enqueue slot synchronously
+    // so a restore that fires during the staging+enqueue window can't
+    // race past us — the restore busy check observes
+    // providerImportEnqueueActiveRef and will 409. The flag clears in
+    // the finally below regardless of success/failure.
+    if (providerImportEnqueueActiveRef) {
+      providerImportEnqueueActiveRef.value = true;
+    }
     let queuedJob = null;
     let stagedManualUpload = null;
     try {
@@ -607,7 +656,16 @@ function createAdminRouter(deps) {
         await adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err)).catch(() => {});
       }
       await cleanupManualUploadStaging(stagedManualUpload).catch(() => {});
+      if (providerImportEnqueueActiveRef) {
+        providerImportEnqueueActiveRef.value = false;
+      }
       return providerAdminError(res, err instanceof StatsApiError ? err : mapProviderPipelineError(err));
+    }
+    // Job is durably enqueued; release the enqueue guard. The queue
+    // starter below claims providerImportQueueActiveRef before
+    // processing the job.
+    if (providerImportEnqueueActiveRef) {
+      providerImportEnqueueActiveRef.value = false;
     }
 
     startProviderImportQueueIfNeeded().catch((err) => {
@@ -685,7 +743,7 @@ function createAdminRouter(deps) {
     }
   });
 
-  router.post("/api/admin/providers/:variant/enable", (req, res) => {
+  router.post("/api/admin/providers/:variant/enable", async (req, res) => {
     let variant;
     try {
       variant = parseProviderVariant(req.params.variant);
@@ -700,6 +758,12 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Claim the direct-write slot before persisting the toggle. The
+    // upsert writes data/languages.json, which a restore will swap
+    // out from underneath any unbarrier-ed write. Without this, an
+    // enable that lands during a restore upload window would 200,
+    // then be silently overwritten by the archive's languages.json.
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const paths = buildProviderArtifactPaths(variant, commit);
       const minLength = PROVIDER_MIN_LENGTH;
@@ -735,10 +799,12 @@ function createAdminRouter(deps) {
       });
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
+    } finally {
+      releaseSlot();
     }
   });
 
-  router.post("/api/admin/providers/:variant/disable", (req, res) => {
+  router.post("/api/admin/providers/:variant/disable", async (req, res) => {
     let variant;
     try {
       variant = parseProviderVariant(req.params.variant);
@@ -746,6 +812,10 @@ function createAdminRouter(deps) {
       return providerAdminError(res, err);
     }
 
+    // Same direct-write-slot rationale as /enable above: the
+    // setLanguageEnabledSync call writes data/languages.json and must
+    // be serialised against a concurrent restore.
+    const releaseSlot = await claimDirectDataWriteSlot();
     try {
       const snapshot = languageRegistryStore.setLanguageEnabledSync(variant, false);
       rebuildLanguageRuntimeCatalog();
@@ -760,6 +830,8 @@ function createAdminRouter(deps) {
       });
     } catch (err) {
       return providerAdminError(res, mapRegistryErrorToStats(err));
+    } finally {
+      releaseSlot();
     }
   });
 

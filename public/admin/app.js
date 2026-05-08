@@ -73,6 +73,31 @@ const runtimeLockedBodyEl = document.getElementById("runtimeLockedBody");
 const tabButtons = Array.from(document.querySelectorAll(".admin-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".admin-slot"));
 
+const backupExportFormEl = document.getElementById("backupExportForm");
+const backupIncludeProvidersEl = document.getElementById("backupIncludeProviders");
+const backupIncludeDictionariesEl = document.getElementById("backupIncludeDictionaries");
+const backupExportBtnEl = document.getElementById("backupExportBtn");
+const backupExportStatusEl = document.getElementById("backupExportStatus");
+const backupRestoreFormEl = document.getElementById("backupRestoreForm");
+const backupRestoreFileEl = document.getElementById("backupRestoreFile");
+const backupRestorePreviewBtnEl = document.getElementById("backupRestorePreviewBtn");
+const backupRestoreStatusEl = document.getElementById("backupRestoreStatus");
+const backupRestoreDialogEl = document.getElementById("backupRestoreDialog");
+const backupRestoreDialogFormEl = document.getElementById("backupRestoreDialogForm");
+if (backupRestoreDialogFormEl) {
+  // Helmet's CSP (script-src-attr 'none') blocks inline event handlers,
+  // so we wire the submit preventDefault here. Pressing Enter in the
+  // confirmation field would otherwise close the dialog and bypass the
+  // typed-confirmation gate.
+  backupRestoreDialogFormEl.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+}
+const backupRestorePreviewSummaryEl = document.getElementById("backupRestorePreviewSummary");
+const backupRestoreConfirmInputEl = document.getElementById("backupRestoreConfirmInput");
+const backupRestoreCancelBtnEl = document.getElementById("backupRestoreCancelBtn");
+const backupRestoreApplyBtnEl = document.getElementById("backupRestoreApplyBtn");
+
 const PROVIDER_IMPORT_SOURCE_TYPES = Object.freeze({
   REMOTE_FETCH: "remote-fetch",
   MANUAL_UPLOAD: "manual-upload"
@@ -1972,6 +1997,259 @@ if (refreshJobsBtnEl) {
   });
 }
 
+const RESTORE_CONFIRM_PHRASE = "RESTORE";
+const RESTORE_CONFIRM_HEADER = "x-admin-confirm";
+const RESTORE_CONFIRM_VALUE = "I-UNDERSTAND";
+let pendingRestoreFile = null;
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "?";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function parseAttachmentFilename(disposition) {
+  if (typeof disposition !== "string") return null;
+  // Per RFC 6266, when both `filename` and `filename*` are present
+  // recipients SHOULD prefer `filename*` and ignore `filename`. The
+  // earlier regex matched whichever came first textually — which
+  // could pick a US-ASCII filename and ignore the UTF-8 form. Try
+  // filename* first; fall through to filename if it isn't there.
+  const starMatch = disposition.match(/filename\*=(?:UTF-8'')?"?([^";]+)"?/i);
+  const plainMatch = disposition.match(/filename=(?:UTF-8''|")?([^";]+)"?/i);
+  const captured = starMatch ? starMatch[1] : (plainMatch ? plainMatch[1] : null);
+  if (!captured) return null;
+  // Headers from older servers may contain a literal % that isn't valid
+  // percent-encoding. decodeURIComponent throws on those; fall back to
+  // the raw matched value rather than breaking the whole download flow.
+  try {
+    return decodeURIComponent(captured);
+  } catch (_err) {
+    return captured;
+  }
+}
+
+async function fetchAdminBlob(path, init = {}) {
+  const headers = Object.assign({}, init.headers || {});
+  if (state.adminKey) headers["x-admin-key"] = state.adminKey;
+  const response = await fetch(path, Object.assign({}, init, { headers }));
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try {
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        if (payload && typeof payload.error === "string" && payload.error.trim()) {
+          message = payload.error.trim();
+        }
+      } else {
+        const text = await response.text();
+        if (text) message = text;
+      }
+    } catch {
+      // Body unreadable or not the shape we expected — fall back to status line.
+    }
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+  return response;
+}
+
+if (backupExportFormEl) {
+  backupExportFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) {
+      setStatus(backupExportStatusEl, "Unlock the admin session first.", "admin-status-off");
+      return;
+    }
+    backupExportBtnEl.disabled = true;
+    setStatus(backupExportStatusEl, "Building backup archive…", "");
+    try {
+      // Send the explicit checkbox state every time. The UI is the
+      // operator's intent at the moment of export — they should be
+      // able to uncheck a box and see providers excluded even when the
+      // env sets BACKUP_INCLUDE_PROVIDERS_DEFAULT=true. Non-UI
+      // callers (curl/scripts) that omit the query param still get
+      // the env default.
+      const params = new URLSearchParams({
+        includeProviders: backupIncludeProvidersEl?.checked ? "true" : "false",
+        includeDictionaries: backupIncludeDictionariesEl?.checked ? "true" : "false"
+      });
+      const url = `/api/admin/backup?${params.toString()}`;
+      const response = await fetchAdminBlob(url);
+      const blob = await response.blob();
+      const filename =
+        parseAttachmentFilename(response.headers.get("content-disposition"))
+        || `wordle-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      setStatus(
+        backupExportStatusEl,
+        `Downloaded ${filename} (${formatBytes(blob.size)}).`,
+        "admin-status-ok"
+      );
+    } catch (err) {
+      setStatus(backupExportStatusEl, `Export failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      backupExportBtnEl.disabled = false;
+    }
+  });
+}
+
+function renderBackupPreviewSummary(payload) {
+  if (!backupRestorePreviewSummaryEl) return;
+  const fileCount = Array.isArray(payload.files) ? payload.files.length : 0;
+  const total = formatBytes(payload.totalBytes);
+  const rows = [
+    ["Manifest version", payload.manifestVersion],
+    ["App version", payload.appVersion],
+    ["Created", payload.createdAt],
+    ["Node id", payload.nodeId],
+    ["Files", `${fileCount} (${total} total)`]
+  ];
+  // Render as a definition list so the entries lay out one-per-row
+  // without depending on whitespace CSS for the line breaks. Plain
+  // textContent collapses newlines because the .message class
+  // doesn't set white-space: pre-wrap.
+  backupRestorePreviewSummaryEl.innerHTML = "";
+  const list = document.createElement("dl");
+  list.className = "backup-preview-summary";
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = String(value);
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
+  backupRestorePreviewSummaryEl.appendChild(list);
+}
+
+function resetRestoreDialog() {
+  if (backupRestoreConfirmInputEl) backupRestoreConfirmInputEl.value = "";
+  if (backupRestoreApplyBtnEl) backupRestoreApplyBtnEl.disabled = true;
+  if (backupRestorePreviewSummaryEl) backupRestorePreviewSummaryEl.innerHTML = "";
+  pendingRestoreFile = null;
+}
+
+if (backupRestoreFormEl) {
+  backupRestoreFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) {
+      setStatus(backupRestoreStatusEl, "Unlock the admin session first.", "admin-status-off");
+      return;
+    }
+    const file = backupRestoreFileEl?.files?.[0];
+    if (!file) {
+      setStatus(backupRestoreStatusEl, "Select an archive file first.", "admin-status-missing");
+      return;
+    }
+    backupRestorePreviewBtnEl.disabled = true;
+    setStatus(backupRestoreStatusEl, "Validating archive…", "");
+    try {
+      const formData = new FormData();
+      formData.append("archive", file, file.name);
+      const response = await fetchAdminBlob("/api/admin/backup/preview", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json();
+      renderBackupPreviewSummary(payload);
+      pendingRestoreFile = file;
+      if (backupRestoreApplyBtnEl) backupRestoreApplyBtnEl.disabled = true;
+      if (backupRestoreConfirmInputEl) {
+        backupRestoreConfirmInputEl.value = "";
+        setTimeout(() => backupRestoreConfirmInputEl.focus(), 0);
+      }
+      if (backupRestoreDialogEl?.showModal) {
+        backupRestoreDialogEl.showModal();
+      } else if (backupRestoreDialogEl) {
+        backupRestoreDialogEl.setAttribute("open", "");
+      }
+      setStatus(backupRestoreStatusEl, "Preview ready.", "admin-status-ok");
+    } catch (err) {
+      setStatus(backupRestoreStatusEl, `Preview failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      backupRestorePreviewBtnEl.disabled = false;
+    }
+  });
+}
+
+if (backupRestoreConfirmInputEl) {
+  backupRestoreConfirmInputEl.addEventListener("input", () => {
+    if (!backupRestoreApplyBtnEl) return;
+    backupRestoreApplyBtnEl.disabled =
+      backupRestoreConfirmInputEl.value.trim() !== RESTORE_CONFIRM_PHRASE;
+  });
+}
+
+if (backupRestoreCancelBtnEl) {
+  backupRestoreCancelBtnEl.addEventListener("click", () => {
+    resetRestoreDialog();
+    if (backupRestoreDialogEl?.close) backupRestoreDialogEl.close();
+    else backupRestoreDialogEl?.removeAttribute("open");
+  });
+}
+
+if (backupRestoreApplyBtnEl) {
+  backupRestoreApplyBtnEl.addEventListener("click", async () => {
+    if (backupRestoreConfirmInputEl?.value.trim() !== RESTORE_CONFIRM_PHRASE) return;
+    if (!pendingRestoreFile) return;
+    backupRestoreApplyBtnEl.disabled = true;
+    setStatus(backupRestoreStatusEl, "Applying restore…", "");
+    try {
+      const formData = new FormData();
+      formData.append("archive", pendingRestoreFile, pendingRestoreFile.name);
+      const response = await fetchAdminBlob("/api/admin/restore", {
+        method: "POST",
+        headers: { [RESTORE_CONFIRM_HEADER]: RESTORE_CONFIRM_VALUE },
+        body: formData
+      });
+      const payload = await response.json();
+      const failedReloads = (payload.reloads || []).filter((entry) => !entry.ok);
+      const filesRestored = payload.filesRestored ?? payload.restored?.length ?? 0;
+      let message = `Restore complete — ${filesRestored} file(s) restored.`;
+      let tone = "admin-status-ok";
+      if (failedReloads.length > 0) {
+        message += ` Caches partially reloaded; ${failedReloads.length} store(s) failed.`;
+        tone = "admin-status-missing";
+      }
+      setStatus(backupRestoreStatusEl, message, tone);
+
+      // Refresh every loaded admin section so the in-memory client view
+      // matches the just-restored state. Run in parallel; failures here
+      // are logged via setStatus on the relevant section but don't block
+      // the restore success message.
+      await Promise.allSettled([
+        typeof loadProviders === "function" ? loadProviders({ announce: false }) : null,
+        typeof loadJobs === "function" ? loadJobs({ announce: false }) : null,
+        typeof loadRuntimeConfig === "function" ? loadRuntimeConfig({ announce: false }) : null,
+        typeof loadProfiles === "function" ? loadProfiles({ announce: false }) : null,
+        typeof loadClasses === "function" ? loadClasses({ announce: false }) : null
+      ].filter(Boolean));
+    } catch (err) {
+      setStatus(backupRestoreStatusEl, `Restore failed: ${err.message}`, "admin-status-missing");
+    } finally {
+      resetRestoreDialog();
+      if (backupRestoreDialogEl?.close) backupRestoreDialogEl.close();
+      else backupRestoreDialogEl?.removeAttribute("open");
+    }
+  });
+}
+
 lockSessionBtnEl.addEventListener("click", () => {
   if (jobsRefreshTimer) {
     clearTimeout(jobsRefreshTimer);
@@ -2011,11 +2289,18 @@ lockSessionBtnEl.addEventListener("click", () => {
   if (classReportToEl) classReportToEl.value = "";
   if (classReportLangEl) classReportLangEl.value = "";
   if (classReportBomEl) classReportBomEl.checked = false;
+  if (backupRestoreFileEl) backupRestoreFileEl.value = "";
+  if (backupIncludeProvidersEl) backupIncludeProvidersEl.checked = false;
+  if (backupIncludeDictionariesEl) backupIncludeDictionariesEl.checked = false;
+  resetRestoreDialog();
+  if (backupRestoreDialogEl?.close && backupRestoreDialogEl.open) backupRestoreDialogEl.close();
   setStatus(profilesStatusEl, "");
   setStatus(profilesLimitsStatusEl, "");
   setStatus(classesStatusEl, "");
   setStatus(classDetailStatusEl, "");
   setStatus(classReportStatusEl, "");
+  setStatus(backupExportStatusEl, "");
+  setStatus(backupRestoreStatusEl, "");
   setStatus(workspaceStatusEl, "Session locked. Re-enter admin key to continue.", "admin-status-off");
   setStatus(unlockStatusEl, "");
   setStatus(jobsStatusEl, "", "");

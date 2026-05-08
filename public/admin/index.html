@@ -132,6 +132,18 @@
             >
               Classes
             </button>
+            <button
+              id="admin-tab-data"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="data"
+              role="tab"
+              aria-controls="admin-panel-data"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Data
+            </button>
           </nav>
 
           <section
@@ -545,6 +557,109 @@
               <div id="classReportStatus" class="message" role="status" aria-live="polite"></div>
               <div id="classReportRendered" class="admin-table-wrap"></div>
             </section>
+          </section>
+
+          <section
+            id="admin-panel-data"
+            class="admin-slot hidden"
+            role="tabpanel"
+            data-panel="data"
+            aria-labelledby="admin-tab-data"
+            tabindex="0"
+            hidden
+          >
+            <header class="admin-panel-header">
+              <h3>Data backup &amp; restore</h3>
+              <p class="muted">
+                Export the full state of this node as a versioned archive, or restore from a previous archive.
+                Restores are atomic: a failed apply leaves the node in its pre-restore state.
+                See <code>docs/backup-restore.md</code> in the repo for the operator runbook.
+              </p>
+            </header>
+
+            <section class="admin-subpanel">
+              <h3>Export</h3>
+              <form id="backupExportForm" class="form-inline">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="backupIncludeProviders" />
+                  Include provider artifacts (data/providers/**)
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="backupIncludeDictionaries" />
+                  Include dictionaries (data/dictionaries/**)
+                </label>
+                <button type="submit" id="backupExportBtn">Download backup archive</button>
+              </form>
+              <div id="backupExportStatus" class="message" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="admin-subpanel">
+              <h3>Restore</h3>
+              <p class="muted">
+                Upload an archive to preview its contents, then type
+                <code>RESTORE</code> in the confirmation dialog to apply it. The
+                running process reloads its caches automatically; per-store
+                reload outcomes appear in the response.
+              </p>
+              <form id="backupRestoreForm" class="form-inline" enctype="multipart/form-data">
+                <label class="file-row">
+                  <span>Archive (.zip)</span>
+                  <input
+                    type="file"
+                    id="backupRestoreFile"
+                    name="archive"
+                    accept=".zip,application/zip"
+                    required
+                  />
+                </label>
+                <button type="submit" id="backupRestorePreviewBtn">Preview restore</button>
+              </form>
+              <div id="backupRestoreStatus" class="message" role="status" aria-live="polite"></div>
+            </section>
+
+            <dialog id="backupRestoreDialog" aria-labelledby="backupRestoreDialogTitle">
+              <!-- No method="dialog": pressing Enter in the confirmation
+                   field would otherwise submit the form, close the dialog,
+                   and bypass the typed-confirmation gate. The apply button
+                   handler runs explicitly on click. The submit
+                   preventDefault is wired via app.js (Helmet's
+                   script-src-attr 'none' blocks inline handlers). -->
+              <form id="backupRestoreDialogForm">
+                <h3 id="backupRestoreDialogTitle">Confirm restore</h3>
+                <div id="backupRestorePreviewSummary" class="message"></div>
+                <p>
+                  Type <code>RESTORE</code> below to enable the apply button. This
+                  will replace every in-scope file under <code>data/</code> on this
+                  node and cannot be undone without re-uploading a prior backup.
+                </p>
+                <label class="form-inline">
+                  <span>Confirmation</span>
+                  <input
+                    type="text"
+                    id="backupRestoreConfirmInput"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                  />
+                </label>
+                <menu>
+                  <button
+                    type="button"
+                    value="cancel"
+                    id="backupRestoreCancelBtn"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    value="apply"
+                    id="backupRestoreApplyBtn"
+                    disabled
+                  >
+                    Apply restore
+                  </button>
+                </menu>
+              </form>
+            </dialog>
           </section>
 
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>

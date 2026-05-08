@@ -2,6 +2,7 @@ const express = require("express");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const nodeCrypto = require("node:crypto");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -147,6 +148,30 @@ const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   1000,
   "CLASSES_MAX_MEMBERS_PER_CLASS"
 );
+const ENV_BACKUP_MAX_BYTES = clampEnvBounded(
+  process.env.BACKUP_MAX_BYTES,
+  256 * 1024 * 1024,
+  1024 * 1024,
+  // Hard upper bound — operators wanting larger archives should split.
+  4 * 1024 * 1024 * 1024,
+  "BACKUP_MAX_BYTES"
+);
+const ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT =
+  String(process.env.BACKUP_INCLUDE_PROVIDERS_DEFAULT || "").toLowerCase() === "true";
+const ENV_BACKUP_RATE_LIMIT_WINDOW_MS = clampEnvBounded(
+  process.env.BACKUP_RATE_LIMIT_WINDOW_MS,
+  30 * 1000,
+  1000,
+  60 * 60 * 1000,
+  "BACKUP_RATE_LIMIT_WINDOW_MS"
+);
+const ENV_BACKUP_RATE_LIMIT_MAX = clampEnvBounded(
+  process.env.BACKUP_RATE_LIMIT_MAX,
+  1,
+  1,
+  100,
+  "BACKUP_RATE_LIMIT_MAX"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -198,10 +223,100 @@ const INDEX_LOOKUP_UNAVAILABLE = Symbol("index-lookup-unavailable");
 let fullEnglishDefinitions = null;
 let englishDefinitionIndexManifest = null;
 let hasWarnedAboutDefinitionIndex = false;
+
+// Data-mutation lock used by backup export and restore. Acts as both a
+// boolean flag (the /api gate reads `.value` to 503 mutating requests)
+// AND a Promise barrier (stores call `.waitForRelease()` at the start
+// of every mutate so any in-flight handler that already passed the
+// gate is paused until the lock clears). Without the barrier, a
+// handler that passed the gate, hit an `await` (e.g. getSnapshot),
+// then resumed during a restore could call mutate() and overwrite the
+// just-restored file with cached pre-restore state.
+const dataMutationLockRef = {
+  _value: false,
+  _releaseResolve: null,
+  _releasePromise: Promise.resolve(),
+  get value() {
+    return this._value;
+  },
+  set value(next) {
+    if (next && !this._value) {
+      this._value = true;
+      this._releasePromise = new Promise((resolve) => {
+        this._releaseResolve = resolve;
+      });
+    } else if (!next && this._value) {
+      this._value = false;
+      const resolve = this._releaseResolve;
+      this._releaseResolve = null;
+      if (resolve) resolve();
+    }
+  },
+  async waitForRelease() {
+    if (!this._value) return;
+    await this._releasePromise;
+  }
+};
+// Stores call this at the top of every mutation. Waits until BOTH
+// dataMutationLockRef AND restoreInProgressRef are clear. The latter
+// is held across a restore's full multipart upload, before the data
+// lock is taken — so a mutation that arrives during the upload would
+// otherwise pass straight through, load pre-restore state, and then
+// (after the lock is taken and released) persist that stale state
+// over the just-restored file. Looping covers the case where a new
+// restore claims a flag between two `await waitForRelease()` calls.
+async function waitForDataMutationLock() {
+  while (dataMutationLockRef.value || restoreInProgressRef.value) {
+    if (dataMutationLockRef.value) {
+      await dataMutationLockRef.waitForRelease();
+      continue;
+    }
+    if (restoreInProgressRef.value) {
+      await restoreInProgressRef.waitForRelease();
+      continue;
+    }
+  }
+}
+
+// Atomic claim helper for direct data writers. Loops: wait for
+// whichever barrier is holding things up, then synchronously verify
+// no restore/lock is in flight and bump the counter. Returns a
+// release fn to call in finally. Without this, a writer that simply
+// awaits waitForDataMutationLock() can race a new restore that claims
+// the lock during the next event-loop tick.
+//
+// Critically, restoreInProgressRef is held across the restore's
+// multipart upload (which can take many seconds) WITHOUT
+// dataMutationLockRef being held. Awaiting only the data-lock barrier
+// would resolve immediately and the loop would spin until the upload
+// finished — busy-looping on already-resolved awaits hangs the event
+// loop and stalls the upload itself. We pick the right barrier per
+// iteration so the wait is real every time.
+async function claimDirectDataWriteSlot() {
+  while (true) {
+    if (dataMutationLockRef.value) {
+      await dataMutationLockRef.waitForRelease();
+      continue;
+    }
+    if (restoreInProgressRef.value) {
+      await restoreInProgressRef.waitForRelease();
+      continue;
+    }
+    // Neither flag is held — claim the slot in the same synchronous
+    // tick (no awaits between the check and the increment, so JS's
+    // single-threaded model guarantees no other handler interposes).
+    directDataWriteActiveRef.value += 1;
+    return () => {
+      directDataWriteActiveRef.value -= 1;
+    };
+  }
+}
+
 const leaderboardStore = new LeaderboardStore({
   filePath: LEADERBOARD_DATA_PATH,
   maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
-  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE
+  maxResultsPerProfile: ENV_LEADERBOARD_MAX_RESULTS_PER_PROFILE,
+  waitForDataMutationLock
 });
 
 function parsePositiveInteger(value, fallback) {
@@ -1007,17 +1122,74 @@ const appConfigStore = new AppConfigStore({
 });
 const adminJobsStore = new AdminJobsStore({
   filePath: ADMIN_JOBS_DATA_PATH,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 const classesStore = new ClassesStore({
   filePath: CLASSES_DATA_PATH,
   maxMembersPerClass: ENV_CLASSES_MAX_MEMBERS_PER_CLASS,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
+// Set by the async provider-import endpoint while it's staging the
+// upload and enqueuing the job into data/admin-jobs.json. Without
+// this, a restore could squeeze between the import's busy check and
+// its enqueue, write the archive over admin-jobs.json, and leave the
+// staged upload + queued job orphaned. The restore busy check
+// observes this ref and 409s the restore in that window.
+const providerImportEnqueueActiveRef = { value: false };
+// Promise-barrier for restoreInProgressRef so direct writers can
+// `await` for the restore to release without busy-spinning on a
+// resolved data-lock barrier (the data lock isn't held during the
+// restore's upload phase). Mirrors the dataMutationLockRef shape.
+const restoreInProgressRef = (() => {
+  const ref = {
+    _value: false,
+    _resolveRelease: null,
+    _releasePromise: Promise.resolve(),
+    get value() {
+      return this._value;
+    },
+    set value(next) {
+      if (next && !this._value) {
+        this._value = true;
+        this._releasePromise = new Promise((resolve) => {
+          this._resolveRelease = resolve;
+        });
+      } else if (!next && this._value) {
+        this._value = false;
+        const resolve = this._resolveRelease;
+        this._resolveRelease = null;
+        if (resolve) resolve();
+      }
+    },
+    async waitForRelease() {
+      if (!this._value) return;
+      await this._releasePromise;
+    }
+  };
+  return ref;
+})();
+// Counter incremented by direct (non-store-mutate) data writers —
+// PUT /api/admin/runtime-config and POST /api/word — for the duration
+// of their validation+persist sequence. The restore busy check
+// observes this counter so a new restore can't slip in between a
+// direct writer's lock-wait return and its actual write, which would
+// validate against pre-restore state and persist over the swap.
+// The writer claims the slot atomically: loop awaiting
+// waitForDataMutationLock() then synchronously check restore flags
+// and increment the counter (no awaits between the check and
+// increment).
+const directDataWriteActiveRef = { value: 0 };
+// dataMutationLockRef, waitForDataMutationLock, restoreInProgressRef,
+// providerImportEnqueueActiveRef, directDataWriteActiveRef, and
+// claimDirectDataWriteSlot are all defined earlier alongside
+// leaderboardStore so the store constructor can wire the barrier and
+// admin/backup routes can share the helpers.
 
 function initializeRuntimeConfig() {
   let normalizePromise;
@@ -1508,6 +1680,30 @@ function rebuildLanguageRuntimeCatalog() {
 
 initializeRuntimeConfig();
 rebuildLanguageRuntimeCatalog();
+
+// Boot-time orphan check: a previous restore that crashed mid-apply leaves
+// .restore-staging-* / .restore-rollback-* dirs in data/. Log them loudly
+// rather than auto-deleting — operators may need to inspect or rewind.
+// Honor BACKUP_PROJECT_ROOT so the scan path matches the restore handler's.
+(async () => {
+  try {
+    const { findOrphanedRestoreDirs } = require("./lib/backup-store.js");
+    const backupRoot = process.env.BACKUP_PROJECT_ROOT
+      ? path.resolve(process.env.BACKUP_PROJECT_ROOT)
+      : __dirname;
+    const orphans = await findOrphanedRestoreDirs(path.join(backupRoot, "data"));
+    if (orphans.length > 0) {
+      const list = orphans.map((entry) => entry.name).join(", ");
+      console.warn(
+        `[backup-store] Found ${orphans.length} orphaned restore directory(ies) under data/: ${list}. ` +
+          "These are left over from a restore that did not complete. " +
+          "Inspect their contents before deleting; see docs/backup-restore.md."
+      );
+    }
+  } catch (err) {
+    console.warn(`[backup-store] Orphan-dir check failed: ${err?.message || String(err)}`);
+  }
+})();
 
 if (getDefinitionsMode() === "memory") {
   getOrLoadFullDefinitionsMap();
@@ -2084,7 +2280,19 @@ function toAdminJobResponse(job) {
 }
 
 async function startProviderImportQueueIfNeeded() {
-  if (providerImportQueueActiveRef.value || providerImportSyncActiveRef.value) {
+  // Bidirectional mutex with the restore router: don't start dequeueing
+  // jobs while a restore is in flight. The restore now claims
+  // restoreInProgressRef synchronously (before the upload completes),
+  // and dataMutationLockRef later (right before the swap). Both must
+  // be checked here — checking only dataMutationLockRef would let an
+  // import start during the upload window and race the swap.
+  if (
+    providerImportQueueActiveRef.value
+    || providerImportSyncActiveRef.value
+    || providerImportEnqueueActiveRef.value
+    || dataMutationLockRef.value
+    || restoreInProgressRef.value
+  ) {
     return;
   }
   providerImportQueueActiveRef.value = true;
@@ -2268,6 +2476,65 @@ function limitAdminWrites(req, res, next) {
   }
   adminWriteRateLimiter(req, res, next);
 }
+
+// Data-mutation lock: while a backup export or a restore apply is in
+// flight, refuse mutating requests to any /api/** endpoint that touches
+// data/. Without this gate, a player /api/stats/result POST or an admin
+// /api/word POST mid-restore could persist stale cached state over the
+// just-restored files, and a write between hash-time and archive-time
+// during export would tear the archive. The window is short (seconds)
+// and admin-initiated. The backup endpoints themselves are exempt
+// because they are the operations holding the lock.
+// Paths that should NOT be 503'd while the data lock is held. Two
+// categories:
+//   1. The backup/restore endpoints themselves (they own the lock).
+//   2. Stateless gameplay POSTs that compute responses without
+//      writing to data/. Without these exemptions, players see
+//      failed guesses during long provider-inclusive exports — even
+//      though the gameplay calls don't touch the files restore is
+//      swapping. /api/stats/result IS NOT exempt: it persists the
+//      day's result via leaderboardStore.mutate which honors the
+//      mutate barrier already.
+const DATA_LOCK_EXEMPT_PATHS = [
+  "/api/admin/backup",
+  "/api/admin/restore",
+  "/api/encode",
+  "/api/random",
+  "/api/puzzle",
+  "/api/guess"
+];
+function isDataLockExemptPath(reqUrl) {
+  if (typeof reqUrl !== "string") return false;
+  // Strip query string if present.
+  const queryIdx = reqUrl.indexOf("?");
+  const pathname = queryIdx === -1 ? reqUrl : reqUrl.slice(0, queryIdx);
+  return DATA_LOCK_EXEMPT_PATHS.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+function gateDataMutationsDuringDataLock(req, res, next) {
+  const isMutating = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
+  if (!isMutating) {
+    next();
+    return;
+  }
+  if (!dataMutationLockRef.value) {
+    next();
+    return;
+  }
+  // Use originalUrl so the exempt-prefix match works regardless of how
+  // the middleware is mounted (req.path is relative to the mount).
+  if (isDataLockExemptPath(req.originalUrl)) {
+    next();
+    return;
+  }
+  res.set("Retry-After", "5");
+  res.status(503).json({
+    error: "A backup/restore operation is in progress; data mutations are temporarily blocked.",
+    code: "DATA_LOCK_HELD"
+  });
+}
+app.use("/api", gateDataMutationsDuringDataLock);
 app.use("/api/admin", adminRateLimiter, requireAdminAccess, limitAdminWrites);
 
 function resolveAdminShellAssets() {
@@ -2297,6 +2564,66 @@ if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
 }
 
 // Mount admin router first so GET /admin route takes precedence over static serving
+const { ipKeyGenerator: rateLimitIpKeyGenerator } = require("express-rate-limit");
+const backupRateLimiter = rateLimit({
+  windowMs: ENV_BACKUP_RATE_LIMIT_WINDOW_MS,
+  max: ENV_BACKUP_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Throttle per admin key (when present) so two operators on the same IP
+  // don't share a single bucket. The admin key itself is never used as the
+  // bucket id directly — we hash it first so the secret can't leak into
+  // rate-limit store dumps, logs, or metrics. Falls back to
+  // express-rate-limit's IPv6-aware ipKeyGenerator when no admin key is
+  // set.
+  keyGenerator: (req) => {
+    const key = req.headers["x-admin-key"];
+    if (typeof key === "string" && key.length > 0) {
+      const digest = nodeCrypto.createHash("sha256").update(key).digest("hex").slice(0, 16);
+      return `admin:${digest}`;
+    }
+    // ipKeyGenerator expects an IP string, not the request object. Pass
+    // req.ip and let the helper apply IPv6 subnet masking.
+    return rateLimitIpKeyGenerator(req.ip);
+  },
+  message: { error: "Too many backup or restore requests. Try again later." }
+});
+const createBackupRouter = require("./routes/backup.js");
+const BACKUP_PROJECT_ROOT = process.env.BACKUP_PROJECT_ROOT
+  ? path.resolve(process.env.BACKUP_PROJECT_ROOT)
+  : __dirname;
+app.use(
+  createBackupRouter({
+    projectRoot: BACKUP_PROJECT_ROOT,
+    leaderboardStore,
+    languageRegistryStore,
+    adminJobsStore,
+    appConfigStore,
+    classesStore,
+    rebuildLanguageRuntimeCatalog,
+    reloadWordData: () => {
+      // Re-read data/word.json from disk and refresh the in-memory cache
+      // backing /api/word and /daily. ensureWordData() falls back to the
+      // baked default if the file is missing or invalid.
+      const data = readWordData();
+      if (data) {
+        wordDataCache = data;
+      } else {
+        ensureWordData();
+      }
+    },
+    providerImportQueueActiveRef,
+    providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
+    dataMutationLockRef,
+    restoreInProgressRef,
+    directDataWriteActiveRef,
+    backupMaxBytes: ENV_BACKUP_MAX_BYTES,
+    backupIncludeProvidersDefault: ENV_BACKUP_INCLUDE_PROVIDERS_DEFAULT,
+    backupRateLimiter
+  })
+);
+
 const createAdminRouter = require("./routes/admin.js");
 app.use(
   createAdminRouter({
@@ -2338,6 +2665,10 @@ app.use(
     getProviderManualMaxFileBytes,
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
+    providerImportEnqueueActiveRef,
+    dataMutationLockRef,
+    restoreInProgressRef,
+    claimDirectDataWriteSlot,
     getEditableProviderManualMaxFileBytes,
     PROVIDER_MANUAL_MAX_FILE_BYTES_MIN,
     PROVIDER_COMMIT_PATTERN,
@@ -2485,34 +2816,46 @@ app.get("/api/word", requireAdminAccess, (req, res) => {
 });
 
 app.post("/api/word", requireAdminAccess, async (req, res) => {
-  const word = normalizeWord(req.body.word);
-  const date = req.body.date ? String(req.body.date) : null;
-  const lang = resolveLang(req.body.lang);
-  if (!lang) {
-    return res.status(400).json({ error: "Unknown language." });
-  }
-
+  // Claim the direct-write slot BEFORE validating. resolveLang() reads
+  // the live language registry, which a concurrent restore can swap
+  // out from under us. If we validated first and waited second, an
+  // archive that drops support for the requested lang would still let
+  // this request 200 — and persist a now-unsupported word over the
+  // freshly-restored data/word.json. Claiming first guarantees the
+  // restore (if any) has fully landed before we resolve lang/word.
+  const releaseSlot = await claimDirectDataWriteSlot();
   try {
-    assertWord(word, getMinLengthForLang(lang));
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
+    const word = normalizeWord(req.body.word);
+    const date = req.body.date ? String(req.body.date) : null;
+    const lang = resolveLang(req.body.lang);
+    if (!lang) {
+      return res.status(400).json({ error: "Unknown language." });
+    }
 
-  const data = {
-    word,
-    lang,
-    date: date || null,
-    updatedAt: new Date().toISOString()
-  };
+    try {
+      assertWord(word, getMinLengthForLang(lang));
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
 
-  try {
-    await saveWordDataAtomic(data);
-  } catch (err) {
-    console.error("Failed to persist daily word data.", err);
-    return res.status(500).json({ error: "Could not save daily word right now." });
+    const data = {
+      word,
+      lang,
+      date: date || null,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      await saveWordDataAtomic(data);
+    } catch (err) {
+      console.error("Failed to persist daily word data.", err);
+      return res.status(500).json({ error: "Could not save daily word right now." });
+    }
+    wordDataCache = data;
+    res.json({ ok: true, data });
+  } finally {
+    releaseSlot();
   }
-  wordDataCache = data;
-  res.json({ ok: true, data });
 });
 
 // ============================================================================

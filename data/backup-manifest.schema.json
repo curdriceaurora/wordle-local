@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-hosted-wordle.dev/schemas/backup-manifest.schema.json",
+  "title": "Backup Archive Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "appVersion",
+    "createdAt",
+    "nodeId",
+    "files",
+    "optionalSets"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "appVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fileEntry"
+      }
+    },
+    "optionalSets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "providers",
+          "dictionaries"
+        ]
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "schemaDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaPath",
+        "sha256"
+      ],
+      "properties": {
+        "schemaPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256Hex"
+        }
+      }
+    },
+    "fileEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "bytes",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256Hex"
+        },
+        "schema": {
+          "$ref": "#/$defs/schemaDigest"
+        },
+        "optionalSet": {
+          "type": "string",
+          "enum": [
+            "providers",
+            "dictionaries"
+          ]
+        }
+      }
+    }
+  }
+}
