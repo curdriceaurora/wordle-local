@@ -329,12 +329,15 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Bound cache size: keep at most 6 entries (3 windows × ~2 mtime bumps
-    // worth of headroom). Anything older just falls out so a hot
-    // workload's churn doesn't grow the map unboundedly.
-    if (analyticsCache.size > 6) {
+    // Bound cache size: keep at most 6 entries (3 windows × ~2 mtime
+    // bumps of headroom). Evict before insert and loop until under cap
+    // so the post-insert size never exceeds the bound. The earlier
+    // `> 6` form let the map grow to 7 before evicting one — fine in
+    // practice but contradicts the comment.
+    while (analyticsCache.size >= 6) {
       const oldestKey = analyticsCache.keys().next().value;
-      if (oldestKey !== undefined) analyticsCache.delete(oldestKey);
+      if (oldestKey === undefined) break;
+      analyticsCache.delete(oldestKey);
     }
     analyticsCache.set(cacheKey, { cachedAt: now, payload });
     res.setHeader("X-Analytics-Cache", "MISS");
