@@ -2842,7 +2842,11 @@ function renderAnalyticsPayload(payload) {
   setAnalyticsCard("wau", formatAnalyticsNumber(summary.wau));
   setAnalyticsCard("gamesInWindow", formatAnalyticsNumber(summary.gamesInWindow));
   setAnalyticsCard("winRate", formatPercent(summary.winRate));
-  setAnalyticsCard("avgAttempts", formatAnalyticsNumber(summary.avgAttempts));
+  // formatAverage() renders "—" for non-positive values, matching the
+  // Profiles table's averageWinningAttempts. The aggregator emits 0 as
+  // a sentinel meaning "no wins this window" — a wins-only mean of 0
+  // is impossible — so "0" would be misleading.
+  setAnalyticsCard("avgAttempts", formatAverage(summary.avgAttempts));
   setAnalyticsCard("replayRate", formatPercent(summary.replayRate));
   setAnalyticsCard("profileCount", formatAnalyticsNumber(summary.profileCount));
   if (analyticsAsOfEl) {

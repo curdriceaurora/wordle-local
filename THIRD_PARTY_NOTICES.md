@@ -10,6 +10,7 @@ This project includes derived English definitions in `data/dictionaries/en-defin
 - Generator script: `scripts/build-en-definitions.js`
 
 ## Chart.js
+
 The admin Analytics tab renders charts with Chart.js v4 (MIT). The UMD
 bundle is vendored locally at `public/dist/vendor/chart.umd.min.js` so
 the admin shell makes no external network calls; the upstream license

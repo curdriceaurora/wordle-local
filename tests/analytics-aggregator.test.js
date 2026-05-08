@@ -382,6 +382,31 @@ describe("analytics-aggregator", () => {
     });
   });
 
+  describe("aggregate() histogram totals match gamesInWindow", () => {
+    test("non-boolean won and malformed wins still land in dnf", () => {
+      // Three rows: one valid win, one win with bogus attempts, one row
+      // with non-boolean won. The histogram total must equal
+      // gamesInWindow regardless — invariant the dashboard relies on.
+      const profiles = [makeProfile("p1", "Alice")];
+      const r1 = makeResult({ date: "2026-05-07", won: true, attempts: 4 });
+      const r2 = makeResult({ date: "2026-05-06", won: true, attempts: -3 });
+      const r3 = makeResult({ date: "2026-05-05", won: false });
+      r3.entry.won = null; // simulate corrupted row
+      const results = {
+        p1: { [r1.key]: r1.entry, [r2.key]: r2.entry, [r3.key]: r3.entry }
+      };
+      const out = aggregate(snapshotWith(profiles, results), {
+        window: "7d",
+        today: "2026-05-07",
+        tz: "UTC",
+        generatedAt: FIXED_GENERATED_AT
+      });
+      const total = out.distributions.attempts.reduce((sum, e) => sum + e.value, 0);
+      expect(total).toBe(out.summary.gamesInWindow);
+      expect(total).toBe(3);
+    });
+  });
+
   describe("aggregate() malformed entries", () => {
     test("skips daily keys that don't match the pattern", () => {
       const profiles = [makeProfile("p1", "Alice")];

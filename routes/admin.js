@@ -318,8 +318,11 @@ function createAdminRouter(deps) {
         generatedAt: nowDate.toISOString()
       });
     } catch (err) {
+      // 503 (not 500) so clients with retry semantics treat this as
+      // transient unavailability — matches the snapshot-read failure
+      // branch above and the rest of the admin endpoints.
       console.error("Analytics aggregation failed.", err);
-      return res.status(500).json({
+      return res.status(503).json({
         error: "Analytics aggregation failed."
       });
     }
