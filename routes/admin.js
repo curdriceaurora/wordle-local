@@ -290,14 +290,15 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Capture a single Date and reuse it for the operator-local "today"
+    // Capture a single Date and reuse it for the server-local "today"
     // string AND the generatedAt timestamp. Two separate new Date() calls
-    // could straddle midnight in ANALYTICS_TZ in rare cases, leaving the
+    // could straddle midnight server-side in rare cases, leaving the
     // payload internally inconsistent (e.g. window dates from yesterday
     // but generatedAt from today). Resolving today first also lets the
     // cache key include it so the stored payload naturally falls off the
-    // operator-local day boundary even when the snapshot/TTL haven't
-    // budged.
+    // server-local day boundary — matching the storage convention the
+    // game uses when writing daily-key dates — even when the snapshot
+    // and TTL haven't budged.
     const nowDate = new Date();
     const today = todayForAnalytics(nowDate);
     const cacheKey = `${windowName}|${snapshot.updatedAt || ""}|${today}`;
