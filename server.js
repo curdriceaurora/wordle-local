@@ -180,10 +180,15 @@ const ENV_BACKUP_RATE_LIMIT_MAX = clampEnvBounded(
   100,
   "BACKUP_RATE_LIMIT_MAX"
 );
+// Lower bound is 1ms so tests/operators can effectively disable the
+// analytics cache by passing a very small TTL — sequential requests
+// cross more than 1ms wall-time, so any entry is already expired by
+// the next call. Operators wanting normal caching set this to the
+// default 60_000 and never see a difference.
 const ENV_ANALYTICS_CACHE_TTL_MS = clampEnvBounded(
   process.env.ANALYTICS_CACHE_TTL_MS,
   60 * 1000,
-  1000,
+  1,
   60 * 60 * 1000,
   "ANALYTICS_CACHE_TTL_MS"
 );

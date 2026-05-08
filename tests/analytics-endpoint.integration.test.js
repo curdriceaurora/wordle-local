@@ -263,7 +263,14 @@ describe("GET /api/admin/analytics", () => {
       profiles,
       resultsByProfile
     });
-    const app = loadApp(statsPath, { cacheTtlMs: 1 }); // disable cache for the budget probe
+    // 1ms TTL effectively disables the per-router cache: each
+    // sequential supertest call takes more than a millisecond, so the
+    // entry is always expired by the next request. We assert the
+    // X-Analytics-Cache header to make sure we're actually measuring
+    // aggregation latency and not cache-hit latency — the original
+    // form of this test silently measured cache hits because the env
+    // floor (formerly 1000ms) had clamped 1 back to the default.
+    const app = loadApp(statsPath, { cacheTtlMs: 1 });
     // Warm load (excluded from sample) then 50 measured calls.
     await request(app).get("/api/admin/analytics?window=30d");
     const samples = [];
@@ -272,6 +279,7 @@ describe("GET /api/admin/analytics", () => {
       const res = await request(app).get("/api/admin/analytics?window=30d");
       const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
       expect(res.status).toBe(200);
+      expect(res.headers["x-analytics-cache"]).toBe("MISS");
       samples.push(elapsedMs);
     }
     samples.sort((a, b) => a - b);
