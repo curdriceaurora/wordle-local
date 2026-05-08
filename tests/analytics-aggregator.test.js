@@ -79,7 +79,7 @@ describe("analytics-aggregator", () => {
       expect(out.series.dailyActive[6]).toEqual({ date: "2026-05-07", value: 0 });
       expect(out.series.dailyGames).toHaveLength(7);
       expect(out.series.profileGrowth).toHaveLength(7);
-      expect(out.distributions.attempts).toHaveLength(7); // 1..6 + dnf
+      expect(out.distributions.attempts).toHaveLength(11); // 1..10 + dnf
       expect(out.distributions.languageMix).toEqual([]);
       expect(out.distributions.hourOfDay).toHaveLength(24);
       // Every hour bucket present, all zero.
@@ -284,6 +284,34 @@ describe("analytics-aggregator", () => {
           generatedAt: FIXED_GENERATED_AT
         })
       ).not.toThrow();
+    });
+  });
+
+  describe("aggregate() attempts bucketing for higher maxGuesses", () => {
+    test("wins with attempts 7-10 land in their own bucket", () => {
+      const profiles = [makeProfile("p1", "Alice")];
+      const results = {
+        p1: {
+          [makeResult({ date: "2026-05-07", won: true, attempts: 8, maxGuesses: 10 }).key]:
+            makeResult({ date: "2026-05-07", won: true, attempts: 8, maxGuesses: 10 }).entry,
+          [makeResult({ date: "2026-05-06", won: true, attempts: 10, maxGuesses: 10 }).key]:
+            makeResult({ date: "2026-05-06", won: true, attempts: 10, maxGuesses: 10 }).entry
+        }
+      };
+      const out = aggregate(snapshotWith(profiles, results), {
+        window: "7d",
+        today: "2026-05-07",
+        tz: "UTC",
+        generatedAt: FIXED_GENERATED_AT
+      });
+      const byBucket = Object.fromEntries(
+        out.distributions.attempts.map((row) => [row.bucket, row.value])
+      );
+      expect(byBucket["8"]).toBe(1);
+      expect(byBucket["10"]).toBe(1);
+      // Histogram values should sum to total wins (no silent drops).
+      const total = Object.values(byBucket).reduce((sum, v) => sum + v, 0);
+      expect(total).toBe(out.summary.gamesInWindow);
     });
   });
 

@@ -80,6 +80,10 @@ function buildAnalyticsResponse(window) {
         { bucket: "4", value: 9 },
         { bucket: "5", value: 7 },
         { bucket: "6", value: 3 },
+        { bucket: "7", value: 1 },
+        { bucket: "8", value: 0 },
+        { bucket: "9", value: 0 },
+        { bucket: "10", value: 0 },
         { bucket: "dnf", value: 3 }
       ],
       languageMix: [
@@ -123,6 +127,10 @@ const EMPTY_ANALYTICS = {
       { bucket: "4", value: 0 },
       { bucket: "5", value: 0 },
       { bucket: "6", value: 0 },
+      { bucket: "7", value: 0 },
+      { bucket: "8", value: 0 },
+      { bucket: "9", value: 0 },
+      { bucket: "10", value: 0 },
       { bucket: "dnf", value: 0 }
     ],
     languageMix: [],
