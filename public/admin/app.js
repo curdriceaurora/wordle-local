@@ -141,6 +141,11 @@ const state = {
   activeTab: "providers",
   analyticsWindow: "7d",
   analyticsLoading: false,
+  // Monotonic request id incremented on every loadAnalytics call. Each
+  // fetch captures its own id and only renders if it still matches at
+  // response time — covers the 7d→all→7d race where window equality
+  // alone would let an old 7d response overwrite a newer 7d.
+  analyticsRequestId: 0,
   analyticsCharts: {
     activity: null,
     attempts: null,
@@ -2826,12 +2831,13 @@ function renderAnalyticsPayload(payload) {
 
 async function loadAnalytics(options = {}) {
   if (!state.unlocked || !analyticsCardsEl) return;
-  // Pin the window we're about to fetch. If the operator clicks 7d → all in
-  // quick succession on a slow connection, the slower 7d response would
-  // otherwise resolve last and overwrite the all-window cards/charts even
-  // though the UI already shows "all" as selected. We compare the captured
-  // window against state.analyticsWindow at render time and skip stale
-  // responses.
+  // Increment the request id and capture our token. Comparing only the
+  // captured window let a 7d → all → 7d sequence's first 7d response
+  // overwrite the second 7d response if the first lagged enough. The id
+  // pins each fetch to its own slot so only the most recent one ever
+  // renders, regardless of how the windows were toggled.
+  state.analyticsRequestId += 1;
+  const requestId = state.analyticsRequestId;
   const requestedWindow = state.analyticsWindow;
   state.analyticsLoading = true;
   if (options.announce !== false) {
@@ -2841,7 +2847,7 @@ async function loadAnalytics(options = {}) {
     const payload = await requestAdminJson(
       `/api/admin/analytics?window=${encodeURIComponent(requestedWindow)}`
     );
-    if (state.analyticsWindow !== requestedWindow) {
+    if (requestId !== state.analyticsRequestId) {
       // A newer request superseded us — drop the result silently.
       return payload;
     }
@@ -2858,7 +2864,7 @@ async function loadAnalytics(options = {}) {
     }
     return payload;
   } catch (err) {
-    if (options.announce !== false && state.analyticsWindow === requestedWindow) {
+    if (options.announce !== false && requestId === state.analyticsRequestId) {
       setStatus(analyticsStatusEl, `Analytics failed: ${err.message}`, "admin-status-missing");
     }
     throw err;
