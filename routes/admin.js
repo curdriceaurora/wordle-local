@@ -158,6 +158,37 @@ function createAdminRouter(deps) {
     ? analyticsTimezone
     : "UTC";
 
+  // Format the operator's "today" in ANALYTICS_TZ, not server-local. If the
+  // two zones disagree (e.g. UTC server with ANALYTICS_TIMEZONE=
+  // America/Los_Angeles), getLocalDateString() would return the server-side
+  // date and the aggregator would shift the 7d/30d windows by a day around
+  // midnight. Intl.DateTimeFormat with `en-CA` returns ISO YYYY-MM-DD parts
+  // we can join cleanly. Falls back to getLocalDateString if Intl is
+  // unavailable for the configured zone.
+  const analyticsDateFormatter = (() => {
+    try {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: ANALYTICS_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      });
+    } catch (_err) {
+      return null;
+    }
+  })();
+
+  function todayInAnalyticsZone() {
+    if (analyticsDateFormatter) {
+      const parts = analyticsDateFormatter.formatToParts(new Date());
+      const y = parts.find((p) => p.type === "year")?.value;
+      const m = parts.find((p) => p.type === "month")?.value;
+      const d = parts.find((p) => p.type === "day")?.value;
+      if (y && m && d) return `${y}-${m}-${d}`;
+    }
+    return getLocalDateString(new Date());
+  }
+
   router.get("/admin", (req, res) => {
     // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
     res.setHeader("Cache-Control", "no-store");
@@ -287,7 +318,7 @@ function createAdminRouter(deps) {
     try {
       payload = aggregateAnalytics(snapshot, {
         window: windowName,
-        today: getLocalDateString(new Date()),
+        today: todayInAnalyticsZone(),
         tz: ANALYTICS_TZ,
         generatedAt: new Date().toISOString()
       });

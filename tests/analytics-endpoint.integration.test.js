@@ -207,6 +207,33 @@ describe("GET /api/admin/analytics", () => {
     expect(b.headers["x-analytics-cache"]).toBe("MISS");
   });
 
+  test("today is computed in ANALYTICS_TIMEZONE, not server-local time", async () => {
+    const statsPath = tempStatsPath();
+    seedLeaderboard(statsPath, {
+      version: 1,
+      updatedAt: "2026-05-07T12:00:00.000Z",
+      profiles: [],
+      resultsByProfile: {}
+    });
+
+    // Pick a timezone deliberately offset from the test runner's likely zone.
+    // We assert: the last day in the 7d series matches what Intl says is
+    // "today" in that zone — not what new Date().getDate() says locally.
+    const tz = "America/Los_Angeles";
+    const expectedToday = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+
+    const app = loadApp(statsPath, { timezone: tz });
+    const res = await request(app).get("/api/admin/analytics?window=7d");
+    expect(res.status).toBe(200);
+    const lastDay = res.body.series.dailyActive[res.body.series.dailyActive.length - 1].date;
+    expect(lastDay).toBe(expectedToday);
+  });
+
   test("p99 latency < 100ms on a 1000-profile / 30-day fixture", async () => {
     const statsPath = tempStatsPath();
     const profiles = [];
