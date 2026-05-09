@@ -191,10 +191,10 @@ function createAdminRouter(deps) {
   }
   function scheduleAudit(action, fields) {
     // Single-line audit log entry per write. `actor` is intentionally a
-    // fingerprint of the admin key (first 6 chars of sha256) so the log
-    // doesn't contain the secret itself; the requireAdminAccess middleware
-    // already attaches the raw key on req for the duration of the request,
-    // and we hash here at the call site.
+    // fingerprint of the admin key (first 12 hex chars of sha256) so the
+    // log doesn't contain the secret itself; the requireAdminAccess
+    // middleware already attaches the raw key on req for the duration of
+    // the request, and we hash here at the call site.
     try {
       console.log(JSON.stringify({
         event: `[schedule] ${action}`,
@@ -431,16 +431,31 @@ function createAdminRouter(deps) {
     }
   });
 
+  // Schedule mutations also write to data/. Without this slot a concurrent
+  // backup/restore can race them — the existing /api gate only blocks
+  // request handlers from observing the lock, but it doesn't serialize
+  // direct writes against the lock holder. Same pattern as POST /api/word
+  // and PUT /api/admin/runtime-config.
+  async function withSlot(handler) {
+    const releaseSlot = await claimDirectDataWriteSlot();
+    try {
+      return await handler();
+    } finally {
+      releaseSlot();
+    }
+  }
+
   router.post("/api/admin/schedule/entries", async (req, res) => {
     const overwriteFlag = String(req.query.overwrite || "").toLowerCase() === "true";
     try {
-      const before = await scheduleStore.getSnapshot();
-      const result = await scheduleStore.addEntry(req.body || {}, { overwrite: overwriteFlag });
+      const result = await withSlot(async () => {
+        return scheduleStore.addEntry(req.body || {}, { overwrite: overwriteFlag });
+      });
       scheduleAudit("entries.add", {
         actor: actorFingerprint(req),
-        before_count: before.scheduled_words.length,
-        replaced: result.replaced,
-        entry: result.entry
+        date: result.entry.date,
+        lang: result.entry.lang,
+        replaced: result.replaced
       });
       return res.status(result.replaced ? 200 : 201).json({
         ok: true,
@@ -462,16 +477,13 @@ function createAdminRouter(deps) {
 
   router.put("/api/admin/schedule/entries/:date/:lang", async (req, res) => {
     try {
-      const result = await scheduleStore.updateEntry(
-        req.params.date,
-        req.params.lang,
-        req.body || {}
-      );
+      const result = await withSlot(async () => {
+        return scheduleStore.updateEntry(req.params.date, req.params.lang, req.body || {});
+      });
       scheduleAudit("entries.update", {
         actor: actorFingerprint(req),
         date: req.params.date,
-        lang: req.params.lang,
-        entry: result.entry
+        lang: req.params.lang
       });
       return res.json({ ok: true, entry: result.entry, schedule: result.schedule });
     } catch (err) {
@@ -488,12 +500,13 @@ function createAdminRouter(deps) {
 
   router.delete("/api/admin/schedule/entries/:date/:lang", async (req, res) => {
     try {
-      const result = await scheduleStore.removeEntry(req.params.date, req.params.lang);
+      await withSlot(async () => {
+        return scheduleStore.removeEntry(req.params.date, req.params.lang);
+      });
       scheduleAudit("entries.delete", {
         actor: actorFingerprint(req),
         date: req.params.date,
-        lang: req.params.lang,
-        removed: result.entry
+        lang: req.params.lang
       });
       return res.status(204).send();
     } catch (err) {
@@ -510,22 +523,25 @@ function createAdminRouter(deps) {
 
   router.put("/api/admin/schedule/config", async (req, res) => {
     try {
-      const before = await scheduleStore.getSnapshot();
-      const next = await scheduleStore.setConfig(req.body || {});
+      const result = await withSlot(async () => {
+        const before = await scheduleStore.getSnapshot();
+        const next = await scheduleStore.setConfig(req.body || {});
+        return { before, next };
+      });
       scheduleAudit("config.update", {
         actor: actorFingerprint(req),
         before: {
-          timezone: before.timezone,
-          auto_rotate: before.auto_rotate,
-          retention_days: before.retention_days
+          timezone: result.before.timezone,
+          auto_rotate: result.before.auto_rotate,
+          retention_days: result.before.retention_days
         },
         after: {
-          timezone: next.timezone,
-          auto_rotate: next.auto_rotate,
-          retention_days: next.retention_days
+          timezone: result.next.timezone,
+          auto_rotate: result.next.auto_rotate,
+          retention_days: result.next.retention_days
         }
       });
-      return res.json({ ok: true, schedule: next });
+      return res.json({ ok: true, schedule: result.next });
     } catch (err) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
@@ -540,27 +556,30 @@ function createAdminRouter(deps) {
 
   router.post("/api/admin/schedule/prune", async (req, res) => {
     try {
-      const snapshot = await scheduleStore.getSnapshot();
-      // Compute the cutoff in the schedule's own zone — if we used
-      // server-local "today" minus retention_days here we'd inadvertently
-      // shift the cutoff away from the dates the entries are keyed by.
-      const todayLocal = new Intl.DateTimeFormat("en-CA", {
-        timeZone: snapshot.timezone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      }).format(new Date());
-      const [y, m, d] = todayLocal.split("-").map(Number);
-      const cutoffMs = Date.UTC(y, m - 1, d) - snapshot.retention_days * 24 * 60 * 60 * 1000;
-      const cutoff = new Date(cutoffMs);
-      const cutoffStr = `${cutoff.getUTCFullYear()}-${String(cutoff.getUTCMonth() + 1).padStart(2, "0")}-${String(cutoff.getUTCDate()).padStart(2, "0")}`;
-      const result = await scheduleStore.pruneBefore(cutoffStr);
+      const result = await withSlot(async () => {
+        const snapshot = await scheduleStore.getSnapshot();
+        // Compute the cutoff in the schedule's own zone — if we used
+        // server-local "today" minus retention_days here we'd inadvertently
+        // shift the cutoff away from the dates the entries are keyed by.
+        const todayLocal = new Intl.DateTimeFormat("en-CA", {
+          timeZone: snapshot.timezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }).format(new Date());
+        const [y, m, d] = todayLocal.split("-").map(Number);
+        const cutoffMs = Date.UTC(y, m - 1, d) - snapshot.retention_days * 24 * 60 * 60 * 1000;
+        const cutoff = new Date(cutoffMs);
+        const cutoffStr = `${cutoff.getUTCFullYear()}-${String(cutoff.getUTCMonth() + 1).padStart(2, "0")}-${String(cutoff.getUTCDate()).padStart(2, "0")}`;
+        const out = await scheduleStore.pruneBefore(cutoffStr);
+        return { cutoffStr, pruned: out.pruned };
+      });
       scheduleAudit("prune", {
         actor: actorFingerprint(req),
-        cutoff: cutoffStr,
+        cutoff: result.cutoffStr,
         pruned: result.pruned
       });
-      return res.json({ ok: true, pruned: result.pruned, cutoff: cutoffStr });
+      return res.json({ ok: true, pruned: result.pruned, cutoff: result.cutoffStr });
     } catch (err) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
@@ -574,6 +593,10 @@ function createAdminRouter(deps) {
   });
 
   router.post("/api/admin/schedule/reconcile", async (req, res) => {
+    // No outer withSlot here: runSchedulerReconcile claims the slot
+    // internally. Wrapping again would just bump the counter twice and
+    // the inner release would precede the outer one, which the
+    // counter-based claim handles correctly but adds no value.
     try {
       const result = await runSchedulerReconcile("admin-trigger");
       scheduleAudit("reconcile.manual", {

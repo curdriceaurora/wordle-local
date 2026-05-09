@@ -64,7 +64,7 @@ Daily word endpoints remain available:
 - `POST /api/word` — set daily word
   - Body: `{ "word": "CRANE", "lang": "en", "date": "YYYY-MM-DD" }`
   - If `date` is provided, it is interpreted in server local time.
-- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. Manual `POST /api/word` overrides for the rest of the day; the next day the schedule wins again. Delete `data/schedule.json` to disable. See `docs/scheduler.md` for the full contract.
+- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. Delete `data/schedule.json` to disable. See `docs/scheduler.md` for the full contract.
 
 ## Languages & Dictionaries
 - English dictionary is baked in (`en`).

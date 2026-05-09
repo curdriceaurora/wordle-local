@@ -154,7 +154,12 @@ const state = {
   },
   schedule: null,
   scheduleLoading: false,
-  scheduleRequestId: 0
+  scheduleRequestId: 0,
+  // Tracks the (date, lang) of an entry being edited so the submit
+  // handler can route to PUT /entries/:date/:lang instead of
+  // POST /entries (which would leave the original row behind if the
+  // operator changed the date or lang of the entry they were editing).
+  scheduleEditingKey: null
 };
 
 let jobsRefreshTimer = null;
@@ -3109,7 +3114,20 @@ function loadEntryIntoForm(entry) {
   scheduleEntryLangEl.value = entry.lang;
   scheduleEntryNotesEl.value = entry.notes || "";
   scheduleEntryOverwriteEl.checked = true;
-  scheduleEntryDateEl.focus();
+  // Lock the (date, lang) inputs so the original key is preserved —
+  // otherwise the operator could change the key fields and the submit
+  // would orphan the original row instead of updating it. To re-key
+  // an entry, delete the old one and add a new one.
+  scheduleEntryDateEl.readOnly = true;
+  scheduleEntryLangEl.readOnly = true;
+  state.scheduleEditingKey = { date: entry.date, lang: entry.lang };
+  scheduleEntryWordEl.focus();
+}
+
+function clearEditingMode() {
+  if (scheduleEntryDateEl) scheduleEntryDateEl.readOnly = false;
+  if (scheduleEntryLangEl) scheduleEntryLangEl.readOnly = false;
+  state.scheduleEditingKey = null;
 }
 
 function applyScheduleSnapshot(snapshot) {
@@ -3184,27 +3202,44 @@ if (scheduleEntryFormEl) {
   scheduleEntryFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.unlocked) return;
-    const body = {
-      date: scheduleEntryDateEl?.value,
-      word: scheduleEntryWordEl?.value?.toUpperCase(),
-      lang: scheduleEntryLangEl?.value?.trim(),
-      notes: scheduleEntryNotesEl?.value || undefined
-    };
-    const overwrite = scheduleEntryOverwriteEl?.checked ? "?overwrite=true" : "";
+    const date = scheduleEntryDateEl?.value;
+    const word = scheduleEntryWordEl?.value?.toUpperCase();
+    const lang = scheduleEntryLangEl?.value?.trim();
+    const notes = scheduleEntryNotesEl?.value || undefined;
+    const editingKey = state.scheduleEditingKey;
     try {
-      const payload = await requestAdminJson(`/api/admin/schedule/entries${overwrite}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+      let payload;
+      if (editingKey && editingKey.date === date && editingKey.lang === lang) {
+        // Edit mode with unchanged key → PUT (idempotent partial edit).
+        payload = await requestAdminJson(
+          `/api/admin/schedule/entries/${encodeURIComponent(date)}/${encodeURIComponent(lang)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ word, notes })
+          }
+        );
+      } else {
+        // Fresh add or re-key — POST. Overwrite flag follows the
+        // checkbox; UI locks the key fields during edit so the only
+        // way to land here in edit mode is if the operator cleared
+        // and re-typed manually after the readOnly was disabled.
+        const overwrite = scheduleEntryOverwriteEl?.checked ? "?overwrite=true" : "";
+        payload = await requestAdminJson(`/api/admin/schedule/entries${overwrite}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date, word, lang, notes })
+        });
+      }
       applyScheduleSnapshot(payload.schedule || payload);
       setStatus(
         scheduleStatusEl,
-        payload.replaced ? "Entry replaced." : "Entry added.",
+        payload.replaced || editingKey ? "Entry saved." : "Entry added.",
         "admin-status-ok"
       );
       scheduleEntryFormEl.reset();
       if (scheduleEntryLangEl) scheduleEntryLangEl.value = "en";
+      clearEditingMode();
     } catch (err) {
       setStatus(scheduleStatusEl, `Save failed: ${err.message}`, "admin-status-missing");
     }

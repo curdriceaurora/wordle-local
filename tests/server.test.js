@@ -2966,7 +2966,11 @@ describe("Language registry recovery", () => {
 });
 
 describe("Server startup", () => {
-  test("logs admin warning when admin key is optional", () => {
+  // startServer is now async (it awaits the boot scheduler reconcile
+  // before invoking the listener — see scheduler issue #89). Tests
+  // therefore await the returned Promise; the listener mock fires
+  // inside the await, not synchronously at the call site.
+  test("logs admin warning when admin key is optional", async () => {
     const app = loadApp({ requireAdminKey: false });
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -2975,7 +2979,7 @@ describe("Server startup", () => {
       return { close: jest.fn() };
     });
 
-    app.startServer(listener);
+    await app.startServer(listener);
 
     expect(listener).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
@@ -2990,7 +2994,7 @@ describe("Server startup", () => {
     warnSpy.mockRestore();
   });
 
-  test("warns when admin key is required but missing", () => {
+  test("warns when admin key is required but missing", async () => {
     const app = loadApp({ requireAdminKey: true });
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -2999,7 +3003,7 @@ describe("Server startup", () => {
       return { close: jest.fn() };
     });
 
-    app.startServer(listener);
+    await app.startServer(listener);
 
     expect(listener).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
@@ -3010,7 +3014,7 @@ describe("Server startup", () => {
     warnSpy.mockRestore();
   });
 
-  test("warns when trust proxy is disabled in production", () => {
+  test("warns when trust proxy is disabled in production", async () => {
     const app = loadApp({ nodeEnv: "production", adminKey: "secret", trustProxy: false });
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -3019,7 +3023,7 @@ describe("Server startup", () => {
       return { close: jest.fn() };
     });
 
-    app.startServer(listener);
+    await app.startServer(listener);
 
     expect(listener).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(

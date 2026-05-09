@@ -292,6 +292,47 @@ describe("reconcileDailyWord", () => {
     expect(writes).toHaveLength(0);
   });
 
+  test("auto-rotate noops on the second tick of the same day", async () => {
+    const projectRoot = tempProject();
+    seedAnswerPool(projectRoot, "en-US", "abc", ["APPLE", "BERRY", "CHIRP"]);
+    const languagesPath = seedLanguages(projectRoot, [
+      { id: "en", enabled: true, provider: { variant: "en-US", commit: "abc" } }
+    ]);
+    const schedule = makeSchedule({ auto_rotate: true });
+    const writes = [];
+    let currentWord = { word: "OLD", lang: "en", date: "2026-05-07", updatedAt: "2026-05-07T12:00:00Z" };
+    const saveWordData = async (data) => {
+      currentWord = data;
+      writes.push(data);
+    };
+    // First tick: writes the auto-rotate pick.
+    const r1 = await reconcileDailyWord({
+      schedule,
+      currentWordData: currentWord,
+      now: new Date("2026-05-08T12:00:00Z"),
+      defaultLang: "en",
+      providersRoot: path.join(projectRoot, "data", "providers"),
+      languagesPath,
+      saveWordData
+    });
+    expect(r1.action).toBe("auto-rotate");
+    expect(writes).toHaveLength(1);
+    // Second tick on same day: should noop because the write would be
+    // identical and we'd otherwise burn a fresh updatedAt every minute.
+    const r2 = await reconcileDailyWord({
+      schedule,
+      currentWordData: currentWord,
+      now: new Date("2026-05-08T13:00:00Z"),
+      defaultLang: "en",
+      providersRoot: path.join(projectRoot, "data", "providers"),
+      languagesPath,
+      saveWordData
+    });
+    expect(r2.action).toBe("noop");
+    expect(r2.reason).toBe("AUTO_ROTATE_ALREADY_RECONCILED");
+    expect(writes).toHaveLength(1);
+  });
+
   test("auto-rotate picks deterministically from the answer pool", async () => {
     const projectRoot = tempProject();
     seedAnswerPool(projectRoot, "en-US", "abc", ["APPLE", "BERRY", "CHIRP", "DREAM", "ELITE"]);

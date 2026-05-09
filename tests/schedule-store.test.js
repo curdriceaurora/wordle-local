@@ -246,6 +246,40 @@ describe("ScheduleStore", () => {
     expect(stragglers).toEqual([]);
   });
 
+  test("commits run sequentially even when fired concurrently", async () => {
+    // Two concurrent mutations with the same pre-mutation in-memory
+    // snapshot would, without commitQueue serialization, each clone the
+    // same baseline and the later write would silently drop the earlier
+    // one. Fire 5 addEntry calls in parallel and assert all 5 entries
+    // land in the final state.
+    const filePath = tempPath();
+    const store = new ScheduleStore({ filePath, now: frozenNow() });
+    await store.load();
+    // The WORD_PATTERN is strict A-Z, so we vary the word body without
+    // using digits. Five distinct A-Z words are enough to prove
+    // serialization without overloading the test.
+    const words = ["AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"];
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        store.addEntry({
+          date: `2026-05-0${i + 1}`,
+          word: words[i],
+          lang: "en"
+        })
+      )
+    );
+    const snap = await store.getSnapshot();
+    expect(snap.scheduled_words).toHaveLength(5);
+    const dates = snap.scheduled_words.map((row) => row.date).sort();
+    expect(dates).toEqual([
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05"
+    ]);
+  });
+
   test("ScheduleStoreError carries error code", async () => {
     const filePath = tempPath();
     const store = new ScheduleStore({ filePath, now: frozenNow() });

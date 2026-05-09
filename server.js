@@ -151,9 +151,6 @@ const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
 const SCHEDULE_DATA_PATH = process.env.SCHEDULE_STORE_PATH
   ? path.resolve(process.env.SCHEDULE_STORE_PATH)
   : path.join(__dirname, "data", "schedule.json");
-const PROVIDERS_DATA_ROOT = process.env.PROVIDERS_ROOT
-  ? path.resolve(process.env.PROVIDERS_ROOT)
-  : path.join(__dirname, "data", "providers");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -781,6 +778,7 @@ function isValidWordData(data) {
   // don't silently pass garbage into the reconcile decision.
   if (data.lastScheduledFor !== undefined && data.lastScheduledFor !== null) {
     if (typeof data.lastScheduledFor !== "string") return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.lastScheduledFor)) return false;
   }
   return true;
 }
@@ -1234,6 +1232,22 @@ let schedulerIntervalRef = null;
 // the in-memory wordDataCache. All errors are logged and swallowed because
 // the caller (boot path / setInterval) cannot meaningfully react.
 async function runSchedulerReconcile(reason = "tick") {
+  // Claim the direct-write slot so a concurrent backup/restore can't
+  // race us — both `reconcileDailyWord` (which writes data/word.json)
+  // and `recordReconcile` (which writes data/schedule.json) mutate
+  // files in data/. Without this the scheduler tick could mutate
+  // mid-archive (torn backup) or mid-restore (overwrite the swapped
+  // file). The /api gate only blocks request handlers; background
+  // ticks need their own claim.
+  const releaseSlot = await claimDirectDataWriteSlot();
+  try {
+    return await runSchedulerReconcileInner(reason);
+  } finally {
+    releaseSlot();
+  }
+}
+
+async function runSchedulerReconcileInner(reason = "tick") {
   let schedule;
   try {
     schedule = await scheduleStore.load();
@@ -1248,7 +1262,7 @@ async function runSchedulerReconcile(reason = "tick") {
       currentWordData: currentWord,
       now: new Date(),
       defaultLang: DEFAULT_LANG,
-      providersRoot: PROVIDERS_DATA_ROOT,
+      providersRoot: PROVIDERS_ROOT,
       languagesPath: LANGUAGE_REGISTRY_PATH,
       saveWordData: async (data) => {
         await saveWordDataAtomic(data);
@@ -3100,15 +3114,19 @@ function renderDailyMissing(message) {
 </html>`;
 }
 
-function startServer(listener = app.listen.bind(app)) {
-  // Run a single boot reconcile BEFORE the listener accepts traffic so the
-  // first GET /api/word and /daily see the scheduler's pick (or the
-  // operator's manual override, if newer). Failures are logged inside
-  // runSchedulerReconcile and don't block boot — the schedule is meant to
-  // be a soft layer over manual word.json writes, not a hard dependency.
-  runSchedulerReconcile("boot")
-    .catch((err) => console.error("[scheduler] boot reconcile error:", err))
-    .finally(() => startSchedulerInterval());
+async function startServer(listener = app.listen.bind(app)) {
+  // Await the single boot reconcile BEFORE invoking listener() so the
+  // first GET /api/word and /daily can't observe pre-reconcile state.
+  // The earlier fire-and-forget form raced app.listen with the still-
+  // pending reconcile, which is exactly the window the design tries
+  // to close. Failures are caught and logged here; the schedule is a
+  // soft layer over manual writes, not a hard boot dependency.
+  try {
+    await runSchedulerReconcile("boot");
+  } catch (err) {
+    console.error("[scheduler] boot reconcile error:", err);
+  }
+  startSchedulerInterval();
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3132,7 +3150,10 @@ function startServer(listener = app.listen.bind(app)) {
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch((err) => {
+    console.error("[boot] startServer failed:", err);
+    process.exit(1);
+  });
 }
 
 module.exports = app;
