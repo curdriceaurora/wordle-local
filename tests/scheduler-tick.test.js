@@ -446,6 +446,37 @@ describe("reconcileDailyWord", () => {
     expect(writes).toHaveLength(0);
   });
 
+  test("null-date manual override expires at the next server-local midnight", async () => {
+    // Operator did POST /api/word yesterday with no body.date. Today
+    // the scheduler should reclaim ownership instead of treating the
+    // null-date write as eternally fresh. Round-8's first attempt at
+    // honoring null-date overrides made them never expire; this fix
+    // uses updatedAt's server-local date as the effective day.
+    const writes = [];
+    const schedule = makeSchedule({
+      scheduled_words: [{ date: "2026-05-08", word: "TODAY", lang: "en" }]
+    });
+    // Manual write was 24h+ ago by server-local clock.
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: {
+        word: "MANUAL",
+        lang: "en",
+        date: null,
+        updatedAt: "2026-05-07T11:00:00Z"
+        // no lastScheduledFor → manual write
+      },
+      now: new Date("2026-05-08T12:00:00Z"),
+      defaultLang: "en",
+      providersRoot: "/dev/null",
+      languagesPath: "/dev/null",
+      saveWordData: async (data) => { writes.push(data); }
+    });
+    expect(result.action).toBe("write-scheduled");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].word).toBe("TODAY");
+  });
+
   test("scheduler-owned write for a previous schedule-local day is not treated as manual", async () => {
     // Pacific/Kiritimati is +14 from UTC. At 2026-05-08T11:00Z the
     // server is still on 2026-05-08 but the schedule already rolled
