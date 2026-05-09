@@ -257,3 +257,27 @@
     flex: 1;
   }
 }
+
+.schedule-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0 1rem;
+  background: var(--bg-accent);
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.schedule-status-strip strong {
+  color: var(--muted);
+  font-weight: 500;
+  margin-right: 0.25rem;
+}
+
+@media (max-width: 480px) {
+  .schedule-status-strip {
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+}

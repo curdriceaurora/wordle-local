@@ -18,6 +18,8 @@ const { buildCsv, parseBulkNames, UTF8_BOM } = require("./lib/csv-format");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
 const { aggregate: aggregateAnalytics } = require("./lib/analytics-aggregator");
+const { ScheduleStore } = require("./lib/schedule-store");
+const { reconcileDailyWord } = require("./lib/scheduler-tick");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -146,6 +148,9 @@ const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
 const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
   ? path.resolve(process.env.CLASSES_STORE_PATH)
   : path.join(__dirname, "data", "classes.json");
+const SCHEDULE_DATA_PATH = process.env.SCHEDULE_STORE_PATH
+  ? path.resolve(process.env.SCHEDULE_STORE_PATH)
+  : path.join(__dirname, "data", "schedule.json");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -209,6 +214,37 @@ const ENV_ANALYTICS_TIMEZONE = (() => {
     return "UTC";
   }
 })();
+// Scheduler env vars — all optional, sensible defaults. The schedule's
+// timezone is stored ON the schedule itself (so operators can change it
+// at runtime via the admin UI); SCHEDULE_TIMEZONE_DEFAULT only seeds a
+// freshly-created data/schedule.json on first boot.
+const ENV_SCHEDULE_TIMEZONE_DEFAULT = (() => {
+  const raw = String(process.env.SCHEDULE_TIMEZONE_DEFAULT || "").trim();
+  const candidate = raw || process.env.TZ || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate });
+    return candidate;
+  } catch (_err) {
+    console.warn(
+      `SCHEDULE_TIMEZONE_DEFAULT=${candidate} is not a recognised IANA zone; falling back to UTC.`
+    );
+    return "UTC";
+  }
+})();
+const ENV_SCHEDULER_CHECK_INTERVAL_MS = clampEnvBounded(
+  process.env.SCHEDULER_CHECK_INTERVAL_MS,
+  60 * 1000,
+  1000,
+  60 * 60 * 1000,
+  "SCHEDULER_CHECK_INTERVAL_MS"
+);
+const ENV_SCHEDULE_RETENTION_DAYS = clampEnvBounded(
+  process.env.SCHEDULE_RETENTION_DAYS,
+  90,
+  0,
+  36500,
+  "SCHEDULE_RETENTION_DAYS"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -346,6 +382,31 @@ async function claimDirectDataWriteSlot() {
     return () => {
       directDataWriteActiveRef.value -= 1;
     };
+  }
+}
+
+// Strict mutex around data/word.json so a manual POST /api/word and the
+// scheduler reconciler can't both decide-then-write concurrently.
+// claimDirectDataWriteSlot above is a counter (multiple direct writers
+// can hold it at once — the counter exists so the backup/restore
+// busy-check sees activity), which is the right primitive for
+// serializing against backup/restore but doesn't prevent a stale
+// reconciler decision from clobbering a fresh manual write. This mutex
+// is exclusive: every word.json write path acquires it before its
+// decide-then-save sequence so manual override vs scheduler is
+// strictly serialized.
+let wordWriteSerial = Promise.resolve();
+async function withWordWriteLock(fn) {
+  const previous = wordWriteSerial;
+  let release;
+  wordWriteSerial = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
   }
 }
 
@@ -736,6 +797,14 @@ function isValidWordData(data) {
   if (typeof data.word !== "string") return false;
   if (typeof data.lang !== "string") return false;
   if (!(data.date === null || typeof data.date === "string")) return false;
+  // lastScheduledFor is optional. When present it must be a YYYY-MM-DD
+  // string — the reconciler reads it to decide whether the most recent
+  // write was scheduler or manual-override. Reject other shapes so we
+  // don't silently pass garbage into the reconcile decision.
+  if (data.lastScheduledFor !== undefined && data.lastScheduledFor !== null) {
+    if (typeof data.lastScheduledFor !== "string") return false;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.lastScheduledFor)) return false;
+  }
   return true;
 }
 
@@ -748,6 +817,13 @@ function normalizeWordData(data) {
   normalized.updatedAt = normalized.updatedAt
     ? String(normalized.updatedAt)
     : new Date().toISOString();
+  // Pass-through if present-and-valid; drop otherwise so legacy files
+  // and malformed values both end up with the field absent.
+  if (typeof data?.lastScheduledFor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.lastScheduledFor)) {
+    normalized.lastScheduledFor = data.lastScheduledFor;
+  } else {
+    delete normalized.lastScheduledFor;
+  }
   return normalized;
 }
 
@@ -1168,6 +1244,126 @@ const classesStore = new ClassesStore({
   logger: console,
   waitForDataMutationLock
 });
+const scheduleStore = new ScheduleStore({
+  filePath: SCHEDULE_DATA_PATH,
+  defaultTimezone: ENV_SCHEDULE_TIMEZONE_DEFAULT,
+  defaultRetentionDays: ENV_SCHEDULE_RETENTION_DAYS,
+  logger: console
+});
+let schedulerIntervalRef = null;
+
+// Run a single reconcile pass: re-load schedule, fetch current word.json,
+// route through reconcileDailyWord, persist via saveWordDataAtomic, update
+// the in-memory wordDataCache. All errors are logged and swallowed because
+// the caller (boot path / setInterval) cannot meaningfully react.
+async function runSchedulerReconcile(reason = "tick") {
+  // Two layers of protection:
+  // 1) claimDirectDataWriteSlot — gates against backup/restore so we
+  //    don't mutate mid-archive (torn backup) or mid-restore (clobber
+  //    the swapped file). This is a counter, not exclusive.
+  // 2) withWordWriteLock — strict mutex against POST /api/word. The
+  //    reconciler reads wordDataCache, awaits answer-pool I/O for
+  //    auto-rotate, and then writes; without exclusive serialization
+  //    a manual write that landed during the await would be silently
+  //    overwritten even though manual writes are documented to win
+  //    for the rest of the day.
+  const releaseSlot = await claimDirectDataWriteSlot();
+  try {
+    return await withWordWriteLock(() => runSchedulerReconcileInner(reason));
+  } finally {
+    releaseSlot();
+  }
+}
+
+async function runSchedulerReconcileInner(reason = "tick") {
+  // The store owns all writes through `commitQueue`, so its in-memory
+  // cache is always fresh — `.load()` is the right call, not
+  // `.reload()`. The earlier "re-load schedule" wording in this comment
+  // was inaccurate; the cache only becomes stale after a backup/restore
+  // file swap, and the restore path explicitly calls
+  // `scheduleStore.reload()` itself.
+  let schedule;
+  try {
+    schedule = await scheduleStore.load();
+  } catch (err) {
+    console.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
+    // Background callers (boot / interval) can't react meaningfully —
+    // they swallow this. Admin-trigger callers re-throw so the route
+    // can return 503 instead of silently reporting "ok".
+    if (reason === "admin-trigger") throw err;
+    return null;
+  }
+  const currentWord = wordDataCache || readWordData() || buildDefaultWordData();
+  try {
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: currentWord,
+      now: new Date(),
+      defaultLang: DEFAULT_LANG,
+      providersRoot: PROVIDERS_ROOT,
+      languagesPath: LANGUAGE_REGISTRY_PATH,
+      saveWordData: async (data) => {
+        await saveWordDataAtomic(data);
+        wordDataCache = normalizeWordData(data);
+      },
+      recordReconcile: async ({ date, at }) => {
+        try {
+          await scheduleStore.recordReconcile({ date, at });
+        } catch (err) {
+          console.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
+          // Background callers (boot / interval) swallow this — a
+          // missing timestamp on data/schedule.json doesn't justify
+          // killing the tick driver. Admin-trigger callers re-throw
+          // because the operator asked for the reconcile and deserves
+          // to know the persistence step failed.
+          if (reason === "admin-trigger") throw err;
+        }
+      },
+      logger: console
+    });
+    return result;
+  } catch (err) {
+    console.error(`[scheduler] reconcile failed (${reason}):`, err.message);
+    // Same propagation rule: admin-trigger callers see the failure;
+    // background callers swallow it (logged above) so a transient
+    // disk error doesn't kill the interval driver.
+    if (reason === "admin-trigger") throw err;
+    return null;
+  }
+}
+
+// Tracks an in-flight interval-driven reconcile so the next tick can
+// skip itself rather than queueing up. Without this guard, a slow
+// reconcile (e.g. waiting on the word-write lock behind a manual POST)
+// can let multiple ticks claim the direct-write slot in sequence;
+// directDataWriteActiveRef stays non-zero and starts blocking
+// backup/restore even though the work is just stale interval pile-up.
+let schedulerTickInFlight = false;
+function startSchedulerInterval() {
+  if (schedulerIntervalRef) return;
+  schedulerIntervalRef = setInterval(() => {
+    if (schedulerTickInFlight) return;
+    schedulerTickInFlight = true;
+    runSchedulerReconcile("interval")
+      .catch((err) => {
+        console.error("[scheduler] unhandled interval error:", err);
+      })
+      .finally(() => {
+        schedulerTickInFlight = false;
+      });
+  }, ENV_SCHEDULER_CHECK_INTERVAL_MS);
+  // unref so the timer doesn't keep the process alive past test teardown.
+  if (typeof schedulerIntervalRef.unref === "function") {
+    schedulerIntervalRef.unref();
+  }
+}
+
+function stopSchedulerInterval() {
+  if (schedulerIntervalRef) {
+    clearInterval(schedulerIntervalRef);
+    schedulerIntervalRef = null;
+  }
+}
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
@@ -2637,6 +2833,7 @@ app.use(
     adminJobsStore,
     appConfigStore,
     classesStore,
+    scheduleStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData: () => {
       // Re-read data/word.json from disk and refresh the in-memory cache
@@ -2732,7 +2929,10 @@ app.use(
     getLocalDateString,
     aggregateAnalytics,
     analyticsCacheTtlMs: ENV_ANALYTICS_CACHE_TTL_MS,
-    analyticsTimezone: ENV_ANALYTICS_TIMEZONE
+    analyticsTimezone: ENV_ANALYTICS_TIMEZONE,
+    scheduleStore,
+    runSchedulerReconcile,
+    ScheduleStoreError: require("./lib/schedule-store").ScheduleStoreError
   })
 );
 
@@ -2867,43 +3067,42 @@ app.get("/api/word", requireAdminAccess, (req, res) => {
 });
 
 app.post("/api/word", requireAdminAccess, async (req, res) => {
-  // Claim the direct-write slot BEFORE validating. resolveLang() reads
-  // the live language registry, which a concurrent restore can swap
-  // out from under us. If we validated first and waited second, an
-  // archive that drops support for the requested lang would still let
-  // this request 200 — and persist a now-unsupported word over the
-  // freshly-restored data/word.json. Claiming first guarantees the
-  // restore (if any) has fully landed before we resolve lang/word.
+  // Two layers (see runSchedulerReconcile for the full rationale):
+  // 1) claimDirectDataWriteSlot waits for backup/restore to clear.
+  // 2) withWordWriteLock serializes against the scheduler reconciler
+  //    so a concurrent tick can't decide-then-write over our manual
+  //    override. Without this strict mutex, the reconciler could
+  //    snapshot wordDataCache, await answer-pool I/O, and then
+  //    overwrite a manual write that landed during the await.
   const releaseSlot = await claimDirectDataWriteSlot();
   try {
-    const word = normalizeWord(req.body.word);
-    const date = req.body.date ? String(req.body.date) : null;
-    const lang = resolveLang(req.body.lang);
-    if (!lang) {
-      return res.status(400).json({ error: "Unknown language." });
-    }
-
-    try {
-      assertWord(word, getMinLengthForLang(lang));
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
-    }
-
-    const data = {
-      word,
-      lang,
-      date: date || null,
-      updatedAt: new Date().toISOString()
-    };
-
-    try {
-      await saveWordDataAtomic(data);
-    } catch (err) {
-      console.error("Failed to persist daily word data.", err);
-      return res.status(500).json({ error: "Could not save daily word right now." });
-    }
-    wordDataCache = data;
-    res.json({ ok: true, data });
+    return await withWordWriteLock(async () => {
+      const word = normalizeWord(req.body.word);
+      const date = req.body.date ? String(req.body.date) : null;
+      const lang = resolveLang(req.body.lang);
+      if (!lang) {
+        return res.status(400).json({ error: "Unknown language." });
+      }
+      try {
+        assertWord(word, getMinLengthForLang(lang));
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      const data = {
+        word,
+        lang,
+        date: date || null,
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        await saveWordDataAtomic(data);
+      } catch (err) {
+        console.error("Failed to persist daily word data.", err);
+        return res.status(500).json({ error: "Could not save daily word right now." });
+      }
+      wordDataCache = data;
+      return res.json({ ok: true, data });
+    });
   } finally {
     releaseSlot();
   }
@@ -2976,7 +3175,19 @@ function renderDailyMissing(message) {
 </html>`;
 }
 
-function startServer(listener = app.listen.bind(app)) {
+async function startServer(listener = app.listen.bind(app)) {
+  // Await the single boot reconcile BEFORE invoking listener() so the
+  // first GET /api/word and /daily can't observe pre-reconcile state.
+  // The earlier fire-and-forget form raced app.listen with the still-
+  // pending reconcile, which is exactly the window the design tries
+  // to close. Failures are caught and logged here; the schedule is a
+  // soft layer over manual writes, not a hard boot dependency.
+  try {
+    await runSchedulerReconcile("boot");
+  } catch (err) {
+    console.error("[scheduler] boot reconcile error:", err);
+  }
+  startSchedulerInterval();
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3000,8 +3211,16 @@ function startServer(listener = app.listen.bind(app)) {
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch((err) => {
+    console.error("[boot] startServer failed:", err);
+    process.exit(1);
+  });
 }
 
 module.exports = app;
 module.exports.startServer = startServer;
+// Exposed for tests so they can run a deterministic reconcile and stop the
+// interval timer cleanly during teardown.
+module.exports.runSchedulerReconcile = runSchedulerReconcile;
+module.exports.stopSchedulerInterval = stopSchedulerInterval;
+module.exports.scheduleStore = scheduleStore;

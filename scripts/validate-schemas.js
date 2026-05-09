@@ -31,6 +31,8 @@ const classesSchemaPath = path.join(projectRoot, "data", "classes.schema.json");
 const classesExamplePath = path.join(projectRoot, "data", "classes.example.json");
 const backupManifestSchemaPath = path.join(projectRoot, "data", "backup-manifest.schema.json");
 const backupManifestExamplePath = path.join(projectRoot, "data", "backup-manifest.example.json");
+const scheduleSchemaPath = path.join(projectRoot, "data", "schedule.schema.json");
+const scheduleExamplePath = path.join(projectRoot, "data", "schedule.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -103,6 +105,11 @@ function runSchemaChecks() {
       schemaPath: backupManifestSchemaPath,
       dataPath: backupManifestExamplePath,
       schemaLabel: "backup manifest schema"
+    },
+    {
+      schemaPath: scheduleSchemaPath,
+      dataPath: scheduleExamplePath,
+      schemaLabel: "schedule schema"
     }
   ];
 

@@ -36,6 +36,7 @@ function makeTempState() {
     "data/admin-jobs.schema.json",
     "data/app-config.schema.json",
     "data/classes.schema.json",
+    "data/schedule.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     const dest = path.join(projectRoot, rel);
@@ -104,7 +105,20 @@ function makeTempState() {
     }, null, 2)}\n`,
     "utf8"
   );
-  return { statsPath, classesPath, adminJobsPath, appConfigPath, projectRoot };
+  const schedulePath = path.join(dir, "schedule.json");
+  fs.writeFileSync(
+    schedulePath,
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      timezone: "UTC",
+      auto_rotate: false,
+      retention_days: 90,
+      scheduled_words: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  return { statsPath, classesPath, adminJobsPath, appConfigPath, schedulePath, projectRoot };
 }
 
 function loadFreshApp(adminKey, paths, extraEnv = {}) {

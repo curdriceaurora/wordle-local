@@ -213,6 +213,7 @@ function createBackupRouter(deps) {
     adminJobsStore,
     appConfigStore,
     classesStore,
+    scheduleStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData,
     providerImportQueueActiveRef,
@@ -236,6 +237,7 @@ function createBackupRouter(deps) {
     if (leaderboardStore?.load) await leaderboardStore.load();
     if (adminJobsStore?.load) await adminJobsStore.load();
     if (classesStore?.load) await classesStore.load();
+    if (scheduleStore?.load) await scheduleStore.load();
     if (appConfigStore?.loadSync) appConfigStore.loadSync();
     if (languageRegistryStore?.loadSync) languageRegistryStore.loadSync();
   }
@@ -251,7 +253,8 @@ function createBackupRouter(deps) {
     const queues = [
       leaderboardStore?.writeQueue,
       adminJobsStore?.writeQueue,
-      classesStore?.writeQueue
+      classesStore?.writeQueue,
+      scheduleStore?.commitQueue
     ].filter(Boolean);
     if (queues.length === 0) return;
     await Promise.allSettled(queues);
@@ -612,6 +615,7 @@ function createBackupRouter(deps) {
         ["leaderboardStore", () => leaderboardStore?.reload?.()],
         ["adminJobsStore", () => adminJobsStore?.reload?.()],
         ["classesStore", () => classesStore?.reload?.()],
+        ["scheduleStore", () => scheduleStore?.reload?.()],
         ["appConfigStore", () => appConfigStore?.reloadSync?.()],
         ["languageRegistryStore", () => languageRegistryStore?.reloadSync?.()],
         ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()],
