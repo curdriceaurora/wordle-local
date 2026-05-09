@@ -686,7 +686,7 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
 
   const providersTab = page.locator("#admin-tab-providers");
   const importsTab = page.locator("#admin-tab-imports");
-  const dataTab = page.locator("#admin-tab-data");
+  const lastTab = page.locator(".admin-tab").last();
 
   await providersTab.focus();
   await page.keyboard.press("ArrowRight");
@@ -694,9 +694,13 @@ test("admin shell tablist supports keyboard tab navigation", async ({ page }) =>
   await expect(importsTab).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#admin-panel-imports")).toBeVisible();
 
+  // End/Home test the tablist edges. We resolve the last tab dynamically
+  // because new tabs (Data, Analytics, …) get appended over time and
+  // hardcoding a specific id makes this test rot every time the shell
+  // grows a new section.
   await page.keyboard.press("End");
-  await expect(dataTab).toBeFocused();
-  await expect(dataTab).toHaveAttribute("aria-selected", "true");
+  await expect(lastTab).toBeFocused();
+  await expect(lastTab).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Home");
   await expect(providersTab).toBeFocused();

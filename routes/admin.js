@@ -124,7 +124,10 @@ function createAdminRouter(deps) {
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
-    getLocalDateString
+    getLocalDateString,
+    aggregateAnalytics,
+    analyticsCacheTtlMs,
+    analyticsTimezone
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -136,8 +139,39 @@ function createAdminRouter(deps) {
   if (typeof claimDirectDataWriteSlot !== "function") {
     throw new TypeError("createAdminRouter: claimDirectDataWriteSlot dep is required.");
   }
+  if (typeof aggregateAnalytics !== "function") {
+    throw new TypeError("createAdminRouter: aggregateAnalytics dep is required.");
+  }
 
   const router = express.Router();
+
+  // Per-router analytics cache. Keyed by
+  // `(window | snapshot.updatedAt | today)` so any leaderboard mutation
+  // invalidates instantly via the snapshot's own updatedAt bump, and the
+  // entry naturally falls off the server-local day boundary so a
+  // pre-midnight payload never serves a post-midnight request even when
+  // the snapshot is otherwise unchanged. The TTL is a coarse second-tier
+  // guard for stretches with no writes and no day rollover.
+  const analyticsCache = new Map();
+  const ANALYTICS_CACHE_TTL = Number.isInteger(analyticsCacheTtlMs) && analyticsCacheTtlMs > 0
+    ? analyticsCacheTtlMs
+    : 60 * 1000;
+  const ANALYTICS_TZ = (typeof analyticsTimezone === "string" && analyticsTimezone)
+    ? analyticsTimezone
+    : "UTC";
+
+  // ANALYTICS_TZ controls hour-of-day bucketing only — NOT the date math
+  // that defines window edges. The game stores daily-key dates via
+  // getLocalDateString(new Date()), i.e. the server's local timezone. If
+  // we computed "today" in a different zone, the aggregator's "today"
+  // could disagree with the dates the storage actually uses, leaving the
+  // most recent plays bucketed under "yesterday" from the dashboard's
+  // perspective. Aligning "today" with the storage convention is the
+  // important invariant; ANALYTICS_TZ still gives operators meaningful
+  // hour-of-day buckets in their preferred zone (it's purely display).
+  function todayForAnalytics(now = new Date()) {
+    return getLocalDateString(now);
+  }
 
   router.get("/admin", (req, res) => {
     // Keep admin entry HTML uncached so key-gated shell changes apply immediately.
@@ -234,6 +268,78 @@ function createAdminRouter(deps) {
       console.error("Admin profile list failed.", err);
       return res.status(503).json({ error: "Profile list unavailable right now. Try again soon." });
     }
+  });
+
+  router.get("/api/admin/analytics", async (req, res) => {
+    const rawWindow = typeof req.query.window === "string" ? req.query.window : "";
+    const windowName = rawWindow === "" ? "7d" : rawWindow;
+    if (!["7d", "30d", "all"].includes(windowName)) {
+      return res.status(400).json({
+        error: "window must be one of 7d, 30d, all.",
+        code: "INVALID_WINDOW"
+      });
+    }
+
+    let snapshot;
+    try {
+      snapshot = await leaderboardStore.getSnapshot();
+    } catch (err) {
+      console.error("Analytics snapshot read failed.", err);
+      return res.status(503).json({
+        error: "Analytics unavailable right now. Try again soon."
+      });
+    }
+
+    // Capture a single Date and reuse it for the server-local "today"
+    // string AND the generatedAt timestamp. Two separate new Date() calls
+    // could straddle midnight server-side in rare cases, leaving the
+    // payload internally inconsistent (e.g. window dates from yesterday
+    // but generatedAt from today). Resolving today first also lets the
+    // cache key include it so the stored payload naturally falls off the
+    // server-local day boundary — matching the storage convention the
+    // game uses when writing daily-key dates — even when the snapshot
+    // and TTL haven't budged.
+    const nowDate = new Date();
+    const today = todayForAnalytics(nowDate);
+    const cacheKey = `${windowName}|${snapshot.updatedAt || ""}|${today}`;
+    const now = nowDate.getTime();
+    const cached = analyticsCache.get(cacheKey);
+    if (cached && now - cached.cachedAt < ANALYTICS_CACHE_TTL) {
+      res.setHeader("X-Analytics-Cache", "HIT");
+      return res.json(cached.payload);
+    }
+
+    let payload;
+    try {
+      payload = aggregateAnalytics(snapshot, {
+        window: windowName,
+        today,
+        tz: ANALYTICS_TZ,
+        generatedAt: nowDate.toISOString()
+      });
+    } catch (err) {
+      // 503 (not 500) so clients with retry semantics treat this as
+      // transient unavailability — matches the snapshot-read failure
+      // branch above and the rest of the admin endpoints.
+      console.error("Analytics aggregation failed.", err);
+      return res.status(503).json({
+        error: "Analytics aggregation failed."
+      });
+    }
+
+    // Bound cache size: keep at most 6 entries (3 windows × ~2 mtime
+    // bumps of headroom). Evict before insert and loop until under cap
+    // so the post-insert size never exceeds the bound. The earlier
+    // `> 6` form let the map grow to 7 before evicting one — fine in
+    // practice but contradicts the comment.
+    while (analyticsCache.size >= 6) {
+      const oldestKey = analyticsCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      analyticsCache.delete(oldestKey);
+    }
+    analyticsCache.set(cacheKey, { cachedAt: now, payload });
+    res.setHeader("X-Analytics-Cache", "MISS");
+    return res.json(payload);
   });
 
   router.delete("/api/admin/stats/profile/:id", async (req, res) => {

@@ -21,7 +21,12 @@ yarn-error.log
 .parcel-cache/
 .turbo/
 .next/
-public/dist/
+# Build output goes here, but the vendor/ subdir is committed (third-party
+# bundles served by the admin shell — keeps the runtime offline). We
+# negate the directory itself, not just files under it, so git lets the
+# negation re-include children.
+public/dist/*
+!public/dist/vendor/
 
 # Auto Claude data directory
 .auto-claude/

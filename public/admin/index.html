@@ -144,6 +144,18 @@
             >
               Data
             </button>
+            <button
+              id="admin-tab-analytics"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="analytics"
+              role="tab"
+              aria-controls="admin-panel-analytics"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Analytics
+            </button>
           </nav>
 
           <section
@@ -662,6 +674,186 @@
             </dialog>
           </section>
 
+          <section
+            id="admin-panel-analytics"
+            class="admin-slot"
+            data-panel="analytics"
+            role="tabpanel"
+            aria-labelledby="admin-tab-analytics"
+            tabindex="0"
+            hidden
+          >
+            <h3>Usage analytics</h3>
+            <p class="note">
+              Engagement and completion metrics aggregated server-side from
+              the leaderboard snapshot. Read-only; no event log, no external
+              telemetry.
+            </p>
+
+            <div
+              id="analyticsWindowControl"
+              class="analytics-window"
+              role="radiogroup"
+              aria-label="Time window"
+            >
+              <button
+                type="button"
+                class="analytics-window-btn"
+                data-window="7d"
+                role="radio"
+                aria-checked="true"
+                tabindex="0"
+              >
+                7 days
+              </button>
+              <button
+                type="button"
+                class="analytics-window-btn"
+                data-window="30d"
+                role="radio"
+                aria-checked="false"
+                tabindex="-1"
+              >
+                30 days
+              </button>
+              <button
+                type="button"
+                class="analytics-window-btn"
+                data-window="all"
+                role="radio"
+                aria-checked="false"
+                tabindex="-1"
+              >
+                All time
+              </button>
+            </div>
+            <p id="analyticsAsOf" class="muted analytics-as-of"></p>
+            <div id="analyticsStatus" class="message" role="status" aria-live="polite"></div>
+
+            <div id="analyticsCards" class="analytics-cards" aria-label="Summary metrics">
+              <article class="analytics-card" aria-labelledby="analyticsCardDau">
+                <h4 id="analyticsCardDau">DAU</h4>
+                <p class="analytics-card-value" data-metric="dau">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardWau">
+                <h4 id="analyticsCardWau">WAU</h4>
+                <p class="analytics-card-value" data-metric="wau">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardGames">
+                <h4 id="analyticsCardGames">Games in window</h4>
+                <p class="analytics-card-value" data-metric="gamesInWindow">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardWinRate">
+                <h4 id="analyticsCardWinRate">Win rate</h4>
+                <p class="analytics-card-value" data-metric="winRate">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardAvg">
+                <h4 id="analyticsCardAvg">Avg attempts</h4>
+                <p class="analytics-card-value" data-metric="avgAttempts">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardReplay">
+                <h4 id="analyticsCardReplay">Replay rate</h4>
+                <p class="analytics-card-value" data-metric="replayRate">—</p>
+              </article>
+              <article class="analytics-card" aria-labelledby="analyticsCardProfiles">
+                <h4 id="analyticsCardProfiles">Profiles</h4>
+                <p class="analytics-card-value" data-metric="profileCount">—</p>
+              </article>
+            </div>
+
+            <section class="analytics-chart-block" aria-labelledby="analyticsActivityHeading">
+              <h4 id="analyticsActivityHeading">Activity over time</h4>
+              <div class="analytics-chart-wrap">
+                <canvas
+                  id="analyticsActivityChart"
+                  role="img"
+                  aria-describedby="analyticsActivityTable"
+                  aria-label="Daily active profiles and games per day"
+                ></canvas>
+              </div>
+              <details>
+                <summary>Data table</summary>
+                <div class="admin-table-wrap">
+                  <table id="analyticsActivityTable" class="admin-table">
+                    <thead>
+                      <tr><th scope="col">Date</th><th scope="col">DAU</th><th scope="col">Games</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
+            <section class="analytics-chart-block" aria-labelledby="analyticsAttemptsHeading">
+              <h4 id="analyticsAttemptsHeading">Attempts distribution</h4>
+              <div class="analytics-chart-wrap">
+                <canvas
+                  id="analyticsAttemptsChart"
+                  role="img"
+                  aria-describedby="analyticsAttemptsTable"
+                  aria-label="Histogram of winning attempt counts plus DNF"
+                ></canvas>
+              </div>
+              <details>
+                <summary>Data table</summary>
+                <div class="admin-table-wrap">
+                  <table id="analyticsAttemptsTable" class="admin-table">
+                    <thead>
+                      <tr><th scope="col">Bucket</th><th scope="col">Games</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
+            <section class="analytics-chart-block" aria-labelledby="analyticsLanguageHeading">
+              <h4 id="analyticsLanguageHeading">Language mix</h4>
+              <div class="analytics-chart-wrap">
+                <canvas
+                  id="analyticsLanguageChart"
+                  role="img"
+                  aria-describedby="analyticsLanguageTable"
+                  aria-label="Game count per language in the selected window"
+                ></canvas>
+              </div>
+              <details>
+                <summary>Data table</summary>
+                <div class="admin-table-wrap">
+                  <table id="analyticsLanguageTable" class="admin-table">
+                    <thead>
+                      <tr><th scope="col">Language</th><th scope="col">Games</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+
+            <section class="analytics-chart-block" aria-labelledby="analyticsHourHeading">
+              <h4 id="analyticsHourHeading">Time-of-day histogram</h4>
+              <div class="analytics-chart-wrap">
+                <canvas
+                  id="analyticsHourChart"
+                  role="img"
+                  aria-describedby="analyticsHourTable"
+                  aria-label="Game count per hour in the operator local timezone"
+                ></canvas>
+              </div>
+              <details>
+                <summary>Data table</summary>
+                <div class="admin-table-wrap">
+                  <table id="analyticsHourTable" class="admin-table">
+                    <thead>
+                      <tr><th scope="col">Hour</th><th scope="col">Games</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+          </section>
+
           <div id="workspaceStatus" class="message" role="status" aria-live="polite"></div>
         </section>
       </section>
@@ -672,6 +864,12 @@
       <span id="adminUpdated">Session locked</span>
     </footer>
 
+    <!-- No defer here: app.js below is parser-blocking, so it runs DURING
+         parsing while a deferred Chart.js would run AFTER. That ordering
+         left window.Chart undefined on the first analytics render and the
+         charts only appeared on a window-switch re-render. Both scripts
+         execute in source order without defer. -->
+    <script src="/dist/vendor/chart.umd.min.js"></script>
     <script src="/admin/app.js"></script>
   </body>
 </html>

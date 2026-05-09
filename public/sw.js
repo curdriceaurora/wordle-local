@@ -1,4 +1,9 @@
-const CACHE_NAME = 'wordle-cache-v1';
+// v2: admin shell now loads /dist/vendor/chart.umd.min.js for the
+// Analytics tab. Existing browsers with v1 cached would otherwise serve
+// the old /admin/app.js (no chart code) and 503 the new vendor URL on
+// offline loads, leaving window.Chart undefined. Bumping the cache name
+// forces a precache refresh on activate.
+const CACHE_NAME = 'wordle-cache-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -10,7 +15,8 @@ const STATIC_ASSETS = [
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
-  '/admin/app.js'
+  '/admin/app.js',
+  '/dist/vendor/chart.umd.min.js'
 ];
 
 self.addEventListener('install', (event) => {
