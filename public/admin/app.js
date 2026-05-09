@@ -4059,16 +4059,12 @@ if (challengeAdminLbCloseBtnEl) {
   });
 }
 
-// Plumb the Challenges tab into the existing tab-switch dispatcher and
-// auto-load on unlock. Done at the bottom so the function refs above
-// already exist when these listeners fire.
-const _origTabSwitchActions = window.activateTab;
-// Patch the tab-switch handler the existing code uses by reading the
-// activeTab on every render. Simpler approach: hook into the
-// renderTabs flow by listening for clicks on the Challenges nav button.
-const _challengesAdminNavBtn = document.getElementById("admin-tab-challenges");
-if (_challengesAdminNavBtn) {
-  _challengesAdminNavBtn.addEventListener("click", () => {
+// Auto-load the Challenges tab when the operator clicks its nav button.
+// The existing tab-switch dispatcher in this file uses a click-based
+// model, so we hook in here without patching it.
+const challengesAdminNavBtn = document.getElementById("admin-tab-challenges");
+if (challengesAdminNavBtn) {
+  challengesAdminNavBtn.addEventListener("click", () => {
     if (state?.unlocked && !state?.challengesAdminLoading) {
       loadChallengesAdmin().catch(() => {});
     }

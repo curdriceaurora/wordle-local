@@ -1774,8 +1774,9 @@ const challengeState = {
 };
 
 function showChallengePanelOnly(idOrNull) {
-  // Hide all challenge panels and the existing main panels, then show
-  // the one we want. Falls back to existing UI if idOrNull is null.
+  // Hide all CHALLENGE panels, then show the one we want. Non-challenge
+  // panels (createPanel/playPanel/etc.) are managed elsewhere — this
+  // function intentionally only owns the challenge-mode UI subtree.
   const challengePanels = [
     challengeListPanelEl, challengePlayPanelEl,
     challengeSummaryPanelEl, challengeLeaderboardPanelEl
@@ -1847,8 +1848,14 @@ function renderChallengeList() {
     card.appendChild(title);
     const meta = document.createElement('p');
     meta.className = 'note';
-    const wlen = ch.wordLength ? `${ch.wordLength}-letter` : '';
-    meta.textContent = `${ch.puzzleCount} puzzles · ${wlen} · ${ch.timeBudgetSeconds}s budget · ${ch.maxGuesses} guesses each · replay: ${ch.replayPolicy}`;
+    // Build the meta segments conditionally so wordLength=null
+    // doesn't render as an empty "·  ·" segment.
+    const metaSegments = [`${ch.puzzleCount} puzzles`];
+    if (ch.wordLength) metaSegments.push(`${ch.wordLength}-letter`);
+    metaSegments.push(`${ch.timeBudgetSeconds}s budget`);
+    metaSegments.push(`${ch.maxGuesses} guesses each`);
+    metaSegments.push(`replay: ${ch.replayPolicy}`);
+    meta.textContent = metaSegments.join(' · ');
     card.appendChild(meta);
     const actions = document.createElement('div');
     actions.className = 'form-row';
@@ -1991,19 +1998,35 @@ function renderChallengeBoard() {
   }
   const length = active.length || (challenge.wordLength || 5);
   const maxGuesses = challenge.maxGuesses;
+  // The server projection includes a `feedbacks` array (one row per
+  // historical guess, each row is an array of "correct" / "present" /
+  // "absent" strings). The active puzzle's word is hidden so the
+  // client can't compute these locally — render them server-side.
+  const feedbacks = Array.isArray(active.feedbacks) ? active.feedbacks : [];
   for (let r = 0; r < maxGuesses; r++) {
-    const row = document.createElement('div');
-    row.className = 'row';
+    const rowEl = document.createElement('div');
+    rowEl.className = 'row';
     let guessForRow = active.guesses[r] || '';
-    if (r === active.guesses.length) guessForRow = challengeState.pendingGuess;
+    let rowFeedback = null;
+    if (r < active.guesses.length) {
+      rowFeedback = feedbacks[r] || null;
+    } else if (r === active.guesses.length) {
+      guessForRow = challengeState.pendingGuess;
+    }
     for (let c = 0; c < length; c++) {
       const tile = document.createElement('div');
       tile.className = 'tile';
       const letter = guessForRow[c] || '';
       tile.textContent = letter;
-      challengeBoardEl.appendChild(tile);
+      if (rowFeedback && rowFeedback[c]) {
+        // Reuse the same color classes as the daily/created play UI
+        // (.absent, .present, .correct) so the styling is unified
+        // and inherits any operator theme overrides.
+        tile.classList.add(rowFeedback[c]);
+      }
+      rowEl.appendChild(tile);
     }
-    challengeBoardEl.appendChild(row);
+    challengeBoardEl.appendChild(rowEl);
   }
 }
 

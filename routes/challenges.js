@@ -19,6 +19,7 @@ function createChallengesRouter(deps) {
     challengeResultsStore,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
+    getDictionary,
     getAnswerDictionary,
     dictionaryHasWord,
     dictionaryRandomWord,
@@ -30,8 +31,20 @@ function createChallengesRouter(deps) {
   if (!challengeConfigStore || !challengeResultsStore) {
     throw new TypeError("createChallengesRouter: challenge stores are required.");
   }
-  if (typeof getAnswerDictionary !== "function" || typeof evaluateGuess !== "function") {
+  if (typeof getAnswerDictionary !== "function"
+    || typeof getDictionary !== "function"
+    || typeof evaluateGuess !== "function") {
     throw new TypeError("createChallengesRouter: dictionary helpers are required.");
+  }
+
+  // Helper: build the full session projection that the client
+  // consumes — including server-computed per-letter feedback for every
+  // historical guess. Centralized so every endpoint that returns a
+  // session uses the same shape.
+  function projectForResponse(session, challenge, now = new Date()) {
+    return challengeEngine.projectSessionForPlayer({
+      session, challenge, evaluateGuess, now
+    });
   }
 
   const router = express.Router();
@@ -170,7 +183,7 @@ function createChallengesRouter(deps) {
       if (session) {
         session = await settleIfTimedOut(session, challenge, now);
         if (session.status === "in-progress" || session.status === "pending") {
-          const projected = challengeEngine.projectSessionForPlayer({ session, challenge, now });
+          const projected = projectForResponse(session, challenge, now);
           return res.status(200).json({ ok: true, session: projected, resumed: true });
         }
         // Otherwise fall through and create a new session per replay policy.
@@ -204,7 +217,7 @@ function createChallengesRouter(deps) {
         startedAt: now.toISOString(),
         puzzles
       });
-      const projected = challengeEngine.projectSessionForPlayer({ session: created, challenge, now });
+      const projected = projectForResponse(created, challenge, now);
       return res.status(201).json({ ok: true, session: projected, resumed: false });
     } catch (err) {
       return challengeError(res, err, "start");
@@ -231,9 +244,7 @@ function createChallengesRouter(deps) {
       const ctx = await loadSessionAndChallenge(req, res);
       if (!ctx) return;
       const settled = await settleIfTimedOut(ctx.session, ctx.challenge);
-      const projected = challengeEngine.projectSessionForPlayer({
-        session: settled, challenge: ctx.challenge, now: new Date()
-      });
+      const projected = projectForResponse(settled, ctx.challenge);
       return res.json({ ok: true, session: projected });
     } catch (err) {
       return challengeError(res, err, "get session");
@@ -257,7 +268,13 @@ function createChallengesRouter(deps) {
       if (!/^[A-Z]+$/.test(rawGuess)) {
         return res.status(400).json({ error: "guess must be A–Z only.", code: "INVALID_REQUEST" });
       }
-      const dict = getAnswerDictionary(challenge.lang);
+      // Use the FULL guess dictionary here — answer dictionary is the
+      // narrower pool used to PICK target words, but valid guesses
+      // are anything in the language's full vocabulary, matching how
+      // /api/guess works for daily/created puzzles. Provider-imported
+      // languages with curated answer pools were rejecting valid
+      // guesses before this fix.
+      const guessDict = getDictionary(challenge.lang);
       // Length-aware: each puzzle has a length determined at start;
       // mismatched-length guesses are rejected without consuming a try.
       // Find the active puzzle (first not-solved-not-exhausted).
@@ -281,7 +298,7 @@ function createChallengesRouter(deps) {
       }
       // Allow non-dictionary guesses if the dict is unavailable; reject
       // bogus guesses if the dict is loaded. Mirror /api/word's stance.
-      if (dict && !dictionaryHasWord(dict, rawGuess)) {
+      if (guessDict && !dictionaryHasWord(guessDict, rawGuess)) {
         return res.status(400).json({
           error: "Not in word list.",
           code: "INVALID_GUESS"
@@ -327,9 +344,7 @@ function createChallengesRouter(deps) {
         patch.score = scoreFinal;
       }
       const updated = await challengeResultsStore.update(session.id, patch);
-      const projected = challengeEngine.projectSessionForPlayer({
-        session: updated, challenge, now: new Date()
-      });
+      const projected = projectForResponse(updated, challenge);
       // Submit score to the leaderboard projection on completion.
       // Surface the per-guess feedback row that the client renders.
       return res.json({
@@ -380,9 +395,7 @@ function createChallengesRouter(deps) {
       if (session.status !== "in-progress" && session.status !== "pending") {
         // Idempotent: finishing a terminal session returns the same
         // settled state.
-        const projected = challengeEngine.projectSessionForPlayer({
-          session, challenge, now: new Date()
-        });
+        const projected = projectForResponse(session, challenge);
         return res.json({ ok: true, session: projected, alreadyFinal: true });
       }
       // Player can finish early — abandoning unfinished puzzles. Score
@@ -405,9 +418,7 @@ function createChallengesRouter(deps) {
         elapsedSeconds: elapsed,
         score
       });
-      const projected = challengeEngine.projectSessionForPlayer({
-        session: updated, challenge, now
-      });
+      const projected = projectForResponse(updated, challenge, now);
       return res.json({ ok: true, session: projected, alreadyFinal: false });
     } catch (err) {
       return challengeError(res, err, "finish");

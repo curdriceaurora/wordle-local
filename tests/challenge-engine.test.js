@@ -21,6 +21,30 @@ const baseChallenge = {
   replayPolicy: "best"
 };
 
+// Minimal stand-in for server.js evaluateGuess. Returns one entry per
+// letter: "correct" | "present" | "absent". The full evaluator is
+// tested elsewhere; this mock is enough to exercise the projection.
+function fakeEvaluate(guess, answer) {
+  const len = answer.length;
+  const result = new Array(len);
+  const remaining = {};
+  for (let i = 0; i < len; i++) {
+    if (guess[i] === answer[i]) result[i] = "correct";
+    else {
+      result[i] = "absent";
+      remaining[answer[i]] = (remaining[answer[i]] || 0) + 1;
+    }
+  }
+  for (let i = 0; i < len; i++) {
+    if (result[i] === "correct") continue;
+    if (remaining[guess[i]] > 0) {
+      result[i] = "present";
+      remaining[guess[i]] -= 1;
+    }
+  }
+  return result;
+}
+
 function makeSession(overrides = {}) {
   return {
     id: "s1",
@@ -111,7 +135,7 @@ describe("computeRemainingSeconds + hasTimedOut", () => {
 describe("projectSessionForPlayer (anti-cheat: hide unsolved words)", () => {
   test("active puzzle word is HIDDEN", () => {
     const session = makeSession();
-    const projected = projectSessionForPlayer({ session, challenge: baseChallenge });
+    const projected = projectSessionForPlayer({ session, challenge: baseChallenge, evaluateGuess: fakeEvaluate });
     expect(projected.puzzles[0].word).toBeUndefined();
     expect(projected.puzzles[1].word).toBeUndefined();
     expect(projected.puzzles[2].word).toBeUndefined();
@@ -125,7 +149,7 @@ describe("projectSessionForPlayer (anti-cheat: hide unsolved words)", () => {
         { index: 2, word: "STORM", guesses: [], solved: false }
       ]
     });
-    const projected = projectSessionForPlayer({ session, challenge: baseChallenge });
+    const projected = projectSessionForPlayer({ session, challenge: baseChallenge, evaluateGuess: fakeEvaluate });
     expect(projected.puzzles[0].word).toBe("CRANE");
     expect(projected.puzzles[1].word).toBeUndefined();
     expect(projected.puzzles[2].word).toBeUndefined();
@@ -143,7 +167,7 @@ describe("projectSessionForPlayer (anti-cheat: hide unsolved words)", () => {
         { index: 2, word: "STORM", guesses: [], solved: false }
       ]
     });
-    const projected = projectSessionForPlayer({ session, challenge: baseChallenge });
+    const projected = projectSessionForPlayer({ session, challenge: baseChallenge, evaluateGuess: fakeEvaluate });
     expect(projected.puzzles[0].word).toBe("CRANE"); // exhausted, revealed
     expect(projected.puzzles[1].word).toBeUndefined(); // active, hidden
     expect(projected.puzzles[2].word).toBeUndefined(); // not yet active, hidden
@@ -151,11 +175,44 @@ describe("projectSessionForPlayer (anti-cheat: hide unsolved words)", () => {
 
   test("terminal session reveals all words", () => {
     const session = makeSession({ status: "completed" });
-    const projected = projectSessionForPlayer({ session, challenge: baseChallenge });
+    const projected = projectSessionForPlayer({ session, challenge: baseChallenge, evaluateGuess: fakeEvaluate });
     expect(projected.puzzles[0].word).toBe("CRANE");
     expect(projected.puzzles[1].word).toBe("BREAD");
     expect(projected.puzzles[2].word).toBe("STORM");
     expect(projected.remainingSeconds).toBe(0);
+  });
+
+  test("projection includes per-letter feedbacks for every historical guess", () => {
+    const session = makeSession({
+      puzzles: [
+        {
+          index: 0, word: "CRANE",
+          guesses: ["SLATE", "CRANE"],
+          solved: true
+        },
+        { index: 1, word: "BREAD", guesses: [], solved: false },
+        { index: 2, word: "STORM", guesses: [], solved: false }
+      ]
+    });
+    const projected = projectSessionForPlayer({
+      session, challenge: baseChallenge, evaluateGuess: fakeEvaluate
+    });
+    const p0 = projected.puzzles[0];
+    expect(Array.isArray(p0.feedbacks)).toBe(true);
+    expect(p0.feedbacks).toHaveLength(2);
+    // SLATE vs CRANE: S=absent, L=absent, A=correct, T=absent, E=correct
+    expect(p0.feedbacks[0]).toEqual(["absent", "absent", "correct", "absent", "correct"]);
+    // CRANE vs CRANE: all correct
+    expect(p0.feedbacks[1]).toEqual(["correct", "correct", "correct", "correct", "correct"]);
+    // Empty puzzles → empty feedbacks
+    expect(projected.puzzles[1].feedbacks).toEqual([]);
+    expect(projected.puzzles[2].feedbacks).toEqual([]);
+  });
+
+  test("projection requires evaluateGuess and throws otherwise", () => {
+    expect(() => projectSessionForPlayer({
+      session: makeSession(), challenge: baseChallenge
+    })).toThrow();
   });
 
   test("activePuzzleIndex tracks first unfinished puzzle", () => {
@@ -166,7 +223,7 @@ describe("projectSessionForPlayer (anti-cheat: hide unsolved words)", () => {
         { index: 2, word: "STORM", guesses: [], solved: false }
       ]
     });
-    const projected = projectSessionForPlayer({ session, challenge: baseChallenge });
+    const projected = projectSessionForPlayer({ session, challenge: baseChallenge, evaluateGuess: fakeEvaluate });
     expect(projected.activePuzzleIndex).toBe(1);
   });
 });

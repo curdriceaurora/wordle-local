@@ -1124,11 +1124,17 @@ function createAdminRouter(deps) {
     router.get("/api/admin/challenges", async (req, res) => {
       try {
         const all = await challengeConfigStore.listAll();
-        // Counts of sessions per challenge for the admin list.
+        // Single-pass session count by challenge id — the previous
+        // .map(c => allSessions.filter(...)) was O(challenges × sessions)
+        // and would scale poorly once many sessions accumulated.
         const allSessions = (await challengeResultsStore.getSnapshot()).sessions;
+        const countByChallenge = new Map();
+        for (const s of allSessions) {
+          countByChallenge.set(s.challengeId, (countByChallenge.get(s.challengeId) || 0) + 1);
+        }
         const summary = all.map((c) => ({
           ...c,
-          sessionCount: allSessions.filter((s) => s.challengeId === c.id).length
+          sessionCount: countByChallenge.get(c.id) || 0
         }));
         return res.json({
           ok: true,
@@ -1146,10 +1152,10 @@ function createAdminRouter(deps) {
       // these are the operator's softer caps surfaced as a 400.
       if (Number.isInteger(input.timeBudgetSeconds) && Number.isInteger(challengeMaxTimeBudgetSeconds)
         && input.timeBudgetSeconds > challengeMaxTimeBudgetSeconds) {
-        const e = new Error(`timeBudgetSeconds exceeds operator cap of ${challengeMaxTimeBudgetSeconds}.`);
-        e.code = "INVALID_REQUEST";
-        e.constructor = ChallengeConfigStoreError;
-        throw new ChallengeConfigStoreError("INVALID_REQUEST", e.message);
+        throw new ChallengeConfigStoreError(
+          "INVALID_REQUEST",
+          `timeBudgetSeconds exceeds operator cap of ${challengeMaxTimeBudgetSeconds}.`
+        );
       }
       if (Number.isInteger(input.puzzleCount) && Number.isInteger(challengeMaxPuzzles)
         && input.puzzleCount > challengeMaxPuzzles) {

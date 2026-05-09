@@ -3315,6 +3315,7 @@ app.use(
     challengeResultsStore,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
+    getDictionary,
     getAnswerDictionary,
     dictionaryHasWord,
     dictionaryRandomWord,
