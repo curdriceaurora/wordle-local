@@ -20,7 +20,7 @@
         "required": ["date", "word", "lang"],
         "properties": {
           "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
-          "word": { "type": "string", "pattern": "^[A-Z]{1,15}$" },
+          "word": { "type": "string", "pattern": "^[A-Z]{3,12}$" },
           "lang": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
           "notes": { "type": "string", "maxLength": 200 }
         }

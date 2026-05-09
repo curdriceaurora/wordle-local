@@ -404,6 +404,20 @@ describe("reconcileDailyWord", () => {
     expect(writes).toHaveLength(0);
   });
 
+  test("rejects malformed pool entries that fall outside playable length", async () => {
+    // Words 1-, 2-, 13-letter etc. should be filtered out by
+    // readAnswerPool since the game can't accept them downstream.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-pool-len-"));
+    const file = path.join(dir, "pool.txt");
+    fs.writeFileSync(
+      file,
+      "AB\nABC\nABCDEFGHIJKLM\nCRANE\nBREAD\n",
+      "utf8"
+    );
+    const out = await readAnswerPool(file);
+    expect(out).toEqual(["ABC", "CRANE", "BREAD"]);
+  });
+
   test("DST-forward day still triggers exactly one write", async () => {
     // 2026-03-08 is the DST-forward day in America/New_York. The reconciler
     // ticking at 03:30 EDT (07:30Z) and again at 04:00 EDT (08:00Z) should

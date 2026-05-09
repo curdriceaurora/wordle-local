@@ -385,6 +385,31 @@ async function claimDirectDataWriteSlot() {
   }
 }
 
+// Strict mutex around data/word.json so a manual POST /api/word and the
+// scheduler reconciler can't both decide-then-write concurrently.
+// claimDirectDataWriteSlot above is a counter (multiple direct writers
+// can hold it at once — the counter exists so the backup/restore
+// busy-check sees activity), which is the right primitive for
+// serializing against backup/restore but doesn't prevent a stale
+// reconciler decision from clobbering a fresh manual write. This mutex
+// is exclusive: every word.json write path acquires it before its
+// decide-then-save sequence so manual override vs scheduler is
+// strictly serialized.
+let wordWriteSerial = Promise.resolve();
+async function withWordWriteLock(fn) {
+  const previous = wordWriteSerial;
+  let release;
+  wordWriteSerial = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 const leaderboardStore = new LeaderboardStore({
   filePath: LEADERBOARD_DATA_PATH,
   maxProfiles: ENV_LEADERBOARD_MAX_PROFILES,
@@ -1232,16 +1257,19 @@ let schedulerIntervalRef = null;
 // the in-memory wordDataCache. All errors are logged and swallowed because
 // the caller (boot path / setInterval) cannot meaningfully react.
 async function runSchedulerReconcile(reason = "tick") {
-  // Claim the direct-write slot so a concurrent backup/restore can't
-  // race us — both `reconcileDailyWord` (which writes data/word.json)
-  // and `recordReconcile` (which writes data/schedule.json) mutate
-  // files in data/. Without this the scheduler tick could mutate
-  // mid-archive (torn backup) or mid-restore (overwrite the swapped
-  // file). The /api gate only blocks request handlers; background
-  // ticks need their own claim.
+  // Two layers of protection:
+  // 1) claimDirectDataWriteSlot — gates against backup/restore so we
+  //    don't mutate mid-archive (torn backup) or mid-restore (clobber
+  //    the swapped file). This is a counter, not exclusive.
+  // 2) withWordWriteLock — strict mutex against POST /api/word. The
+  //    reconciler reads wordDataCache, awaits answer-pool I/O for
+  //    auto-rotate, and then writes; without exclusive serialization
+  //    a manual write that landed during the await would be silently
+  //    overwritten even though manual writes are documented to win
+  //    for the rest of the day.
   const releaseSlot = await claimDirectDataWriteSlot();
   try {
-    return await runSchedulerReconcileInner(reason);
+    return await withWordWriteLock(() => runSchedulerReconcileInner(reason));
   } finally {
     releaseSlot();
   }
@@ -2772,6 +2800,7 @@ app.use(
     adminJobsStore,
     appConfigStore,
     classesStore,
+    scheduleStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData: () => {
       // Re-read data/word.json from disk and refresh the in-memory cache
@@ -3005,43 +3034,42 @@ app.get("/api/word", requireAdminAccess, (req, res) => {
 });
 
 app.post("/api/word", requireAdminAccess, async (req, res) => {
-  // Claim the direct-write slot BEFORE validating. resolveLang() reads
-  // the live language registry, which a concurrent restore can swap
-  // out from under us. If we validated first and waited second, an
-  // archive that drops support for the requested lang would still let
-  // this request 200 — and persist a now-unsupported word over the
-  // freshly-restored data/word.json. Claiming first guarantees the
-  // restore (if any) has fully landed before we resolve lang/word.
+  // Two layers (see runSchedulerReconcile for the full rationale):
+  // 1) claimDirectDataWriteSlot waits for backup/restore to clear.
+  // 2) withWordWriteLock serializes against the scheduler reconciler
+  //    so a concurrent tick can't decide-then-write over our manual
+  //    override. Without this strict mutex, the reconciler could
+  //    snapshot wordDataCache, await answer-pool I/O, and then
+  //    overwrite a manual write that landed during the await.
   const releaseSlot = await claimDirectDataWriteSlot();
   try {
-    const word = normalizeWord(req.body.word);
-    const date = req.body.date ? String(req.body.date) : null;
-    const lang = resolveLang(req.body.lang);
-    if (!lang) {
-      return res.status(400).json({ error: "Unknown language." });
-    }
-
-    try {
-      assertWord(word, getMinLengthForLang(lang));
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
-    }
-
-    const data = {
-      word,
-      lang,
-      date: date || null,
-      updatedAt: new Date().toISOString()
-    };
-
-    try {
-      await saveWordDataAtomic(data);
-    } catch (err) {
-      console.error("Failed to persist daily word data.", err);
-      return res.status(500).json({ error: "Could not save daily word right now." });
-    }
-    wordDataCache = data;
-    res.json({ ok: true, data });
+    return await withWordWriteLock(async () => {
+      const word = normalizeWord(req.body.word);
+      const date = req.body.date ? String(req.body.date) : null;
+      const lang = resolveLang(req.body.lang);
+      if (!lang) {
+        return res.status(400).json({ error: "Unknown language." });
+      }
+      try {
+        assertWord(word, getMinLengthForLang(lang));
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      const data = {
+        word,
+        lang,
+        date: date || null,
+        updatedAt: new Date().toISOString()
+      };
+      try {
+        await saveWordDataAtomic(data);
+      } catch (err) {
+        console.error("Failed to persist daily word data.", err);
+        return res.status(500).json({ error: "Could not save daily word right now." });
+      }
+      wordDataCache = data;
+      return res.json({ ok: true, data });
+    });
   } finally {
     releaseSlot();
   }

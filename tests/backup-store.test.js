@@ -40,6 +40,7 @@ async function makeProjectRoot() {
     "data/admin-jobs.schema.json",
     "data/app-config.schema.json",
     "data/classes.schema.json",
+    "data/schedule.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     await copyFileFromRepo(rel, dir);
@@ -87,6 +88,18 @@ async function makeProjectRoot() {
       version: 1,
       updatedAt: "2026-01-01T00:00:00.000Z",
       classes: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await fsp.writeFile(
+    path.join(dir, "data", "schedule.json"),
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      timezone: "UTC",
+      auto_rotate: false,
+      retention_days: 90,
+      scheduled_words: []
     }, null, 2)}\n`,
     "utf8"
   );
