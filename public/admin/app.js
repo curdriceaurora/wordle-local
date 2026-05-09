@@ -3033,12 +3033,19 @@ function renderScheduleStrip(snapshot) {
   setStripField("timezone", snapshot.timezone || "—");
   let todayLocal = "—";
   try {
-    todayLocal = new Intl.DateTimeFormat("en-CA", {
+    // Build YYYY-MM-DD from formatToParts so we don't depend on .format()
+    // emitting a stable layout (it doesn't, per ECMAScript spec).
+    const dtf = new Intl.DateTimeFormat("en-CA", {
       timeZone: snapshot.timezone || "UTC",
       year: "numeric",
       month: "2-digit",
       day: "2-digit"
-    }).format(new Date());
+    });
+    const parts = dtf.formatToParts(new Date());
+    const y = parts.find((p) => p.type === "year")?.value;
+    const m = parts.find((p) => p.type === "month")?.value;
+    const d = parts.find((p) => p.type === "day")?.value;
+    if (y && m && d) todayLocal = `${y}-${m}-${d}`;
   } catch (_err) {
     // best-effort; bad zone surfaces in the existing form
   }

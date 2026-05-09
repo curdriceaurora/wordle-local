@@ -561,13 +561,25 @@ function createAdminRouter(deps) {
         // Compute the cutoff in the schedule's own zone — if we used
         // server-local "today" minus retention_days here we'd inadvertently
         // shift the cutoff away from the dates the entries are keyed by.
-        const todayLocal = new Intl.DateTimeFormat("en-CA", {
+        // Build YYYY-MM-DD via formatToParts because Intl.DateTimeFormat
+        // .format() output isn't a stable machine-readable layout across
+        // runtimes (en-CA can swap variants, etc.).
+        const dtf = new Intl.DateTimeFormat("en-CA", {
           timeZone: snapshot.timezone,
           year: "numeric",
           month: "2-digit",
           day: "2-digit"
-        }).format(new Date());
-        const [y, m, d] = todayLocal.split("-").map(Number);
+        });
+        const parts = dtf.formatToParts(new Date());
+        const y = parseInt(parts.find((p) => p.type === "year")?.value, 10);
+        const m = parseInt(parts.find((p) => p.type === "month")?.value, 10);
+        const d = parseInt(parts.find((p) => p.type === "day")?.value, 10);
+        if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) {
+          throw new ScheduleStoreError(
+            "INVALID_REQUEST",
+            `Could not derive today's date in zone ${snapshot.timezone}.`
+          );
+        }
         const cutoffMs = Date.UTC(y, m - 1, d) - snapshot.retention_days * 24 * 60 * 60 * 1000;
         const cutoff = new Date(cutoffMs);
         const cutoffStr = `${cutoff.getUTCFullYear()}-${String(cutoff.getUTCMonth() + 1).padStart(2, "0")}-${String(cutoff.getUTCDate()).padStart(2, "0")}`;
