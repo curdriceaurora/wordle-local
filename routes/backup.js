@@ -217,6 +217,8 @@ function createBackupRouter(deps) {
     webhookStore,
     webhookDeliveryStore,
     pushSubscriptionStore,
+    challengeConfigStore,
+    challengeResultsStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData,
     providerImportQueueActiveRef,
@@ -244,6 +246,8 @@ function createBackupRouter(deps) {
     if (webhookStore?.load) await webhookStore.load();
     if (webhookDeliveryStore?.load) await webhookDeliveryStore.load();
     if (pushSubscriptionStore?.load) await pushSubscriptionStore.load();
+    if (challengeConfigStore?.load) await challengeConfigStore.load();
+    if (challengeResultsStore?.load) await challengeResultsStore.load();
     if (appConfigStore?.loadSync) appConfigStore.loadSync();
     if (languageRegistryStore?.loadSync) languageRegistryStore.loadSync();
   }
@@ -263,7 +267,9 @@ function createBackupRouter(deps) {
       scheduleStore?.commitQueue,
       webhookStore?.commitQueue,
       webhookDeliveryStore?.commitQueue,
-      pushSubscriptionStore?.commitQueue
+      pushSubscriptionStore?.commitQueue,
+      challengeConfigStore?.commitQueue,
+      challengeResultsStore?.commitQueue
     ].filter(Boolean);
     if (queues.length === 0) return;
     await Promise.allSettled(queues);
@@ -628,6 +634,8 @@ function createBackupRouter(deps) {
         ["webhookStore", () => webhookStore?.reload?.()],
         ["webhookDeliveryStore", () => webhookDeliveryStore?.reload?.()],
         ["pushSubscriptionStore", () => pushSubscriptionStore?.reload?.()],
+        ["challengeConfigStore", () => challengeConfigStore?.reload?.()],
+        ["challengeResultsStore", () => challengeResultsStore?.reload?.()],
         ["appConfigStore", () => appConfigStore?.reloadSync?.()],
         ["languageRegistryStore", () => languageRegistryStore?.reloadSync?.()],
         ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()],

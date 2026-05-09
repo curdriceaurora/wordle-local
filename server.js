@@ -30,6 +30,15 @@ const {
 const { NotificationService } = require("./lib/notification-service");
 const { DailyNotificationScheduler } = require("./lib/daily-notification-scheduler");
 const { VapidStore } = require("./lib/vapid-store");
+const {
+  ChallengeConfigStore,
+  ChallengeConfigStoreError
+} = require("./lib/challenge-config-store");
+const {
+  ChallengeResultsStore,
+  ChallengeResultsStoreError
+} = require("./lib/challenge-results-store");
+const challengeEngine = require("./lib/challenge-engine");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -173,6 +182,12 @@ const PUSH_SUBSCRIPTIONS_DATA_PATH = process.env.PUSH_SUBSCRIPTIONS_STORE_PATH
 const VAPID_KEYS_DATA_PATH = process.env.VAPID_KEYS_STORE_PATH
   ? path.resolve(process.env.VAPID_KEYS_STORE_PATH)
   : path.join(__dirname, "data", "vapid-keys.json");
+const CHALLENGES_DATA_PATH = process.env.CHALLENGE_STORE_PATH
+  ? path.resolve(process.env.CHALLENGE_STORE_PATH)
+  : path.join(__dirname, "data", "challenges.json");
+const CHALLENGE_RESULTS_DATA_PATH = process.env.CHALLENGE_RESULTS_STORE_PATH
+  ? path.resolve(process.env.CHALLENGE_RESULTS_STORE_PATH)
+  : path.join(__dirname, "data", "challenge-results.json");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -339,6 +354,26 @@ const ENV_PUSH_VAPID_SUBJECT = (() => {
   }
   return raw;
 })();
+
+// Timed challenge mode. Feature flag plus safety upper bounds — the
+// schema also rejects out-of-range values, but env caps let an
+// operator further restrict their deployment.
+const ENV_CHALLENGE_MODE_ENABLED =
+  String(process.env.CHALLENGE_MODE_ENABLED || "true").toLowerCase() !== "false";
+const ENV_CHALLENGE_MAX_TIME_BUDGET_S = clampEnvBounded(
+  process.env.CHALLENGE_MAX_TIME_BUDGET_S,
+  1800,
+  30,
+  7200,
+  "CHALLENGE_MAX_TIME_BUDGET_S"
+);
+const ENV_CHALLENGE_MAX_PUZZLES = clampEnvBounded(
+  process.env.CHALLENGE_MAX_PUZZLES,
+  20,
+  1,
+  50,
+  "CHALLENGE_MAX_PUZZLES"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -1382,6 +1417,16 @@ const pushSubscriptionStore = new PushSubscriptionStore({
 const vapidStore = new VapidStore({
   filePath: VAPID_KEYS_DATA_PATH,
   logger: console
+});
+const challengeConfigStore = new ChallengeConfigStore({
+  filePath: CHALLENGES_DATA_PATH,
+  logger: console,
+  claimDirectDataWriteSlot
+});
+const challengeResultsStore = new ChallengeResultsStore({
+  filePath: CHALLENGE_RESULTS_DATA_PATH,
+  logger: console,
+  claimDirectDataWriteSlot
 });
 // Resolve runtime notifications config from app-config overrides (live)
 // with env-var seed fallbacks. Called every time scheduler/service
@@ -3055,6 +3100,8 @@ app.use(
     webhookStore,
     webhookDeliveryStore,
     pushSubscriptionStore,
+    challengeConfigStore,
+    challengeResultsStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData: () => {
       // Re-read data/word.json from disk and refresh the in-memory cache
@@ -3164,7 +3211,15 @@ app.use(
     webhookDefaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT,
     pushSubscriptionStore,
     notificationService,
-    PushSubscriptionStoreError
+    PushSubscriptionStoreError,
+    challengeConfigStore,
+    challengeResultsStore,
+    challengeEngine,
+    ChallengeConfigStoreError,
+    ChallengeResultsStoreError,
+    challengeModeEnabled: ENV_CHALLENGE_MODE_ENABLED,
+    challengeMaxTimeBudgetSeconds: ENV_CHALLENGE_MAX_TIME_BUDGET_S,
+    challengeMaxPuzzles: ENV_CHALLENGE_MAX_PUZZLES
   })
 );
 
@@ -3250,6 +3305,22 @@ app.use(
     pushSubscriptionStore,
     vapidStore,
     PushSubscriptionStoreError
+  })
+);
+
+const createChallengesRouter = require("./routes/challenges.js");
+app.use(
+  createChallengesRouter({
+    challengeConfigStore,
+    challengeResultsStore,
+    ChallengeConfigStoreError,
+    ChallengeResultsStoreError,
+    getAnswerDictionary,
+    dictionaryHasWord,
+    dictionaryRandomWord,
+    evaluateGuess,
+    isLanguageAvailable,
+    challengeModeEnabled: ENV_CHALLENGE_MODE_ENABLED
   })
 );
 
@@ -3355,6 +3426,16 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
 // Dependencies: wordDataCache, normalizeWord, getLocalDateString, renderDailyPage,
 //               renderDailyMissing
 // ============================================================================
+
+// Serve the SPA shell for /challenges so a direct link / browser
+// refresh lands on the challenge list instead of 404'ing through the
+// static handler. The page-level JS (public/app.js) detects the path
+// and shows only the challenge panels.
+app.get("/challenges", (req, res, next) => {
+  if (!ENV_CHALLENGE_MODE_ENABLED) return next();
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(PUBLIC_PATH, "index.html"));
+});
 
 app.get("/daily", (req, res) => {
   const data = wordDataCache;
@@ -3464,6 +3545,42 @@ async function startServer(listener = app.listen.bind(app)) {
   } catch (err) {
     console.error("[notify] scheduler boot failed:", err);
   }
+  // Restart recovery for timed-challenge sessions: any session whose
+  // time budget already expired during the downtime gets marked
+  // `timed-out` (with a final score). Sessions still within budget
+  // remain `in-progress` and resume cleanly.
+  if (ENV_CHALLENGE_MODE_ENABLED) {
+    try {
+      const inFlight = await challengeResultsStore.findInFlightAll();
+      const now = new Date();
+      for (const session of inFlight) {
+        const challenge = await challengeConfigStore.findById(session.challengeId);
+        if (!challenge) continue;
+        if (!challengeEngine.hasTimedOut({ session, challenge, now })) continue;
+        const elapsedSeconds = Math.min(
+          challenge.timeBudgetSeconds,
+          Math.max(0, Math.floor((now.getTime() - Date.parse(session.startedAt)) / 1000))
+        );
+        const score = challengeEngine.computeScore({
+          challenge,
+          puzzles: session.puzzles,
+          elapsedSeconds
+        });
+        try {
+          await challengeResultsStore.update(session.id, {
+            status: "timed-out",
+            finishedAt: now.toISOString(),
+            elapsedSeconds,
+            score
+          });
+        } catch (updateErr) {
+          console.warn(`[challenge] could not settle stuck session ${session.id}:`, updateErr.message);
+        }
+      }
+    } catch (err) {
+      console.error("[challenge] boot recovery failed:", err);
+    }
+  }
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3506,3 +3623,5 @@ module.exports.webhookService = webhookService;
 module.exports.pushSubscriptionStore = pushSubscriptionStore;
 module.exports.notificationService = notificationService;
 module.exports.dailyNotificationScheduler = dailyNotificationScheduler;
+module.exports.challengeConfigStore = challengeConfigStore;
+module.exports.challengeResultsStore = challengeResultsStore;

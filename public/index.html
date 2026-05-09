@@ -37,6 +37,7 @@
       <div class="top-actions">
         <a class="admin-link" href="/">Create</a>
         <a class="admin-link" href="/daily">Daily Word</a>
+        <a class="admin-link" href="/challenges" id="challengesNavLink" hidden>Challenges</a>
       </div>
       <div class="settings">
         <label class="toggle" for="themeSelect">
@@ -205,6 +206,64 @@
         <p id="errorMessage" class="note"></p>
         <p id="errorCountdown" class="note"></p>
         <a class="admin-link" href="/">Make a new puzzle</a>
+      </section>
+
+      <section id="challengeListPanel" class="panel hidden">
+        <h2>Timed challenges</h2>
+        <p class="note">Solve N puzzles inside a time budget. Server picks the words; the timer is server-authoritative — switching tabs doesn't pause it.</p>
+        <div id="challengeProfileRow" class="form-row">
+          <label>
+            Profile name
+            <input id="challengeProfileInput" type="text" maxlength="64" autocomplete="off" placeholder="Your name" />
+            <span class="hint">Used on the leaderboard. Stored on this device.</span>
+          </label>
+        </div>
+        <div id="challengeListBody"></div>
+        <p id="challengeListEmpty" class="note hidden">No active challenges right now.</p>
+      </section>
+
+      <section id="challengePlayPanel" class="panel hidden" aria-labelledby="challengePlayHead">
+        <header class="play-head">
+          <div>
+            <h2 id="challengePlayHead">Challenge</h2>
+            <p id="challengePlayMeta">Puzzle 1 of 3</p>
+          </div>
+          <div class="play-meta-right">
+            <strong id="challengeTimer" aria-live="polite">--:--</strong>
+            <span id="challengeScoreLine" class="hint"></span>
+            <button type="button" id="challengeQuitBtn" class="ghost">Quit</button>
+          </div>
+        </header>
+        <div id="challengeBoard" class="board" aria-label="Challenge board"></div>
+        <div id="challengeKeyboard" class="keyboard" aria-label="On-screen keyboard"></div>
+        <p id="challengePlayStatus" class="message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="challengeSummaryPanel" class="panel hidden">
+        <h2>Challenge complete</h2>
+        <div id="challengeSummaryBody"></div>
+        <div class="form-row">
+          <button type="button" id="challengeBackToListBtn">Back to challenges</button>
+          <button type="button" id="challengeViewLeaderboardBtn" class="ghost">View leaderboard</button>
+        </div>
+      </section>
+
+      <section id="challengeLeaderboardPanel" class="panel hidden">
+        <h2>Challenge leaderboard</h2>
+        <p id="challengeLeaderboardName" class="note"></p>
+        <table id="challengeLeaderboardTable" class="leaderboard-table">
+          <thead>
+            <tr>
+              <th scope="col">Rank</th>
+              <th scope="col">Player</th>
+              <th scope="col">Score</th>
+              <th scope="col">Solved</th>
+              <th scope="col">Time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" id="challengeBackToListFromBoardBtn">Back</button>
       </section>
     </main>
 

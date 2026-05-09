@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wordle-local/challenge-results.schema.json",
+  "title": "Timed challenge sessions and results",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "updatedAt", "sessions"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "challengeId",
+          "profileId",
+          "status",
+          "startedAt",
+          "puzzles"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "challengeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "profileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "profileName": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in-progress", "completed", "timed-out", "abandoned"]
+          },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": "string", "format": "date-time" },
+          "score": { "type": "integer", "minimum": 0 },
+          "elapsedSeconds": { "type": "integer", "minimum": 0 },
+          "puzzles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index", "word", "guesses", "solved"],
+              "properties": {
+                "index": { "type": "integer", "minimum": 0 },
+                "word": { "type": "string", "minLength": 3, "maxLength": 12, "pattern": "^[A-Z]+$" },
+                "guesses": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 3, "maxLength": 12, "pattern": "^[A-Z]+$" },
+                  "maxItems": 12
+                },
+                "solved": { "type": "boolean" },
+                "solvedAtMs": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

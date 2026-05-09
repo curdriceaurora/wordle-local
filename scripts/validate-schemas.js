@@ -39,6 +39,10 @@ const webhookDeliveriesSchemaPath = path.join(projectRoot, "data", "webhook-deli
 const webhookDeliveriesExamplePath = path.join(projectRoot, "data", "webhook-deliveries.example.json");
 const pushSubscriptionsSchemaPath = path.join(projectRoot, "data", "push-subscriptions.schema.json");
 const pushSubscriptionsExamplePath = path.join(projectRoot, "data", "push-subscriptions.example.json");
+const challengesSchemaPath = path.join(projectRoot, "data", "challenges.schema.json");
+const challengesExamplePath = path.join(projectRoot, "data", "challenges.example.json");
+const challengeResultsSchemaPath = path.join(projectRoot, "data", "challenge-results.schema.json");
+const challengeResultsExamplePath = path.join(projectRoot, "data", "challenge-results.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -131,6 +135,16 @@ function runSchemaChecks() {
       schemaPath: pushSubscriptionsSchemaPath,
       dataPath: pushSubscriptionsExamplePath,
       schemaLabel: "push subscriptions schema"
+    },
+    {
+      schemaPath: challengesSchemaPath,
+      dataPath: challengesExamplePath,
+      schemaLabel: "challenges schema"
+    },
+    {
+      schemaPath: challengeResultsSchemaPath,
+      dataPath: challengeResultsExamplePath,
+      schemaLabel: "challenge results schema"
     }
   ];
 

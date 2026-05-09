@@ -3824,6 +3824,257 @@ if (notifBroadcastFormEl) {
   });
 }
 
+// ── Admin Challenges tab ───────────────────────────────────────────────
+const challengesAdminStatusEl = document.getElementById("challengesAdminStatus");
+const challengeAdminFormEl = document.getElementById("challengeAdminForm");
+const challengeAdminIdEl = document.getElementById("challengeAdminId");
+const challengeAdminNameEl = document.getElementById("challengeAdminName");
+const challengeAdminLangEl = document.getElementById("challengeAdminLang");
+const challengeAdminWordLengthEl = document.getElementById("challengeAdminWordLength");
+const challengeAdminPuzzleCountEl = document.getElementById("challengeAdminPuzzleCount");
+const challengeAdminTimeBudgetEl = document.getElementById("challengeAdminTimeBudget");
+const challengeAdminMaxGuessesEl = document.getElementById("challengeAdminMaxGuesses");
+const challengeAdminPerPuzzleScoreEl = document.getElementById("challengeAdminPerPuzzleScore");
+const challengeAdminSpeedBonusEl = document.getElementById("challengeAdminSpeedBonus");
+const challengeAdminReplayPolicyEl = document.getElementById("challengeAdminReplayPolicy");
+const challengeAdminStartTimeEl = document.getElementById("challengeAdminStartTime");
+const challengeAdminEndTimeEl = document.getElementById("challengeAdminEndTime");
+const challengeAdminClearBtnEl = document.getElementById("challengeAdminClearBtn");
+const challengesAdminTbodyEl = document.querySelector("#challengesAdminTable tbody");
+const challengeAdminLeaderboardSectionEl = document.getElementById("challengeAdminLeaderboardSection");
+const challengeAdminLeaderboardNameEl = document.getElementById("challengeAdminLeaderboardName");
+const challengesAdminLbTbodyEl = document.querySelector("#challengesAdminLbTable tbody");
+const challengeAdminLbCloseBtnEl = document.getElementById("challengeAdminLbCloseBtn");
+
+if (typeof state !== "undefined") {
+  state.challengesAdminLoading = false;
+  state.challengesAdmin = [];
+}
+
+function setChallengeAdminStatus(text, tone = "") {
+  if (!challengesAdminStatusEl) return;
+  challengesAdminStatusEl.textContent = text || "";
+  challengesAdminStatusEl.classList.remove("admin-status-ok", "admin-status-missing");
+  if (tone) challengesAdminStatusEl.classList.add(tone);
+}
+
+async function loadChallengesAdmin() {
+  if (!state?.unlocked) return;
+  state.challengesAdminLoading = true;
+  setChallengeAdminStatus("Loading…");
+  try {
+    const payload = await requestAdminJson("/api/admin/challenges");
+    state.challengesAdmin = Array.isArray(payload.challenges) ? payload.challenges : [];
+    renderChallengesAdmin();
+    setChallengeAdminStatus("Loaded.", "admin-status-ok");
+  } catch (err) {
+    setChallengeAdminStatus(`Load failed: ${err.message}`, "admin-status-missing");
+  } finally {
+    state.challengesAdminLoading = false;
+  }
+}
+
+function renderChallengesAdmin() {
+  if (!challengesAdminTbodyEl) return;
+  challengesAdminTbodyEl.innerHTML = "";
+  if (!state.challengesAdmin.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No challenges configured.";
+    row.appendChild(cell);
+    challengesAdminTbodyEl.appendChild(row);
+    return;
+  }
+  for (const ch of state.challengesAdmin) {
+    const row = document.createElement("tr");
+    row.appendChild(buildCell(ch.name));
+    row.appendChild(buildCell(ch.lang));
+    row.appendChild(buildCell(`${ch.puzzleCount} × ${ch.timeBudgetSeconds}s`));
+    row.appendChild(buildCell(ch.replayPolicy));
+    row.appendChild(buildCell(String(ch.sessionCount ?? 0)));
+    row.appendChild(buildCell(ch.deleted ? "deleted" : "active"));
+    const actions = document.createElement("td");
+    if (!ch.deleted) {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost";
+      editBtn.textContent = ch.sessionCount > 0 ? "View (locked)" : "Edit";
+      editBtn.addEventListener("click", () => populateChallengeForm(ch));
+      actions.appendChild(editBtn);
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "ghost";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", () => deleteChallenge(ch.id, ch.name));
+      actions.appendChild(delBtn);
+    }
+    const lbBtn = document.createElement("button");
+    lbBtn.type = "button";
+    lbBtn.className = "ghost";
+    lbBtn.textContent = "Leaderboard";
+    lbBtn.addEventListener("click", () => loadChallengeAdminLeaderboard(ch.id, ch.name));
+    actions.appendChild(lbBtn);
+    row.appendChild(actions);
+    challengesAdminTbodyEl.appendChild(row);
+  }
+}
+
+function populateChallengeForm(ch) {
+  if (challengeAdminIdEl) challengeAdminIdEl.value = ch.id;
+  if (challengeAdminNameEl) challengeAdminNameEl.value = ch.name;
+  if (challengeAdminLangEl) challengeAdminLangEl.value = ch.lang;
+  if (challengeAdminWordLengthEl) challengeAdminWordLengthEl.value = ch.wordLength || "";
+  if (challengeAdminPuzzleCountEl) challengeAdminPuzzleCountEl.value = ch.puzzleCount;
+  if (challengeAdminTimeBudgetEl) challengeAdminTimeBudgetEl.value = ch.timeBudgetSeconds;
+  if (challengeAdminMaxGuessesEl) challengeAdminMaxGuessesEl.value = ch.maxGuesses;
+  if (challengeAdminPerPuzzleScoreEl) challengeAdminPerPuzzleScoreEl.value = ch.perPuzzleScore;
+  if (challengeAdminSpeedBonusEl) challengeAdminSpeedBonusEl.value = ch.speedBonusFactor;
+  if (challengeAdminReplayPolicyEl) challengeAdminReplayPolicyEl.value = ch.replayPolicy;
+  if (challengeAdminStartTimeEl) challengeAdminStartTimeEl.value = ch.startTime ? toLocalDateTime(ch.startTime) : "";
+  if (challengeAdminEndTimeEl) challengeAdminEndTimeEl.value = ch.endTime ? toLocalDateTime(ch.endTime) : "";
+  setChallengeAdminStatus(`Editing "${ch.name}".`);
+}
+
+function clearChallengeForm() {
+  if (challengeAdminFormEl) challengeAdminFormEl.reset();
+  if (challengeAdminIdEl) challengeAdminIdEl.value = "";
+  if (challengeAdminLangEl) challengeAdminLangEl.value = "en";
+  if (challengeAdminWordLengthEl) challengeAdminWordLengthEl.value = "5";
+  if (challengeAdminPuzzleCountEl) challengeAdminPuzzleCountEl.value = "5";
+  if (challengeAdminTimeBudgetEl) challengeAdminTimeBudgetEl.value = "300";
+  if (challengeAdminMaxGuessesEl) challengeAdminMaxGuessesEl.value = "6";
+  if (challengeAdminPerPuzzleScoreEl) challengeAdminPerPuzzleScoreEl.value = "1000";
+  if (challengeAdminSpeedBonusEl) challengeAdminSpeedBonusEl.value = "0.5";
+  if (challengeAdminReplayPolicyEl) challengeAdminReplayPolicyEl.value = "best";
+  setChallengeAdminStatus("");
+}
+
+function toLocalDateTime(iso) {
+  // Convert ISO to the value format expected by <input type="datetime-local">.
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+if (challengeAdminClearBtnEl) challengeAdminClearBtnEl.addEventListener("click", clearChallengeForm);
+
+if (challengeAdminFormEl) {
+  challengeAdminFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state?.unlocked) return;
+    const id = challengeAdminIdEl?.value || null;
+    const body = {
+      name: challengeAdminNameEl?.value?.trim() || "",
+      lang: challengeAdminLangEl?.value?.trim() || "en",
+      puzzleCount: Number(challengeAdminPuzzleCountEl?.value || 0),
+      timeBudgetSeconds: Number(challengeAdminTimeBudgetEl?.value || 0),
+      maxGuesses: Number(challengeAdminMaxGuessesEl?.value || 0),
+      perPuzzleScore: Number(challengeAdminPerPuzzleScoreEl?.value || 0),
+      speedBonusFactor: Number(challengeAdminSpeedBonusEl?.value || 0),
+      replayPolicy: challengeAdminReplayPolicyEl?.value || "best"
+    };
+    const wlen = Number(challengeAdminWordLengthEl?.value || 0);
+    if (Number.isInteger(wlen) && wlen > 0) body.wordLength = wlen;
+    if (challengeAdminStartTimeEl?.value) {
+      body.startTime = new Date(challengeAdminStartTimeEl.value).toISOString();
+    }
+    if (challengeAdminEndTimeEl?.value) {
+      body.endTime = new Date(challengeAdminEndTimeEl.value).toISOString();
+    }
+    try {
+      if (id) {
+        await requestAdminJson(`/api/admin/challenges/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        setChallengeAdminStatus("Saved.", "admin-status-ok");
+      } else {
+        await requestAdminJson("/api/admin/challenges", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        setChallengeAdminStatus("Created.", "admin-status-ok");
+      }
+      clearChallengeForm();
+      loadChallengesAdmin().catch(() => {});
+    } catch (err) {
+      setChallengeAdminStatus(`Save failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+async function deleteChallenge(id, name) {
+  if (!state?.unlocked) return;
+  if (!window.confirm(`Soft-delete "${name}"? Historical leaderboard rows are preserved.`)) return;
+  try {
+    await requestAdminJson(`/api/admin/challenges/${encodeURIComponent(id)}`, { method: "DELETE" });
+    setChallengeAdminStatus("Deleted.", "admin-status-ok");
+    loadChallengesAdmin().catch(() => {});
+  } catch (err) {
+    setChallengeAdminStatus(`Delete failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function loadChallengeAdminLeaderboard(id, name) {
+  if (!state?.unlocked || !challengeAdminLeaderboardSectionEl || !challengesAdminLbTbodyEl) return;
+  challengeAdminLeaderboardSectionEl.hidden = false;
+  if (challengeAdminLeaderboardNameEl) challengeAdminLeaderboardNameEl.textContent = name;
+  challengesAdminLbTbodyEl.innerHTML = "";
+  try {
+    const payload = await requestAdminJson(`/api/admin/challenges/${encodeURIComponent(id)}/leaderboard`);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.textContent = "No completed sessions yet.";
+      tr.appendChild(td);
+      challengesAdminLbTbodyEl.appendChild(tr);
+      return;
+    }
+    let rank = 1;
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      tr.appendChild(buildCell(`#${rank}`));
+      tr.appendChild(buildCell(r.profileName || r.profileId));
+      tr.appendChild(buildCell(String(r.score)));
+      tr.appendChild(buildCell(`${r.solvedCount}/${r.totalPuzzles}`));
+      tr.appendChild(buildCell(`${r.elapsedSeconds}s`));
+      tr.appendChild(buildCell(r.finishedAt ? formatTimestamp(r.finishedAt) : "—"));
+      challengesAdminLbTbodyEl.appendChild(tr);
+      rank += 1;
+    }
+  } catch (err) {
+    setChallengeAdminStatus(`Leaderboard load failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+if (challengeAdminLbCloseBtnEl) {
+  challengeAdminLbCloseBtnEl.addEventListener("click", () => {
+    if (challengeAdminLeaderboardSectionEl) challengeAdminLeaderboardSectionEl.hidden = true;
+  });
+}
+
+// Plumb the Challenges tab into the existing tab-switch dispatcher and
+// auto-load on unlock. Done at the bottom so the function refs above
+// already exist when these listeners fire.
+const _origTabSwitchActions = window.activateTab;
+// Patch the tab-switch handler the existing code uses by reading the
+// activeTab on every render. Simpler approach: hook into the
+// renderTabs flow by listening for clicks on the Challenges nav button.
+const _challengesAdminNavBtn = document.getElementById("admin-tab-challenges");
+if (_challengesAdminNavBtn) {
+  _challengesAdminNavBtn.addEventListener("click", () => {
+    if (state?.unlocked && !state?.challengesAdminLoading) {
+      loadChallengesAdmin().catch(() => {});
+    }
+  });
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
