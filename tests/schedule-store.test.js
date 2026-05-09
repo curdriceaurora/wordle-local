@@ -246,6 +246,23 @@ describe("ScheduleStore", () => {
     expect(stragglers).toEqual([]);
   });
 
+  test("concurrent first load() calls share a single ENOENT default-write", async () => {
+    // Without loadPromise serialization, two concurrent first callers
+    // would each see ENOENT, each persist a fresh empty schedule, and
+    // a default write that lands after a real commit could clobber it.
+    // With the shared loadPromise both callers await the same first
+    // disk write and end up with the same state object.
+    const filePath = tempPath();
+    const store = new ScheduleStore({ filePath, now: frozenNow() });
+    const [a, b] = await Promise.all([store.load(), store.load()]);
+    expect(a).toEqual(b);
+    expect(a.scheduled_words).toEqual([]);
+    // No straggler temp files (would be a sign of two concurrent default-writes).
+    const dir = path.dirname(filePath);
+    const tmps = (await fsp.readdir(dir)).filter((name) => name.endsWith(".tmp"));
+    expect(tmps).toEqual([]);
+  });
+
   test("commits run sequentially even when fired concurrently", async () => {
     // Two concurrent mutations with the same pre-mutation in-memory
     // snapshot would, without commitQueue serialization, each clone the
