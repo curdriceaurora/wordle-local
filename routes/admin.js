@@ -807,8 +807,13 @@ function createAdminRouter(deps) {
         // Best-effort cascade: delivery rows for the removed
         // subscription have no admin UI to inspect anyway.
         await webhookDeliveryStore.deleteForSubscription(req.params.id).catch((cascadeErr) => {
+          // Pass id as a separate arg (not interpolated) so a hostile
+          // path param can't inject %s-style format placeholders into
+          // the format string. The store's pattern check rejects ids
+          // outside [A-Za-z0-9_-], but defense in depth.
           console.warn(
-            `[webhook] could not cascade-delete deliveries for ${req.params.id}:`,
+            "[webhook] could not cascade-delete deliveries for %s:",
+            req.params.id,
             cascadeErr.message
           );
         });
@@ -831,6 +836,12 @@ function createAdminRouter(deps) {
   });
 
   router.post("/api/admin/webhooks/:id/test", async (req, res) => {
+    if (!webhooksEnabled) {
+      return res.status(409).json({
+        error: "Webhooks are disabled at the server level (WEBHOOKS_ENABLED=false). Cannot fire test events.",
+        code: "WEBHOOKS_DISABLED"
+      });
+    }
     try {
       const sub = await webhookStore.findById(req.params.id);
       if (!sub) {
@@ -844,18 +855,22 @@ function createAdminRouter(deps) {
       // what a real provider event would look like — operators
       // verifying their endpoint should see exactly what production
       // payloads will send.
-      const delivery = await webhookDeliveryStore.enqueue({
+      const testPayload = {
+        message: "Test event from local-hosted-wordle admin.",
         subscriptionId: sub.id,
-        event: "webhook.test",
-        url: sub.url
+        requestedAt: new Date().toISOString()
+      };
+      const delivery = await withSlot(async () => {
+        return webhookDeliveryStore.enqueue({
+          subscriptionId: sub.id,
+          event: "webhook.test",
+          url: sub.url,
+          payload: testPayload
+        });
       });
       webhookService.scheduleDelivery(delivery.id, 0, {
         event: "webhook.test",
-        payload: {
-          message: "Test event from local-hosted-wordle admin.",
-          subscriptionId: sub.id,
-          requestedAt: new Date().toISOString()
-        },
+        payload: testPayload,
         subscription: sub
       });
       webhookAudit("subscription.test", {
@@ -916,6 +931,12 @@ function createAdminRouter(deps) {
   });
 
   router.post("/api/admin/webhooks/:id/deliveries/:deliveryId/retry", async (req, res) => {
+    if (!webhooksEnabled) {
+      return res.status(409).json({
+        error: "Webhooks are disabled at the server level (WEBHOOKS_ENABLED=false). Cannot retry deliveries.",
+        code: "WEBHOOKS_DISABLED"
+      });
+    }
     try {
       const sub = await webhookStore.findById(req.params.id);
       if (!sub) {
@@ -937,7 +958,9 @@ function createAdminRouter(deps) {
           code: "INVALID_REQUEST"
         });
       }
-      const retried = await webhookService.retryDelivery(delivery.id);
+      const retried = await withSlot(async () => {
+        return webhookService.retryDelivery(delivery.id);
+      });
       webhookAudit("delivery.retry", {
         actor: actorFingerprint(req),
         id: sub.id,

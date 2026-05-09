@@ -214,6 +214,19 @@ describe("WebhookStore CRUD", () => {
     })).rejects.toThrow(expect.objectContaining({ code: "INVALID_URL" }));
   });
 
+  test("create rejects URLs with embedded credentials", async () => {
+    await expect(store.create({
+      url: "https://user:pass@example.com/webhook",
+      events: ["a.b"]
+    })).rejects.toThrow(expect.objectContaining({ code: "INVALID_URL" }));
+    // user-only (no password) should also reject — the URL-parser
+    // treats this as an embedded credential.
+    await expect(store.create({
+      url: "https://user@example.com/webhook",
+      events: ["a.b"]
+    })).rejects.toThrow(expect.objectContaining({ code: "INVALID_URL" }));
+  });
+
   test("update merges fields and bumps updatedAt", async () => {
     const created = await store.create({ url: "https://example.com", events: ["a.b"] });
     store.now = () => new Date("2026-05-09T00:00:00.000Z");

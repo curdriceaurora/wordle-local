@@ -154,12 +154,14 @@ describe("SSRF guard (isPrivateIPv4 / isPrivateIPv6 / assertOutboundUrlAllowed)"
 
   test("assertOutboundUrlAllowed permits any address when allowPrivateNetworks=true", async () => {
     const out = await assertOutboundUrlAllowed("http://10.0.0.1/webhook", { allowPrivateNetworks: true });
-    expect(out.hostname).toBe("10.0.0.1");
+    expect(out.url.hostname).toBe("10.0.0.1");
+    expect(out.addresses).toBe(null);
   });
 
   test("assertOutboundUrlAllowed accepts public IP literal", async () => {
     const out = await assertOutboundUrlAllowed("https://1.1.1.1/x");
-    expect(out.hostname).toBe("1.1.1.1");
+    expect(out.url.hostname).toBe("1.1.1.1");
+    expect(out.addresses).toEqual([{ address: "1.1.1.1", family: 4 }]);
   });
 });
 
@@ -340,6 +342,122 @@ describe("WebhookService.emit + executeOnce", () => {
       return d && d.status === "failed";
     }, { timeoutMs: 5000 });
     expect(calls).toBe(2);
+  });
+});
+
+describe("Subscription edits between attempts", () => {
+  test("retry honors a fresh URL after the operator edited the subscription mid-flight", async () => {
+    const calls = [];
+    const fetchImpl = async (url) => {
+      calls.push(url);
+      if (calls.length === 1) {
+        return {
+          status: 500,
+          headers: { get: () => null },
+          body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+        };
+      }
+      return {
+        status: 200,
+        headers: { get: () => null },
+        body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+      };
+    };
+    const { svc, subs, deliveries } = await buildService({
+      fetchImpl,
+      // Bigger backoff so the update lands deterministically between
+      // attempts instead of racing the timer.
+      backoffSchedule: [200, 200, 200]
+    });
+    const sub = await subs.create({
+      url: "https://old.example/",
+      events: ["a.b"],
+      maxAttempts: 3
+    });
+    await svc.emit("a.b", { foo: 1 });
+    // Wait until the delivery row reaches `queued` with a scheduled
+    // next-attempt — that's the retry timer phase, when an admin edit
+    // is meant to be observed by the next executeOnce.
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && d.status === "queued" && d.nextAttemptAt;
+    });
+    await subs.update(sub.id, { url: "https://new.example/" });
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && d.status === "succeeded";
+    }, { timeoutMs: 5000 });
+    expect(calls).toEqual(["https://old.example/", "https://new.example/"]);
+  });
+
+  test("rotated secret is used for retries, not the original", async () => {
+    const sigs = [];
+    const fetchImpl = async (url, init) => {
+      sigs.push(init.headers["x-webhook-signature"]);
+      if (sigs.length === 1) {
+        return {
+          status: 500,
+          headers: { get: () => null },
+          body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+        };
+      }
+      return {
+        status: 200,
+        headers: { get: () => null },
+        body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+      };
+    };
+    const { svc, subs, deliveries } = await buildService({
+      fetchImpl,
+      backoffSchedule: [200, 200, 200]
+    });
+    const sub = await subs.create({
+      url: "https://example.com/",
+      events: ["a.b"],
+      maxAttempts: 3
+    });
+    await svc.emit("a.b", {});
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && d.status === "queued" && d.nextAttemptAt;
+    });
+    await subs.update(sub.id, { rotateSecret: true });
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && d.status === "succeeded";
+    }, { timeoutMs: 5000 });
+    expect(sigs[0]).not.toBe(sigs[1]);
+  });
+});
+
+describe("Persisted payload survives recovery", () => {
+  test("recoverOnBoot uses the persisted payload, not an empty object", async () => {
+    const bodies = [];
+    const fetchImpl = async (url, init) => {
+      bodies.push(init.body);
+      return {
+        status: 200,
+        headers: { get: () => null },
+        body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+      };
+    };
+    const { svc, subs, deliveries } = await buildService({ fetchImpl });
+    const sub = await subs.create({ url: "https://example.com/", events: ["a.b"] });
+    // Manually persist a row that mimics what emit() writes pre-restart.
+    const stuck = await deliveries.enqueue({
+      subscriptionId: sub.id,
+      event: "a.b",
+      url: sub.url,
+      payload: { reconstructed: true, n: 42 }
+    });
+    await deliveries.update(stuck.id, { status: "running", attempts: 1 });
+    await svc.recoverOnBoot();
+    await waitForCondition(async () => {
+      const d = await deliveries.findById(stuck.id);
+      return d && d.status === "succeeded";
+    });
+    const sent = JSON.parse(bodies[0]);
+    expect(sent.payload).toEqual({ reconstructed: true, n: 42 });
   });
 });
 

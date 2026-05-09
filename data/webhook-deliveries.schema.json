@@ -25,11 +25,19 @@
           "attempts": { "type": "integer", "minimum": 0, "maximum": 100 },
           "url": { "type": "string", "maxLength": 2048 },
           "responseStatus": { "type": "integer" },
-          "responseSnippet": { "type": "string", "maxLength": 4096 },
+          "responseSnippet": {
+            "description": "Persisted snippet of the response body. Capped at 4096 chars by lib/webhook-delivery-store.js even though the dispatcher's runtime fetch reads up to WEBHOOK_MAX_BODY_BYTES (default 65536). The schema cap matches the persisted clamp so a hand-edited file outside this size is rejected at load.",
+            "type": "string",
+            "maxLength": 4096
+          },
           "lastError": { "type": "string", "maxLength": 2048 },
           "nextAttemptAt": { "type": "string", "format": "date-time" },
           "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "payload": {
+            "description": "Original event payload, persisted at enqueue time so boot recovery and manual retries can resend the real body instead of an empty object. Capped at 8 KiB serialized size.",
+            "type": "object"
+          }
         }
       }
     }

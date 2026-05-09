@@ -47,8 +47,23 @@ function loadApp({ adminKey, dir, env = {} } = {}) {
   return require("../server");
 }
 
+// Stub global.fetch so test deliveries never make a real outbound HTTP
+// call. Real fetch would either time out (CI without egress) or worse,
+// hit https://example.com/x for real. The stub returns 200 OK so the
+// delivery row can be inspected as `succeeded` without the test
+// depending on network.
+const originalFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = async () => ({
+    status: 200,
+    headers: { get: () => null },
+    body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+  });
+});
+
 afterEach(() => {
   resetEnv();
+  globalThis.fetch = originalFetch;
 });
 
 describe("GET /api/admin/webhooks", () => {
@@ -209,6 +224,18 @@ describe("POST /api/admin/webhooks/:id/test", () => {
     const app = loadApp({ dir });
     const res = await supertest(app).post("/api/admin/webhooks/nonexistent/test");
     expect(res.status).toBe(404);
+  });
+
+  test("409 with WEBHOOKS_DISABLED when WEBHOOKS_ENABLED=false", async () => {
+    const dir = tempDir();
+    const app = loadApp({ dir, env: { WEBHOOKS_ENABLED: "false" } });
+    const created = await supertest(app)
+      .post("/api/admin/webhooks")
+      .send({ url: "https://example.com/x", events: ["webhook.test"] });
+    const id = created.body.subscription.id;
+    const res = await supertest(app).post(`/api/admin/webhooks/${encodeURIComponent(id)}/test`);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("WEBHOOKS_DISABLED");
   });
 });
 

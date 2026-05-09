@@ -1304,12 +1304,14 @@ const scheduleStore = new ScheduleStore({
 const webhookStore = new WebhookStore({
   filePath: WEBHOOKS_DATA_PATH,
   defaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 const webhookDeliveryStore = new WebhookDeliveryStore({
   filePath: WEBHOOK_DELIVERIES_DATA_PATH,
   historyMax: ENV_WEBHOOK_DELIVERY_HISTORY_MAX,
-  logger: console
+  logger: console,
+  waitForDataMutationLock
 });
 const webhookService = new WebhookService({
   subscriptionStore: webhookStore,

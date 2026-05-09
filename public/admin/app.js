@@ -167,6 +167,10 @@ const state = {
   webhookDefaultMaxAttempts: 5,
   webhookDeliveriesLoading: false,
   webhookDeliveriesSubscriptionId: null,
+  // Bumped on every loadWebhookDeliveries() call so a slow response from
+  // an older subscription can't overwrite a fresh table when the
+  // operator switches the dropdown rapidly.
+  webhookDeliveriesRequestId: 0,
   webhookDeliveries: []
 };
 
@@ -2360,6 +2364,24 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.webhookSubscriptions = [];
   state.webhookDeliveries = [];
   state.webhookDeliveriesSubscriptionId = null;
+  // Clear any one-time secret that's still on screen — without this,
+  // locking on the Webhooks tab and unlocking again would leave the
+  // previously revealed secret visible until loadWebhooks() finishes.
+  if (typeof webhookCreatedSecretBoxEl !== "undefined" && webhookCreatedSecretBoxEl) {
+    webhookCreatedSecretBoxEl.hidden = true;
+  }
+  if (typeof webhookCreatedSecretValueEl !== "undefined" && webhookCreatedSecretValueEl) {
+    webhookCreatedSecretValueEl.textContent = "";
+  }
+  if (typeof webhooksTableBody !== "undefined" && webhooksTableBody) {
+    webhooksTableBody.innerHTML = "";
+  }
+  if (typeof webhookDeliveriesTableBody !== "undefined" && webhookDeliveriesTableBody) {
+    webhookDeliveriesTableBody.innerHTML = "";
+  }
+  if (typeof webhookDeliveriesSubscriptionEl !== "undefined" && webhookDeliveriesSubscriptionEl) {
+    webhookDeliveriesSubscriptionEl.innerHTML = "";
+  }
   destroyAllAnalyticsCharts();
   if (analyticsCardsEl) {
     analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
@@ -3588,14 +3610,21 @@ async function loadWebhookDeliveries(subscriptionId) {
     state.webhookDeliveries = [];
     return;
   }
+  const requestId = ++state.webhookDeliveriesRequestId;
   try {
     const payload = await requestAdminJson(
       `/api/admin/webhooks/${encodeURIComponent(subscriptionId)}/deliveries?limit=50`
     );
+    // Drop late responses — the operator may have switched
+    // subscriptions or locked the workspace before this fetch
+    // resolved, and the rendered table+retry buttons must reflect
+    // the most recent request.
+    if (requestId !== state.webhookDeliveriesRequestId) return;
     state.webhookDeliveries = Array.isArray(payload.deliveries) ? payload.deliveries : [];
     state.webhookDeliveriesSubscriptionId = subscriptionId;
     renderWebhookDeliveries();
   } catch (err) {
+    if (requestId !== state.webhookDeliveriesRequestId) return;
     setStatus(webhooksStatusEl, `Deliveries fetch failed: ${err.message}`, "admin-status-missing");
   }
 }
