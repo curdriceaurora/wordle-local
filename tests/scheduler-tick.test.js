@@ -418,6 +418,124 @@ describe("reconcileDailyWord", () => {
     expect(out).toEqual(["ABC", "CRANE", "BREAD"]);
   });
 
+  test("manual override with date=null is recognised", async () => {
+    // POST /api/word with no body.date writes word.json with date=null.
+    // The override gate must yield to it for the rest of the day even
+    // though date doesn't equal serverToday — earlier code required a
+    // string match and silently overwrote null-date manual writes.
+    const writes = [];
+    const schedule = makeSchedule({
+      scheduled_words: [{ date: "2026-05-08", word: "CRANE", lang: "en" }]
+    });
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: {
+        word: "MANUAL",
+        lang: "en",
+        date: null,
+        updatedAt: "2026-05-08T11:00:00Z"
+        // no lastScheduledFor → manual write
+      },
+      now: new Date("2026-05-08T12:00:00Z"),
+      defaultLang: "en",
+      providersRoot: "/dev/null",
+      languagesPath: "/dev/null",
+      saveWordData: async (data) => { writes.push(data); }
+    });
+    expect(result.action).toBe("skip-manual-override");
+    expect(writes).toHaveLength(0);
+  });
+
+  test("scheduler-owned write for a previous schedule-local day is not treated as manual", async () => {
+    // Pacific/Kiritimati is +14 from UTC. At 2026-05-08T11:00Z the
+    // server is still on 2026-05-08 but the schedule already rolled
+    // to 2026-05-09. The previous scheduler write has
+    // lastScheduledFor=2026-05-08 (not "today" in schedule terms);
+    // earlier code mis-classified that as a manual override and
+    // skipped writing for the new schedule day. The fix: presence of
+    // lastScheduledFor means scheduler ownership, regardless of value.
+    const writes = [];
+    const schedule = makeSchedule({
+      timezone: "Pacific/Kiritimati",
+      scheduled_words: [
+        { date: "2026-05-08", word: "OLDER", lang: "en" },
+        { date: "2026-05-09", word: "NEWER", lang: "en" }
+      ]
+    });
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: {
+        word: "OLDER",
+        lang: "en",
+        date: "2026-05-08",
+        updatedAt: "2026-05-08T01:00:00Z",
+        lastScheduledFor: "2026-05-08"
+      },
+      now: new Date("2026-05-08T11:00:00Z"),
+      defaultLang: "en",
+      providersRoot: "/dev/null",
+      languagesPath: "/dev/null",
+      saveWordData: async (data) => { writes.push(data); }
+    });
+    expect(result.action).toBe("write-scheduled");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].word).toBe("NEWER");
+    expect(writes[0].lastScheduledFor).toBe("2026-05-09");
+  });
+
+  test("server-day rollover refreshes word.json.date even if schedule day didn't roll", async () => {
+    // America/Los_Angeles is UTC-7. At 2026-05-08T07:30Z it's still
+    // 2026-05-08 in LA but UTC just rolled to 2026-05-08 from
+    // 2026-05-07. word.json from yesterday has date=2026-05-07
+    // (server-local at write time) and lastScheduledFor=2026-05-07
+    // (schedule-local). The schedule's entry for 2026-05-07 is still
+    // "today" in LA but /daily compares against server-local
+    // 2026-05-08 and would 404. The reconciler must rewrite to
+    // refresh word.json.date.
+    //
+    // Wait — this test as written can't actually exercise the pure
+    // server-day rollover because the schedule entry is still keyed
+    // to "yesterday" from server's POV. The clearer scenario is
+    // when the schedule entry IS for the new schedule-local day but
+    // server day already rolled. Let's set that up: schedule entry
+    // for 2026-05-08 (= today in LA at 03:00Z), and word.json
+    // already reflects it but with date=2026-05-08 from when the
+    // server was also on 2026-05-08; now suppose we tick later when
+    // both zones agree. Idempotency should hold.
+    //
+    // The simplest test of "date refresh on stale-but-matching pick"
+    // is: word.json.word matches scheduled.word, lastScheduledFor
+    // matches todayLocal, but date differs from serverToday → write.
+    const writes = [];
+    const schedule = makeSchedule({
+      timezone: "America/Los_Angeles",
+      scheduled_words: [{ date: "2026-05-07", word: "CRANE", lang: "en" }]
+    });
+    // 2026-05-08T03:00Z = 2026-05-07 20:00 PDT → today in LA is May 7.
+    const now = new Date("2026-05-08T03:00:00Z");
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: {
+        word: "CRANE",
+        lang: "en",
+        date: "2026-05-06", // STALE server-local date
+        updatedAt: "2026-05-06T18:00:00Z",
+        lastScheduledFor: "2026-05-07"
+      },
+      now,
+      defaultLang: "en",
+      providersRoot: "/dev/null",
+      languagesPath: "/dev/null",
+      saveWordData: async (data) => { writes.push(data); }
+    });
+    expect(result.action).toBe("write-scheduled");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].word).toBe("CRANE");
+    // The new write has the current server-local date.
+    const expectedServerDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    expect(writes[0].date).toBe(expectedServerDate);
+  });
+
   test("word.json.date is server-local even when schedule TZ differs", async () => {
     // Schedule TZ is set to America/New_York but the test runner's
     // server-local zone is whatever Node sees. We need word.json.date

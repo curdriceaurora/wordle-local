@@ -3262,6 +3262,12 @@ if (scheduleEntryFormEl) {
   });
 }
 
+// Each of these handlers performs the destructive/mutating action
+// FIRST, then calls loadSchedule() to refresh the cached UI snapshot.
+// We deliberately split the catch so a refresh failure can't make a
+// successful delete/prune/reconcile look like an error in the status
+// strip — that misleading copy would invite the operator to retry a
+// destructive action that already landed.
 async function deleteScheduleEntry(date, lang) {
   if (!state.unlocked) return;
   if (!window.confirm(`Delete the schedule entry for ${date} (${lang})?`)) return;
@@ -3270,46 +3276,49 @@ async function deleteScheduleEntry(date, lang) {
       `/api/admin/schedule/entries/${encodeURIComponent(date)}/${encodeURIComponent(lang)}`,
       { method: "DELETE" }
     );
-    await loadSchedule({ announce: false });
-    setStatus(scheduleStatusEl, `Deleted entry for ${date} (${lang}).`, "admin-status-ok");
   } catch (err) {
     setStatus(scheduleStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+    return;
   }
+  setStatus(scheduleStatusEl, `Deleted entry for ${date} (${lang}).`, "admin-status-ok");
+  loadSchedule({ announce: false }).catch(() => {
+    // Refresh failure shouldn't override the success message above.
+  });
 }
 
 if (schedulePruneBtnEl) {
   schedulePruneBtnEl.addEventListener("click", async () => {
     if (!state.unlocked) return;
+    let payload;
     try {
-      const payload = await requestAdminJson("/api/admin/schedule/prune", {
-        method: "POST"
-      });
-      await loadSchedule({ announce: false });
-      setStatus(
-        scheduleStatusEl,
-        `Pruned ${payload.pruned} entr${payload.pruned === 1 ? "y" : "ies"} before ${payload.cutoff}.`,
-        "admin-status-ok"
-      );
+      payload = await requestAdminJson("/api/admin/schedule/prune", { method: "POST" });
     } catch (err) {
       setStatus(scheduleStatusEl, `Prune failed: ${err.message}`, "admin-status-missing");
+      return;
     }
+    setStatus(
+      scheduleStatusEl,
+      `Pruned ${payload.pruned} entr${payload.pruned === 1 ? "y" : "ies"} before ${payload.cutoff}.`,
+      "admin-status-ok"
+    );
+    loadSchedule({ announce: false }).catch(() => {});
   });
 }
 
 if (scheduleReconcileBtnEl) {
   scheduleReconcileBtnEl.addEventListener("click", async () => {
     if (!state.unlocked) return;
+    let payload;
     try {
-      const payload = await requestAdminJson("/api/admin/schedule/reconcile", {
-        method: "POST"
-      });
-      await loadSchedule({ announce: false });
-      const r = payload.result;
-      const detail = r?.action ? `(${r.action}, ${r.todayLocal || "unknown date"})` : "";
-      setStatus(scheduleStatusEl, `Reconcile complete ${detail}`, "admin-status-ok");
+      payload = await requestAdminJson("/api/admin/schedule/reconcile", { method: "POST" });
     } catch (err) {
       setStatus(scheduleStatusEl, `Reconcile failed: ${err.message}`, "admin-status-missing");
+      return;
     }
+    const r = payload.result;
+    const detail = r?.action ? `(${r.action}, ${r.todayLocal || "unknown date"})` : "";
+    setStatus(scheduleStatusEl, `Reconcile complete ${detail}`, "admin-status-ok");
+    loadSchedule({ announce: false }).catch(() => {});
   });
 }
 

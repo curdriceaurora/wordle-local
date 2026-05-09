@@ -1311,6 +1311,12 @@ async function runSchedulerReconcileInner(reason = "tick") {
           await scheduleStore.recordReconcile({ date, at });
         } catch (err) {
           console.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
+          // Background callers (boot / interval) swallow this — a
+          // missing timestamp on data/schedule.json doesn't justify
+          // killing the tick driver. Admin-trigger callers re-throw
+          // because the operator asked for the reconcile and deserves
+          // to know the persistence step failed.
+          if (reason === "admin-trigger") throw err;
         }
       },
       logger: console
@@ -1326,12 +1332,25 @@ async function runSchedulerReconcileInner(reason = "tick") {
   }
 }
 
+// Tracks an in-flight interval-driven reconcile so the next tick can
+// skip itself rather than queueing up. Without this guard, a slow
+// reconcile (e.g. waiting on the word-write lock behind a manual POST)
+// can let multiple ticks claim the direct-write slot in sequence;
+// directDataWriteActiveRef stays non-zero and starts blocking
+// backup/restore even though the work is just stale interval pile-up.
+let schedulerTickInFlight = false;
 function startSchedulerInterval() {
   if (schedulerIntervalRef) return;
   schedulerIntervalRef = setInterval(() => {
-    runSchedulerReconcile("interval").catch((err) => {
-      console.error("[scheduler] unhandled interval error:", err);
-    });
+    if (schedulerTickInFlight) return;
+    schedulerTickInFlight = true;
+    runSchedulerReconcile("interval")
+      .catch((err) => {
+        console.error("[scheduler] unhandled interval error:", err);
+      })
+      .finally(() => {
+        schedulerTickInFlight = false;
+      });
   }, ENV_SCHEDULER_CHECK_INTERVAL_MS);
   // unref so the timer doesn't keep the process alive past test teardown.
   if (typeof schedulerIntervalRef.unref === "function") {
