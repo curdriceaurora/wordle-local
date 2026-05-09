@@ -6,9 +6,16 @@ const {
   DailyNotificationScheduler
 } = require("../lib/daily-notification-scheduler");
 
+// IMPORTANT: scheduler logic uses server-LOCAL setHours, so tests
+// must construct `now` via the local-time Date constructor
+// (`new Date(y, m, d, hh, mm)`), NOT an ISO string with a fixed UTC
+// offset — the latter only happens to land on the right local hour
+// on developer machines in EDT and would fail in any other zone (CI
+// runs UTC).
+
 describe("computeNextFireAt", () => {
   test("returns today at the configured time when it's still in the future", () => {
-    const now = new Date("2026-05-09T12:00:00.000-04:00");
+    const now = new Date(2026, 4, 9, 12, 0, 0); // 2026-05-09 12:00 local
     const next = computeNextFireAt(now, "20:00");
     expect(next.getHours()).toBe(20);
     expect(next.getMinutes()).toBe(0);
@@ -16,11 +23,10 @@ describe("computeNextFireAt", () => {
   });
 
   test("returns tomorrow at the configured time when it's already passed today", () => {
-    const now = new Date("2026-05-09T15:30:00.000-04:00");
+    const now = new Date(2026, 4, 9, 15, 30, 0); // 2026-05-09 15:30 local
     const next = computeNextFireAt(now, "00:00");
     expect(next.getHours()).toBe(0);
     expect(next.getMinutes()).toBe(0);
-    // Tomorrow.
     expect(next.getTime()).toBeGreaterThan(now.getTime());
     expect(next.getTime() - now.getTime()).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
   });
@@ -31,21 +37,20 @@ describe("computeNextFireAt", () => {
     expect(() => computeNextFireAt(new Date(), "")).toThrow();
   });
 
-  test("midnight rolls to next day cleanly across DST", () => {
-    // US/Eastern spring-forward: 2026-03-08 02:00 EST → 03:00 EDT.
-    // After DST transition at 02:00, computing next fire from
-    // 03:30 EDT for 00:00 should still give the next day's 00:00.
-    const now = new Date("2026-03-08T03:30:00.000-04:00");
+  test("midnight rolls to next day cleanly across the spring-forward boundary", () => {
+    // Local 03:30 on the spring-forward day. The setHours(0,0,0,0)
+    // path lands on local midnight; the test only asserts the delta
+    // is positive and ≤ 25h (allowing one extra hour for DST slack).
+    const now = new Date(2026, 2, 8, 3, 30, 0); // 2026-03-08 03:30 local
     const next = computeNextFireAt(now, "00:00");
     expect(next.getTime()).toBeGreaterThan(now.getTime());
-    // Should be within 25 hours (allow one extra hour for DST slack).
     expect(next.getTime() - now.getTime()).toBeLessThanOrEqual(25 * 60 * 60 * 1000);
   });
 });
 
 describe("decideBootAction", () => {
   test("returns no-recent-miss when today's window hasn't arrived yet", () => {
-    const now = new Date("2026-05-09T08:00:00.000-04:00");
+    const now = new Date(2026, 4, 9, 8, 0, 0); // 08:00 local
     expect(decideBootAction({
       now,
       localFireTime: "20:00",
@@ -55,7 +60,7 @@ describe("decideBootAction", () => {
   });
 
   test("returns fire-now when window passed within grace and no fire yet today", () => {
-    const now = new Date("2026-05-09T00:30:00.000-04:00");
+    const now = new Date(2026, 4, 9, 0, 30, 0); // 00:30 local
     const result = decideBootAction({
       now,
       localFireTime: "00:00",
@@ -67,7 +72,7 @@ describe("decideBootAction", () => {
   });
 
   test("returns skip when window passed beyond grace", () => {
-    const now = new Date("2026-05-09T03:00:00.000-04:00");
+    const now = new Date(2026, 4, 9, 3, 0, 0); // 03:00 local
     const result = decideBootAction({
       now,
       localFireTime: "00:00",
@@ -78,21 +83,23 @@ describe("decideBootAction", () => {
   });
 
   test("returns no-recent-miss when today's window already fired", () => {
-    const now = new Date("2026-05-09T12:00:00.000-04:00");
+    const now = new Date(2026, 4, 9, 12, 0, 0); // 12:00 local
+    const lastFireAt = new Date(2026, 4, 9, 0, 1, 0).toISOString(); // 00:01 local
     expect(decideBootAction({
       now,
       localFireTime: "00:00",
-      lastDailyFireAt: "2026-05-09T00:01:00.000-04:00",
+      lastDailyFireAt: lastFireAt,
       gracePeriodMinutes: 60
     })).toEqual({ action: "no-recent-miss" });
   });
 
   test("yesterday's lastDailyFireAt does NOT count for today", () => {
-    const now = new Date("2026-05-09T00:30:00.000-04:00");
+    const now = new Date(2026, 4, 9, 0, 30, 0); // 00:30 today local
+    const yesterdaysFireAt = new Date(2026, 4, 8, 0, 0, 30).toISOString();
     const result = decideBootAction({
       now,
       localFireTime: "00:00",
-      lastDailyFireAt: "2026-05-08T00:00:30.000-04:00",
+      lastDailyFireAt: yesterdaysFireAt,
       gracePeriodMinutes: 60
     });
     expect(result.action).toBe("fire-now");
@@ -116,7 +123,10 @@ describe("DailyNotificationScheduler", () => {
     const sched = new DailyNotificationScheduler({
       subscriptionStore,
       notificationService,
-      now: () => initialNow || new Date("2026-05-09T12:00:00.000-04:00"),
+      // Default to 12:00 local on a fixed date — local-time
+      // constructor so the test result doesn't depend on the host's
+      // timezone offset (production uses local TZ via setHours).
+      now: () => initialNow || new Date(2026, 4, 9, 12, 0, 0),
       logger: { warn: () => {}, error: () => {}, log: () => {} },
       getConfig: () => ({ enabled, localFireTime, gracePeriodMinutes: 60 }),
       buildPayload: () => ({ title: "T", body: "B", url: "/" })
@@ -136,7 +146,7 @@ describe("DailyNotificationScheduler", () => {
   });
 
   test("start() during the grace window fires once, then arms next", async () => {
-    const initialNow = new Date("2026-05-09T00:30:00.000-04:00");
+    const initialNow = new Date(2026, 4, 9, 0, 30, 0); // 00:30 local
     const { sched, broadcastCalls } = buildHarness({
       localFireTime: "00:00",
       initialNow
@@ -148,7 +158,7 @@ describe("DailyNotificationScheduler", () => {
   });
 
   test("start() outside grace skips and arms next", async () => {
-    const initialNow = new Date("2026-05-09T03:00:00.000-04:00"); // 3h after window
+    const initialNow = new Date(2026, 4, 9, 3, 0, 0); // 3h after window
     const { sched, broadcastCalls } = buildHarness({
       localFireTime: "00:00",
       initialNow
