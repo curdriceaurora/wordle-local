@@ -23,6 +23,12 @@ const { reconcileDailyWord } = require("./lib/scheduler-tick");
 const { WebhookStore, WebhookStoreError, redactSecret } = require("./lib/webhook-store");
 const { WebhookDeliveryStore, WebhookDeliveryStoreError } = require("./lib/webhook-delivery-store");
 const { WebhookService } = require("./lib/webhook-service");
+const {
+  PushSubscriptionStore,
+  PushSubscriptionStoreError
+} = require("./lib/push-subscription-store");
+const { NotificationService } = require("./lib/notification-service");
+const { DailyNotificationScheduler } = require("./lib/daily-notification-scheduler");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -160,6 +166,9 @@ const WEBHOOKS_DATA_PATH = process.env.WEBHOOKS_STORE_PATH
 const WEBHOOK_DELIVERIES_DATA_PATH = process.env.WEBHOOK_DELIVERIES_STORE_PATH
   ? path.resolve(process.env.WEBHOOK_DELIVERIES_STORE_PATH)
   : path.join(__dirname, "data", "webhook-deliveries.json");
+const PUSH_SUBSCRIPTIONS_DATA_PATH = process.env.PUSH_SUBSCRIPTIONS_STORE_PATH
+  ? path.resolve(process.env.PUSH_SUBSCRIPTIONS_STORE_PATH)
+  : path.join(__dirname, "data", "push-subscriptions.json");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -296,6 +305,36 @@ const ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT = clampEnvBounded(
   64,
   "WEBHOOK_GLOBAL_INFLIGHT_LIMIT"
 );
+
+// Web Push notifications. Disabled at the runtime level via the
+// notifications.enabled config flag (operator-controlled at runtime
+// via the admin Notifications tab). The PUSH_NOTIFICATIONS_ENABLED env
+// var only seeds the default config on first boot.
+const ENV_PUSH_NOTIFICATIONS_ENABLED_DEFAULT =
+  String(process.env.PUSH_NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
+const ENV_PUSH_DAILY_FIRE_LOCAL_TIME_DEFAULT = (() => {
+  const raw = String(process.env.PUSH_DAILY_FIRE_LOCAL_TIME || "00:00").trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw)) {
+    console.warn(`PUSH_DAILY_FIRE_LOCAL_TIME=${raw} is not HH:MM; using 00:00.`);
+    return "00:00";
+  }
+  return raw;
+})();
+const ENV_PUSH_GRACE_PERIOD_MINUTES_DEFAULT = clampEnvBounded(
+  process.env.PUSH_GRACE_PERIOD_MINUTES,
+  60,
+  0,
+  1440,
+  "PUSH_GRACE_PERIOD_MINUTES"
+);
+const ENV_PUSH_VAPID_SUBJECT = (() => {
+  const raw = String(process.env.PUSH_VAPID_SUBJECT || "mailto:admin@localhost").trim();
+  if (!/^(mailto:|https:)/.test(raw)) {
+    console.warn(`PUSH_VAPID_SUBJECT=${raw} is not mailto:/https:; using mailto:admin@localhost.`);
+    return "mailto:admin@localhost";
+  }
+  return raw;
+})();
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -1327,6 +1366,56 @@ const webhookService = new WebhookService({
   maxBodyBytes: ENV_WEBHOOK_MAX_BODY_BYTES,
   globalInflight: ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT,
   logger: console
+});
+const pushSubscriptionStore = new PushSubscriptionStore({
+  filePath: PUSH_SUBSCRIPTIONS_DATA_PATH,
+  logger: console,
+  claimDirectDataWriteSlot
+});
+// Resolve runtime notifications config from app-config overrides (live)
+// with env-var seed fallbacks. Called every time scheduler/service
+// needs the config so admin edits take effect without restart.
+function getNotificationsConfig() {
+  const overrides = appConfigStore.getOverridesSync().notifications || {};
+  return {
+    enabled: typeof overrides.enabled === "boolean"
+      ? overrides.enabled
+      : ENV_PUSH_NOTIFICATIONS_ENABLED_DEFAULT,
+    localFireTime: overrides.localFireTime || ENV_PUSH_DAILY_FIRE_LOCAL_TIME_DEFAULT,
+    gracePeriodMinutes: Number.isInteger(overrides.gracePeriodMinutes)
+      ? overrides.gracePeriodMinutes
+      : ENV_PUSH_GRACE_PERIOD_MINUTES_DEFAULT
+  };
+}
+const notificationService = new NotificationService({
+  subscriptionStore: pushSubscriptionStore,
+  enabled: true,
+  logger: console,
+  // Read pushKeys from app-config on every send so admin-rotated keys
+  // (future feature) take effect without restart.
+  getPushKeys: () => appConfigStore.getPushKeysSync()
+});
+const dailyNotificationScheduler = new DailyNotificationScheduler({
+  subscriptionStore: pushSubscriptionStore,
+  notificationService,
+  logger: console,
+  getConfig: getNotificationsConfig,
+  buildPayload: () => {
+    // Pull today's word into the body so a notification reads
+    // "Today's Wordle is ready: 5 letters". Falls back to a generic
+    // copy if the daily word isn't set yet.
+    const data = wordDataCache || readWordData() || buildDefaultWordData();
+    const wordLen = typeof data.word === "string" ? data.word.length : null;
+    const body = wordLen
+      ? `Today's puzzle is live — ${wordLen} letters.`
+      : "Open the app to play today's puzzle.";
+    return {
+      title: "Today's Wordle is ready",
+      body,
+      url: "/",
+      tag: "daily-puzzle"
+    };
+  }
 });
 let schedulerIntervalRef = null;
 
@@ -2940,6 +3029,7 @@ app.use(
     scheduleStore,
     webhookStore,
     webhookDeliveryStore,
+    pushSubscriptionStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData: () => {
       // Re-read data/word.json from disk and refresh the in-memory cache
@@ -3046,7 +3136,10 @@ app.use(
     WebhookDeliveryStoreError,
     redactWebhookSecret: redactSecret,
     webhooksEnabled: ENV_WEBHOOKS_ENABLED,
-    webhookDefaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT
+    webhookDefaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT,
+    pushSubscriptionStore,
+    notificationService,
+    PushSubscriptionStoreError
   })
 );
 
@@ -3123,6 +3216,15 @@ app.use(
     DEFAULT_LANG,
     isPerfLoggingEnabled,
     getDefinitionsMode
+  })
+);
+
+const createNotificationsRouter = require("./routes/notifications.js");
+app.use(
+  createNotificationsRouter({
+    pushSubscriptionStore,
+    appConfigStore,
+    PushSubscriptionStoreError
   })
 );
 
@@ -3317,6 +3419,27 @@ async function startServer(listener = app.listen.bind(app)) {
       console.error("[webhook] recovery failed:", err);
     }
   }
+  // Provision VAPID keys on first boot. Idempotent: subsequent boots
+  // see existing keys and skip generation. Persisting in app-config.json
+  // means a single keypair survives across restarts forever, which is
+  // what subscribers expect (rotating VAPID would invalidate every
+  // existing subscription).
+  try {
+    appConfigStore.ensurePushKeysSync({
+      generate: () => require("web-push").generateVAPIDKeys(),
+      subject: ENV_PUSH_VAPID_SUBJECT
+    });
+  } catch (err) {
+    console.error("[notify] VAPID provisioning failed:", err.message);
+  }
+  // Start the daily notification scheduler. Always-on: the scheduler
+  // itself respects the runtime `enabled` flag from app-config so
+  // operators can toggle without restart.
+  try {
+    await dailyNotificationScheduler.start();
+  } catch (err) {
+    console.error("[notify] scheduler boot failed:", err);
+  }
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3356,3 +3479,6 @@ module.exports.scheduleStore = scheduleStore;
 module.exports.webhookStore = webhookStore;
 module.exports.webhookDeliveryStore = webhookDeliveryStore;
 module.exports.webhookService = webhookService;
+module.exports.pushSubscriptionStore = pushSubscriptionStore;
+module.exports.notificationService = notificationService;
+module.exports.dailyNotificationScheduler = dailyNotificationScheduler;

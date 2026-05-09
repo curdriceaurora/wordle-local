@@ -1546,8 +1546,172 @@ async function init() {
 
 init();
 
+// ── Daily puzzle push notifications ──────────────────────────────────
+// Self-contained block at the end so adding/removing the feature is a
+// single contiguous edit. The opt-in toggle is hidden unless the
+// browser supports Notification + Service Worker + PushManager AND the
+// page is loaded over a secure context (HTTPS or localhost).
+const NOTIFICATION_HASH_STORAGE_KEY = 'wordle.pushEndpointHash';
+const notificationToggleEl = document.getElementById('notificationToggle');
+const notificationToggleLabelEl = document.getElementById('notificationToggleLabel');
+const notificationStatusEl = document.getElementById('notificationStatus');
+
+function pushNotificationsSupported() {
+  return Boolean(
+    typeof window !== 'undefined'
+    && 'serviceWorker' in navigator
+    && 'PushManager' in window
+    && 'Notification' in window
+    && (window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  );
+}
+
+function setNotificationStatus(text) {
+  if (notificationStatusEl) notificationStatusEl.textContent = text || '';
+}
+
+function setNotificationLabel(text) {
+  if (notificationToggleLabelEl) notificationToggleLabelEl.textContent = text;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  // The PushManager subscribe API needs the VAPID public key as raw
+  // bytes, not the URL-safe base64 the server emits.
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function getNotificationRegistration() {
+  if (!('serviceWorker' in navigator)) return null;
+  // ready resolves once the active SW is installed AND activated, so a
+  // first-load subscribe doesn't race a still-installing worker.
+  return navigator.serviceWorker.ready;
+}
+
+async function refreshNotificationToggle() {
+  if (!notificationToggleEl) return;
+  if (!pushNotificationsSupported()) {
+    notificationToggleEl.hidden = true;
+    setNotificationStatus(window.isSecureContext ? '' : 'Notifications need HTTPS or localhost.');
+    return;
+  }
+  notificationToggleEl.hidden = false;
+  if (Notification.permission === 'denied') {
+    notificationToggleEl.disabled = true;
+    notificationToggleEl.setAttribute('aria-pressed', 'false');
+    setNotificationLabel('Notifications blocked');
+    setNotificationStatus('Open browser settings to allow notifications, then reload.');
+    return;
+  }
+  notificationToggleEl.disabled = false;
+  let subscribed = false;
+  try {
+    const reg = await getNotificationRegistration();
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      subscribed = Boolean(sub);
+    }
+  } catch (_err) {
+    // pushManager API not available — leave subscribed=false.
+  }
+  notificationToggleEl.setAttribute('aria-pressed', subscribed ? 'true' : 'false');
+  setNotificationLabel(subscribed ? 'Notifications: on' : 'Get notified when daily puzzle is ready');
+  setNotificationStatus('');
+}
+
+async function fetchVapidPublicKey() {
+  const res = await fetch('/api/notifications/vapid-public-key');
+  if (!res.ok) {
+    throw new Error(`Could not fetch VAPID public key (HTTP ${res.status}).`);
+  }
+  const json = await res.json();
+  if (!json.publicKey) throw new Error('Server returned no public key.');
+  return json.publicKey;
+}
+
+async function subscribeToPush() {
+  const reg = await getNotificationRegistration();
+  if (!reg) throw new Error('Service worker not available.');
+  // Ask permission only on the user-gesture path. Auto-prompting is
+  // explicitly out of scope; this respects the locked decision in #92.
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error(permission === 'denied' ? 'Permission denied.' : 'Permission not granted.');
+  }
+  const publicKey = await fetchVapidPublicKey();
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey)
+  });
+  const subJson = sub.toJSON();
+  const res = await fetch('/api/notifications/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      endpoint: subJson.endpoint,
+      keys: subJson.keys
+    })
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Subscribe failed (HTTP ${res.status}).`);
+  }
+  const json = await res.json();
+  if (json.endpointHash) {
+    try { localStorage.setItem(NOTIFICATION_HASH_STORAGE_KEY, json.endpointHash); } catch (_e) { /* ignore */ }
+  }
+}
+
+async function unsubscribeFromPush() {
+  const reg = await getNotificationRegistration();
+  if (!reg) return;
+  const sub = await reg.pushManager.getSubscription();
+  let endpointHash = null;
+  try { endpointHash = localStorage.getItem(NOTIFICATION_HASH_STORAGE_KEY); } catch (_e) { /* ignore */ }
+  if (sub) {
+    try { await sub.unsubscribe(); } catch (_e) { /* best-effort */ }
+  }
+  if (endpointHash) {
+    try {
+      await fetch(`/api/notifications/subscribe/${encodeURIComponent(endpointHash)}`, {
+        method: 'DELETE'
+      });
+    } catch (_e) { /* server cleanup is best-effort; the row will prune via failure streak */ }
+    try { localStorage.removeItem(NOTIFICATION_HASH_STORAGE_KEY); } catch (_e) { /* ignore */ }
+  }
+}
+
+if (notificationToggleEl) {
+  notificationToggleEl.addEventListener('click', async () => {
+    if (notificationToggleEl.disabled) return;
+    notificationToggleEl.disabled = true;
+    setNotificationStatus('Working…');
+    try {
+      const isSubscribed = notificationToggleEl.getAttribute('aria-pressed') === 'true';
+      if (isSubscribed) {
+        await unsubscribeFromPush();
+        setNotificationStatus('Notifications turned off.');
+      } else {
+        await subscribeToPush();
+        setNotificationStatus('You will be notified when the daily puzzle is ready.');
+      }
+    } catch (err) {
+      setNotificationStatus(err.message || 'Something went wrong.');
+    } finally {
+      notificationToggleEl.disabled = false;
+      refreshNotificationToggle().catch(() => {});
+    }
+  });
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js')
+      .then(() => refreshNotificationToggle())
+      .catch(() => {});
   });
 }

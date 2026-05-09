@@ -138,7 +138,10 @@ function createAdminRouter(deps) {
     WebhookDeliveryStoreError,
     redactWebhookSecret,
     webhooksEnabled,
-    webhookDefaultMaxAttempts
+    webhookDefaultMaxAttempts,
+    pushSubscriptionStore,
+    notificationService,
+    PushSubscriptionStoreError
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -978,6 +981,120 @@ function createAdminRouter(deps) {
       });
     }
   });
+
+  // ── Push notifications (admin) ──────────────────────────────────────
+  // Player-facing endpoints (subscribe/unsubscribe/vapid-public-key)
+  // live in routes/notifications.js. These admin endpoints surface
+  // counts/timestamps and the broadcast control.
+  function notificationAudit(action, fields) {
+    try {
+      console.log(JSON.stringify({
+        event: `[notify] ${action}`,
+        ts: new Date().toISOString(),
+        ...fields
+      }));
+    } catch (_err) {
+      // best-effort
+    }
+  }
+
+  if (pushSubscriptionStore && notificationService) {
+    router.get("/api/admin/notifications/subscriptions", async (req, res) => {
+      try {
+        const snap = await pushSubscriptionStore.getSnapshot();
+        // Never echo raw endpoints or keys — admin only sees counts +
+        // timestamps and a list of opaque endpointHashes for visibility.
+        return res.json({
+          ok: true,
+          count: snap.subscriptions.length,
+          lastBroadcastAt: snap.lastBroadcastAt,
+          lastDailyFireAt: snap.lastDailyFireAt,
+          // Lightweight per-row info to surface stale subscriptions in
+          // the admin UI without leaking the endpoint URL.
+          rows: snap.subscriptions.map((s) => ({
+            endpointHash: s.endpointHash,
+            createdAt: s.createdAt,
+            lastSuccessAt: s.lastSuccessAt || null,
+            lastFailureAt: s.lastFailureAt || null,
+            failureStreak: s.failureStreak || 0,
+            ua: s.ua || null
+          }))
+        });
+      } catch (err) {
+        if (err instanceof PushSubscriptionStoreError) {
+          return res.status(503).json({ error: err.message, code: err.code });
+        }
+        console.error("[notify] subscriptions list failed:", err);
+        return res.status(503).json({
+          error: "Subscription list failed.",
+          code: "STORE_READ_FAILED"
+        });
+      }
+    });
+
+    router.post("/api/admin/notifications/broadcast", async (req, res) => {
+      const body = req.body || {};
+      const title = String(body.title || "").trim();
+      const messageBody = String(body.body || "").trim();
+      const url = String(body.url || "").trim();
+      const dryRun = body.dryRun === true;
+
+      if (!title || title.length > 80) {
+        return res.status(400).json({
+          error: "title is required and must be 1–80 characters.",
+          code: "INVALID_REQUEST"
+        });
+      }
+      if (!messageBody || messageBody.length > 200) {
+        return res.status(400).json({
+          error: "body is required and must be 1–200 characters.",
+          code: "INVALID_REQUEST"
+        });
+      }
+      if (url && url.length > 256) {
+        return res.status(400).json({
+          error: "url must be at most 256 characters.",
+          code: "INVALID_REQUEST"
+        });
+      }
+      // Reject absolute URLs to other origins — the click handler in
+      // sw.js opens the URL in a tab, and a malicious admin URL could
+      // be a phishing redirect. Allow site-relative paths only.
+      if (url && /^[a-z]+:/i.test(url) && !url.startsWith("/")) {
+        return res.status(400).json({
+          error: "url must be a site-relative path (e.g. /, /play).",
+          code: "INVALID_REQUEST"
+        });
+      }
+
+      const payload = {
+        title,
+        body: messageBody,
+        url: url || "/",
+        tag: "admin-broadcast"
+      };
+      try {
+        const result = await notificationService.broadcast(payload, { dryRun });
+        if (!dryRun) {
+          await pushSubscriptionStore.stampLastBroadcast(new Date()).catch(() => {});
+        }
+        notificationAudit(dryRun ? "broadcast.preview" : "broadcast.send", {
+          actor: actorFingerprint(req),
+          recipients: result.recipients ?? null,
+          sent: result.sent ?? null,
+          failed: result.failed ?? null,
+          gone: result.gone ?? null
+        });
+        return res.json({ ok: true, dryRun, result });
+      } catch (err) {
+        console.error("[notify] broadcast failed:", err);
+        return res.status(503).json({
+          error: "Broadcast failed.",
+          code: "BROADCAST_FAILED"
+        });
+      }
+    });
+  }
 
   router.delete("/api/admin/stats/profile/:id", async (req, res) => {
     const profileId = String(req.params.id || "").trim();

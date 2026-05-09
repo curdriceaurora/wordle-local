@@ -36,6 +36,7 @@
     "helmet": "^8.1.0",
     "nspell": "^2.1.5",
     "undici": "^7.25.0",
+    "web-push": "^3.6.7",
     "yauzl": "^3.3.0"
   },
   "devDependencies": {

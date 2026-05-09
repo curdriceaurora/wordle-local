@@ -180,6 +180,18 @@
             >
               Webhooks
             </button>
+            <button
+              id="admin-tab-notifications"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="notifications"
+              role="tab"
+              aria-controls="admin-panel-notifications"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Notifications
+            </button>
           </nav>
 
           <section
@@ -1112,6 +1124,68 @@
                   </thead>
                   <tbody></tbody>
                 </table>
+              </div>
+            </section>
+          </section>
+
+          <section
+            id="admin-panel-notifications"
+            class="admin-slot"
+            data-panel="notifications"
+            role="tabpanel"
+            aria-labelledby="admin-tab-notifications"
+            tabindex="0"
+            hidden
+          >
+            <h3>Push notifications</h3>
+            <p class="note">
+              Self-hosted Web Push: subscribers register from the player
+              UI; the daily fire dispatches at the configured local time.
+              Use Broadcast for one-off operator messages. See
+              <code>docs/notifications.md</code> for VAPID, browser-support
+              caveats, and troubleshooting.
+            </p>
+
+            <div id="notificationsStatus" class="message" role="status" aria-live="polite"></div>
+
+            <section class="admin-subpanel">
+              <h4>Status</h4>
+              <div class="schedule-status-strip">
+                <span><strong>Subscriptions:</strong> <span id="notifSubscriptionCount">—</span></span>
+                <span><strong>Last broadcast:</strong> <span id="notifLastBroadcast">—</span></span>
+                <span><strong>Last daily fire:</strong> <span id="notifLastDailyFire">—</span></span>
+              </div>
+              <button type="button" id="notifRefreshBtn" class="ghost">Refresh</button>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Broadcast</h4>
+              <form id="notifBroadcastForm" class="form-inline">
+                <label class="form-inline">
+                  <span>Title</span>
+                  <input type="text" id="notifBroadcastTitle" maxlength="80" required autocomplete="off" />
+                </label>
+                <label class="form-inline">
+                  <span>Body</span>
+                  <input type="text" id="notifBroadcastBody" maxlength="200" required autocomplete="off" />
+                </label>
+                <label class="form-inline">
+                  <span>URL (site-relative)</span>
+                  <input
+                    type="text"
+                    id="notifBroadcastUrl"
+                    maxlength="256"
+                    placeholder="/"
+                    pattern="^/.*"
+                    autocomplete="off"
+                  />
+                </label>
+                <button type="button" id="notifBroadcastPreviewBtn" class="ghost">Preview</button>
+                <button type="submit" id="notifBroadcastSendBtn">Send to all</button>
+              </form>
+              <div id="notifBroadcastPreview" class="message" role="status" aria-live="polite" hidden>
+                <strong>Preview:</strong>
+                <span id="notifBroadcastPreviewText"></span>
               </div>
             </section>
           </section>
