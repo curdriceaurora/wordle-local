@@ -193,6 +193,32 @@ describe("WebhookDeliveryStore", () => {
     expect(snap.deliveries[0].subscriptionId).toBe("sub2");
   });
 
+  test("payload cap measured in UTF-8 bytes, not UTF-16 code units", async () => {
+    // 5000 4-byte UTF-8 chars ("\u{1F4A9}") = 20000 bytes, but
+    // String.length is only 10000 (each char = 2 UTF-16 surrogates).
+    // 8 KiB cap — 20000 bytes exceeds it; old `length` check would
+    // have undercounted and let it through.
+    const massivePayload = { repeat: "\u{1F4A9}".repeat(5000) };
+    const d = await store.enqueue({
+      subscriptionId: "sub1",
+      event: "a.b",
+      payload: massivePayload
+    });
+    expect(d.payload).toBeUndefined();
+  });
+
+  test("payload at cap boundary is preserved", async () => {
+    // 1000 ASCII chars (1 byte each) → 1000 bytes serialized
+    // (plus the JSON object framing of a couple bytes), well under 8 KiB.
+    const small = { msg: "x".repeat(1000) };
+    const d = await store.enqueue({
+      subscriptionId: "sub1",
+      event: "a.b",
+      payload: small
+    });
+    expect(d.payload).toEqual(small);
+  });
+
   test("update clears lastError when patch is empty string", async () => {
     const d = await store.enqueue({ subscriptionId: "sub1", event: "a.b" });
     const e1 = await store.update(d.id, { lastError: "Boom" });

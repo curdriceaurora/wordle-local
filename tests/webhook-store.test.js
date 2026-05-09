@@ -168,8 +168,10 @@ describe("webhook-store helpers", () => {
       ]
     });
     expect(out.subscriptions.map((s) => s.id)).toEqual(["first", "second"]);
-    // first dedup-by-id wins (insertion order)
-    expect(out.subscriptions[0].url).toBe("https://a.example.com");
+    // first dedup-by-id wins (insertion order). URL is canonicalized
+    // by `new URL(...).toString()` which adds a trailing slash for
+    // bare-host URLs (no path).
+    expect(out.subscriptions[0].url).toBe("https://a.example.com/");
   });
 });
 
@@ -212,6 +214,15 @@ describe("WebhookStore CRUD", () => {
       url: "not-a-url",
       events: ["a.b"]
     })).rejects.toThrow(expect.objectContaining({ code: "INVALID_URL" }));
+  });
+
+  test("create canonicalizes URL (lowercases scheme so persisted form matches schema regex)", async () => {
+    const created = await store.create({
+      url: "HTTPS://Example.COM/Webhook",
+      events: ["a.b"]
+    });
+    // Scheme + host lowercased by URL serialization; path case preserved.
+    expect(created.url).toBe("https://example.com/Webhook");
   });
 
   test("create rejects URLs with embedded credentials", async () => {
@@ -264,7 +275,7 @@ describe("WebhookStore CRUD", () => {
     await store.create({ url: "https://c.example", events: ["c.d"] });
     const subs = await store.findEnabledForEvent("a.b");
     expect(subs).toHaveLength(1);
-    expect(subs[0].url).toBe("https://a.example");
+    expect(subs[0].url).toBe("https://a.example/");
   });
 
   test("concurrent create + remove are serialized via commitQueue", async () => {
@@ -274,7 +285,7 @@ describe("WebhookStore CRUD", () => {
     await Promise.all([op1, op2]);
     const snap = await store.load();
     expect(snap.subscriptions).toHaveLength(1);
-    expect(snap.subscriptions[0].url).toBe("https://b.example");
+    expect(snap.subscriptions[0].url).toBe("https://b.example/");
   });
 
   test("commit blocks BEFORE entering the commitQueue when the data lock is held (deadlock guard)", async () => {
@@ -314,9 +325,12 @@ describe("WebhookStore CRUD", () => {
   test("reload picks up an out-of-band file edit", async () => {
     await store.create({ url: "https://a.example", events: ["a.b"] });
     const raw = JSON.parse(await fsp.readFile(filePath, "utf8"));
-    raw.subscriptions[0].url = "https://changed.example";
+    // Use a fully-canonical URL here because normalizeUrl runs on
+    // every load — a hand-edited bare-host form would get a trailing
+    // slash appended on reload, hiding the assertion's intent.
+    raw.subscriptions[0].url = "https://changed.example/";
     await fsp.writeFile(filePath, JSON.stringify(raw, null, 2), "utf8");
     const snap = await store.reload();
-    expect(snap.subscriptions[0].url).toBe("https://changed.example");
+    expect(snap.subscriptions[0].url).toBe("https://changed.example/");
   });
 });

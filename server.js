@@ -1305,13 +1305,18 @@ const webhookStore = new WebhookStore({
   filePath: WEBHOOKS_DATA_PATH,
   defaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT,
   logger: console,
-  waitForDataMutationLock
+  // Atomic check-and-claim: waits for the data-mutation lock AND
+  // increments directDataWriteActiveRef so backup/restore's busy
+  // check observes us. Background delivery attempts (executeOnce)
+  // bypass the admin /api gate, so this is the only thing keeping
+  // them from racing a backup that just observed the queue empty.
+  claimDirectDataWriteSlot
 });
 const webhookDeliveryStore = new WebhookDeliveryStore({
   filePath: WEBHOOK_DELIVERIES_DATA_PATH,
   historyMax: ENV_WEBHOOK_DELIVERY_HISTORY_MAX,
   logger: console,
-  waitForDataMutationLock
+  claimDirectDataWriteSlot
 });
 const webhookService = new WebhookService({
   subscriptionStore: webhookStore,
