@@ -55,6 +55,17 @@
           <input id="strictToggle" type="checkbox" />
           <span>Strict mode</span>
         </label>
+        <button
+          id="notificationToggle"
+          type="button"
+          class="toggle"
+          aria-pressed="false"
+          aria-label="Daily puzzle notifications"
+          hidden
+        >
+          <span id="notificationToggleLabel">Get notified when daily puzzle is ready</span>
+        </button>
+        <span id="notificationStatus" class="hint" aria-live="polite"></span>
       </div>
     </header>
 

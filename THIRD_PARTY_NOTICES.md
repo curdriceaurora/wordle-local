@@ -19,3 +19,14 @@ text is checked in next to the bundle at
 
 - Project: https://www.chartjs.org/
 - License: MIT (Copyright (c) 2014-2024 Chart.js Contributors)
+
+## web-push
+
+Daily-puzzle Web Push notifications use the `web-push` Node package
+to sign VAPID JWTs (RFC 8292) and encrypt RFC 8291 push messages.
+Required because Node ships VAPID-capable transport but does not
+expose the lower-level `aes128gcm` content encoding helpers needed
+for RFC 8291 message bodies.
+
+- Project: https://github.com/web-push-libs/web-push
+- License: MIT

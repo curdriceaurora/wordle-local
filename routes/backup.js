@@ -216,6 +216,7 @@ function createBackupRouter(deps) {
     scheduleStore,
     webhookStore,
     webhookDeliveryStore,
+    pushSubscriptionStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData,
     providerImportQueueActiveRef,
@@ -242,6 +243,7 @@ function createBackupRouter(deps) {
     if (scheduleStore?.load) await scheduleStore.load();
     if (webhookStore?.load) await webhookStore.load();
     if (webhookDeliveryStore?.load) await webhookDeliveryStore.load();
+    if (pushSubscriptionStore?.load) await pushSubscriptionStore.load();
     if (appConfigStore?.loadSync) appConfigStore.loadSync();
     if (languageRegistryStore?.loadSync) languageRegistryStore.loadSync();
   }
@@ -260,7 +262,8 @@ function createBackupRouter(deps) {
       classesStore?.writeQueue,
       scheduleStore?.commitQueue,
       webhookStore?.commitQueue,
-      webhookDeliveryStore?.commitQueue
+      webhookDeliveryStore?.commitQueue,
+      pushSubscriptionStore?.commitQueue
     ].filter(Boolean);
     if (queues.length === 0) return;
     await Promise.allSettled(queues);
@@ -624,6 +627,7 @@ function createBackupRouter(deps) {
         ["scheduleStore", () => scheduleStore?.reload?.()],
         ["webhookStore", () => webhookStore?.reload?.()],
         ["webhookDeliveryStore", () => webhookDeliveryStore?.reload?.()],
+        ["pushSubscriptionStore", () => pushSubscriptionStore?.reload?.()],
         ["appConfigStore", () => appConfigStore?.reloadSync?.()],
         ["languageRegistryStore", () => languageRegistryStore?.reloadSync?.()],
         ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()],

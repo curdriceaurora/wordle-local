@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wordle-local/push-subscriptions.schema.json",
+  "title": "Web Push subscriptions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "updatedAt", "subscriptions"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "lastBroadcastAt": { "type": ["string", "null"], "format": "date-time" },
+    "lastDailyFireAt": { "type": ["string", "null"], "format": "date-time" },
+    "subscriptions": {
+      "type": "array",
+      "uniqueItems": false,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "endpointHash",
+          "endpoint",
+          "keys",
+          "createdAt"
+        ],
+        "properties": {
+          "endpointHash": {
+            "description": "First 16 hex chars of sha256(endpoint). Used as opaque ID in URLs; never the raw endpoint.",
+            "type": "string",
+            "pattern": "^[a-f0-9]{16}$"
+          },
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^https://"
+          },
+          "keys": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["p256dh", "auth"],
+            "properties": {
+              "p256dh": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "auth": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          },
+          "ua": { "type": "string", "maxLength": 256 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lastSuccessAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastFailureAt": { "type": ["string", "null"], "format": "date-time" },
+          "failureStreak": { "type": "integer", "minimum": 0, "maximum": 1000 },
+          "firstFailureAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    }
+  }
+}

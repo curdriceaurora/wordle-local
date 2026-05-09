@@ -171,7 +171,10 @@ const state = {
   // an older subscription can't overwrite a fresh table when the
   // operator switches the dropdown rapidly.
   webhookDeliveriesRequestId: 0,
-  webhookDeliveries: []
+  webhookDeliveries: [],
+  notificationsLoading: false,
+  notificationsRequestId: 0,
+  notificationsSummary: null
 };
 
 let jobsRefreshTimer = null;
@@ -344,6 +347,9 @@ function activateTab(nextTab, focus = false) {
   }
   if (tabId === "webhooks" && state.unlocked && !state.webhooksLoading) {
     loadWebhooks({ announce: true }).catch(() => {});
+  }
+  if (tabId === "notifications" && state.unlocked && !state.notificationsLoading) {
+    loadNotifications({ announce: true }).catch(() => {});
   }
 }
 
@@ -2022,6 +2028,9 @@ async function unlockWorkspace() {
     if (state.unlocked && state.activeTab === "webhooks") {
       loadWebhooks({ announce: true }).catch(() => {});
     }
+    if (state.unlocked && state.activeTab === "notifications") {
+      loadNotifications({ announce: true }).catch(() => {});
+    }
   } finally {
     state.loading = false;
     renderWorkspace();
@@ -2364,6 +2373,9 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.webhookSubscriptions = [];
   state.webhookDeliveries = [];
   state.webhookDeliveriesSubscriptionId = null;
+  state.notificationsRequestId += 1;
+  state.notificationsLoading = false;
+  state.notificationsSummary = null;
   // Clear any one-time secret that's still on screen — without this,
   // locking on the Webhooks tab and unlocking again would leave the
   // previously revealed secret visible until loadWebhooks() finishes.
@@ -3698,6 +3710,117 @@ if (webhookDeliveriesRefreshBtnEl) {
     const id = state.webhookDeliveriesSubscriptionId
       || (webhookDeliveriesSubscriptionEl && webhookDeliveriesSubscriptionEl.value);
     if (id) loadWebhookDeliveries(id).catch(() => {});
+  });
+}
+
+// ── Notifications tab ──────────────────────────────────────────────────
+const notificationsStatusEl = document.getElementById("notificationsStatus");
+const notifSubscriptionCountEl = document.getElementById("notifSubscriptionCount");
+const notifLastBroadcastEl = document.getElementById("notifLastBroadcast");
+const notifLastDailyFireEl = document.getElementById("notifLastDailyFire");
+const notifRefreshBtnEl = document.getElementById("notifRefreshBtn");
+const notifBroadcastFormEl = document.getElementById("notifBroadcastForm");
+const notifBroadcastTitleEl = document.getElementById("notifBroadcastTitle");
+const notifBroadcastBodyEl = document.getElementById("notifBroadcastBody");
+const notifBroadcastUrlEl = document.getElementById("notifBroadcastUrl");
+const notifBroadcastPreviewBtnEl = document.getElementById("notifBroadcastPreviewBtn");
+const notifBroadcastPreviewEl = document.getElementById("notifBroadcastPreview");
+const notifBroadcastPreviewTextEl = document.getElementById("notifBroadcastPreviewText");
+
+async function loadNotifications(options = {}) {
+  if (!state.unlocked) return;
+  if (state.notificationsLoading) return;
+  state.notificationsLoading = true;
+  const requestId = ++state.notificationsRequestId;
+  if (options.announce !== false) setStatus(notificationsStatusEl, "Loading…");
+  try {
+    const payload = await requestAdminJson("/api/admin/notifications/subscriptions");
+    if (requestId !== state.notificationsRequestId) return;
+    state.notificationsSummary = payload;
+    renderNotificationsSummary();
+    if (options.announce !== false) setStatus(notificationsStatusEl, "Loaded.", "admin-status-ok");
+  } catch (err) {
+    if (requestId !== state.notificationsRequestId) return;
+    setStatus(notificationsStatusEl, `Load failed: ${err.message}`, "admin-status-missing");
+  } finally {
+    if (requestId === state.notificationsRequestId) {
+      state.notificationsLoading = false;
+    }
+  }
+}
+
+function renderNotificationsSummary() {
+  const summary = state.notificationsSummary;
+  if (!summary) return;
+  if (notifSubscriptionCountEl) {
+    notifSubscriptionCountEl.textContent = String(summary.count ?? 0);
+  }
+  if (notifLastBroadcastEl) {
+    notifLastBroadcastEl.textContent = summary.lastBroadcastAt ? formatTimestamp(summary.lastBroadcastAt) : "Never";
+  }
+  if (notifLastDailyFireEl) {
+    notifLastDailyFireEl.textContent = summary.lastDailyFireAt ? formatTimestamp(summary.lastDailyFireAt) : "Never";
+  }
+}
+
+if (notifRefreshBtnEl) {
+  notifRefreshBtnEl.addEventListener("click", () => {
+    loadNotifications({ announce: true }).catch(() => {});
+  });
+}
+
+async function submitBroadcast({ dryRun }) {
+  if (!state.unlocked) return;
+  const title = String(notifBroadcastTitleEl?.value || "").trim();
+  const body = String(notifBroadcastBodyEl?.value || "").trim();
+  const url = String(notifBroadcastUrlEl?.value || "").trim() || "/";
+  if (!title || !body) {
+    setStatus(notificationsStatusEl, "Title and body are required.", "admin-status-missing");
+    return;
+  }
+  if (!dryRun) {
+    if (!window.confirm(`Send "${title}" to all subscribers?`)) return;
+  }
+  let payload;
+  try {
+    payload = await requestAdminJson("/api/admin/notifications/broadcast", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body, url, dryRun: dryRun === true })
+    });
+  } catch (err) {
+    setStatus(notificationsStatusEl, `Broadcast failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  if (dryRun) {
+    if (notifBroadcastPreviewEl && notifBroadcastPreviewTextEl) {
+      const p = payload.result?.preview || { title, body, url };
+      notifBroadcastPreviewTextEl.textContent = `${p.title} · ${p.body} · ${p.url} (${payload.result?.recipients ?? 0} recipient(s))`;
+      notifBroadcastPreviewEl.hidden = false;
+    }
+    setStatus(notificationsStatusEl, "Preview rendered.", "admin-status-ok");
+  } else {
+    setStatus(
+      notificationsStatusEl,
+      `Sent: ${payload.result?.sent ?? 0}, failed: ${payload.result?.failed ?? 0}, gone: ${payload.result?.gone ?? 0}.`,
+      "admin-status-ok"
+    );
+    if (notifBroadcastPreviewEl) notifBroadcastPreviewEl.hidden = true;
+    notifBroadcastFormEl?.reset();
+    loadNotifications({ announce: false }).catch(() => {});
+  }
+}
+
+if (notifBroadcastPreviewBtnEl) {
+  notifBroadcastPreviewBtnEl.addEventListener("click", () => {
+    submitBroadcast({ dryRun: true }).catch(() => {});
+  });
+}
+
+if (notifBroadcastFormEl) {
+  notifBroadcastFormEl.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitBroadcast({ dryRun: false }).catch(() => {});
   });
 }
 

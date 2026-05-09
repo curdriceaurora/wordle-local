@@ -1,9 +1,8 @@
-// v2: admin shell now loads /dist/vendor/chart.umd.min.js for the
-// Analytics tab. Existing browsers with v1 cached would otherwise serve
-// the old /admin/app.js (no chart code) and 503 the new vendor URL on
-// offline loads, leaving window.Chart undefined. Bumping the cache name
-// forces a precache refresh on activate.
-const CACHE_NAME = 'wordle-cache-v2';
+// v3: adds `push` + `notificationclick` listeners for the daily-puzzle
+// Web Push notification flow (#92). Bumping the cache name forces a
+// service-worker update on existing installs so the new listeners
+// activate without a hard reload.
+const CACHE_NAME = 'wordle-cache-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -43,6 +42,65 @@ self.addEventListener('activate', (event) => {
       })
       .then(() => {
         return self.clients.claim();
+      })
+  );
+});
+
+// Push notifications. The server sends a JSON payload like
+// `{title, body, url, tag}` (built by lib/notification-service.js); on
+// an empty payload we fall back to a generic daily-puzzle copy so the
+// listener never throws.
+self.addEventListener('push', (event) => {
+  let payload = {};
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch (_err) {
+      payload = { title: 'Wordle', body: event.data.text() };
+    }
+  }
+  const title = payload.title || "Today's Wordle is ready";
+  const options = {
+    body: payload.body || 'Open the app to play today\'s puzzle.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    // `tag` collapses repeat notifications so a daily fire that lands
+    // before a previous one was dismissed doesn't pile up.
+    tag: typeof payload.tag === 'string' ? payload.tag : 'wordle-daily',
+    data: {
+      url: typeof payload.url === 'string' ? payload.url : '/'
+    }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+  // If a tab is already open at the target URL, focus it; otherwise
+  // open a new window. clients.matchAll requires the includeUncontrolled
+  // option so we see tabs from before this SW activated.
+  // Compare PATH-ONLY: an URL with a query/hash like /play?day=123
+  // would never match `clientUrl.pathname === '/play?day=123'` if we
+  // compared the raw string, so we'd always open a new window.
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        for (const client of windowClients) {
+          try {
+            const clientUrl = new URL(client.url);
+            const targetParsed = new URL(targetUrl, clientUrl.origin);
+            if (clientUrl.pathname === targetParsed.pathname && 'focus' in client) {
+              return client.focus();
+            }
+          } catch (_err) {
+            // ignore parse errors and fall through to opening a new window
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(targetUrl);
+        }
+        return null;
       })
   );
 });

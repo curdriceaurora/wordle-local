@@ -46,3 +46,5 @@ data/app-config.json
 data/schedule.json
 data/webhooks.json
 data/webhook-deliveries.json
+data/push-subscriptions.json
+data/vapid-keys.json

@@ -37,6 +37,8 @@ const webhooksSchemaPath = path.join(projectRoot, "data", "webhooks.schema.json"
 const webhooksExamplePath = path.join(projectRoot, "data", "webhooks.example.json");
 const webhookDeliveriesSchemaPath = path.join(projectRoot, "data", "webhook-deliveries.schema.json");
 const webhookDeliveriesExamplePath = path.join(projectRoot, "data", "webhook-deliveries.example.json");
+const pushSubscriptionsSchemaPath = path.join(projectRoot, "data", "push-subscriptions.schema.json");
+const pushSubscriptionsExamplePath = path.join(projectRoot, "data", "push-subscriptions.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -124,6 +126,11 @@ function runSchemaChecks() {
       schemaPath: webhookDeliveriesSchemaPath,
       dataPath: webhookDeliveriesExamplePath,
       schemaLabel: "webhook deliveries schema"
+    },
+    {
+      schemaPath: pushSubscriptionsSchemaPath,
+      dataPath: pushSubscriptionsExamplePath,
+      schemaLabel: "push subscriptions schema"
     }
   ];
 
