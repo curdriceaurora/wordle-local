@@ -277,6 +277,40 @@ describe("WebhookStore CRUD", () => {
     expect(snap.subscriptions[0].url).toBe("https://b.example");
   });
 
+  test("commit blocks BEFORE entering the commitQueue when the data lock is held (deadlock guard)", async () => {
+    let releaseLock;
+    const lockHeld = new Promise((resolve) => { releaseLock = resolve; });
+    const waitFn = async () => { await lockHeld; };
+    const store2 = new WebhookStore({
+      filePath: tempPath(),
+      waitForDataMutationLock: waitFn,
+      now: frozenNow()
+    });
+    await store2.load();
+    // Start a create() while the "lock" is held. It must NOT enqueue
+    // to commitQueue until the lock releases — otherwise the backup
+    // drain path (which awaits commitQueue while holding the lock)
+    // would deadlock.
+    const createPromise = store2.create({
+      url: "https://example.com",
+      events: ["a.b"]
+    });
+    // Yield microtasks; create should be parked at waitForDataMutationLock.
+    await new Promise((r) => setImmediate(r));
+    // Drain the commitQueue — it must resolve immediately because no
+    // run was enqueued (the await blocked first).
+    const drainResult = await Promise.race([
+      store2.commitQueue,
+      new Promise((r) => setTimeout(() => r("TIMEOUT"), 100))
+    ]);
+    expect(drainResult).toBe(undefined);
+    // Now release the lock and let the commit proceed.
+    releaseLock();
+    await createPromise;
+    const snap = await store2.load();
+    expect(snap.subscriptions).toHaveLength(1);
+  });
+
   test("reload picks up an out-of-band file edit", async () => {
     await store.create({ url: "https://a.example", events: ["a.b"] });
     const raw = JSON.parse(await fsp.readFile(filePath, "utf8"));
