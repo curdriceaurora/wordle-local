@@ -3188,9 +3188,18 @@ if (scheduleConfigFormEl) {
     if (!state.unlocked) return;
     const body = {
       timezone: scheduleTimezoneInputEl?.value?.trim(),
-      auto_rotate: Boolean(scheduleAutoRotateEl?.checked),
-      retention_days: Number(scheduleRetentionDaysEl?.value || 0)
+      auto_rotate: Boolean(scheduleAutoRotateEl?.checked)
     };
+    // Only send retention_days if the operator actually entered a
+    // value. An empty input would otherwise coerce to 0 and the next
+    // prune would wipe almost all history — likely not the intent.
+    const retentionRaw = scheduleRetentionDaysEl?.value?.trim();
+    if (retentionRaw !== "" && retentionRaw !== undefined) {
+      const retention = Number(retentionRaw);
+      if (Number.isInteger(retention) && retention >= 0) {
+        body.retention_days = retention;
+      }
+    }
     try {
       const payload = await requestAdminJson("/api/admin/schedule/config", {
         method: "PUT",

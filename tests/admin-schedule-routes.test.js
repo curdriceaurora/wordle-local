@@ -3,7 +3,6 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const request = require("node:http").request;
 const supertest = require("supertest");
 
 const ORIGINAL_ENV = { ...process.env };
@@ -44,10 +43,6 @@ function loadApp({ adminKey, schedulePath, statsPath }) {
 afterEach(() => {
   resetEnv();
 });
-
-// Avoid pulling in supertest for the whole file via destructuring import —
-// it's already been loaded above.
-void request;
 
 describe("GET /api/admin/schedule", () => {
   test("returns the default schedule on first boot when no file exists", async () => {

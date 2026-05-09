@@ -1276,11 +1276,21 @@ async function runSchedulerReconcile(reason = "tick") {
 }
 
 async function runSchedulerReconcileInner(reason = "tick") {
+  // The store owns all writes through `commitQueue`, so its in-memory
+  // cache is always fresh — `.load()` is the right call, not
+  // `.reload()`. The earlier "re-load schedule" wording in this comment
+  // was inaccurate; the cache only becomes stale after a backup/restore
+  // file swap, and the restore path explicitly calls
+  // `scheduleStore.reload()` itself.
   let schedule;
   try {
     schedule = await scheduleStore.load();
   } catch (err) {
     console.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
+    // Background callers (boot / interval) can't react meaningfully —
+    // they swallow this. Admin-trigger callers re-throw so the route
+    // can return 503 instead of silently reporting "ok".
+    if (reason === "admin-trigger") throw err;
     return null;
   }
   const currentWord = wordDataCache || readWordData() || buildDefaultWordData();
@@ -1308,6 +1318,10 @@ async function runSchedulerReconcileInner(reason = "tick") {
     return result;
   } catch (err) {
     console.error(`[scheduler] reconcile failed (${reason}):`, err.message);
+    // Same propagation rule: admin-trigger callers see the failure;
+    // background callers swallow it (logged above) so a transient
+    // disk error doesn't kill the interval driver.
+    if (reason === "admin-trigger") throw err;
     return null;
   }
 }

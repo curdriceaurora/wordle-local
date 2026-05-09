@@ -184,10 +184,21 @@ function createAdminRouter(deps) {
     }
   }
   function scheduleErrorBody(err) {
-    return {
-      error: err?.message || "Schedule operation failed.",
-      code: err?.code || "INTERNAL"
-    };
+    // Store-level errors include absolute file paths and raw fs error
+    // text in their message (useful in server logs, not in responses).
+    // Substitute generic copy for those codes; pass the validation /
+    // shape errors through verbatim because they're authored by us
+    // and don't contain secrets.
+    const STORE_LEVEL = new Set([
+      "STORE_READ_FAILED",
+      "STORE_WRITE_FAILED",
+      "STORE_PARSE_FAILED"
+    ]);
+    const code = err?.code || "INTERNAL";
+    const message = STORE_LEVEL.has(code)
+      ? "Schedule store unavailable. See server logs."
+      : err?.message || "Schedule operation failed.";
+    return { error: message, code };
   }
   function scheduleAudit(action, fields) {
     // Single-line audit log entry per write. `actor` is intentionally a

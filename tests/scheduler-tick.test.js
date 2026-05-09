@@ -418,6 +418,37 @@ describe("reconcileDailyWord", () => {
     expect(out).toEqual(["ABC", "CRANE", "BREAD"]);
   });
 
+  test("word.json.date is server-local even when schedule TZ differs", async () => {
+    // Schedule TZ is set to America/New_York but the test runner's
+    // server-local zone is whatever Node sees. We need word.json.date
+    // to reflect the server-local date so /daily's date gate (which
+    // also uses server-local) lets the puzzle through. lastScheduledFor
+    // should still reflect the schedule TZ for idempotency.
+    const writes = [];
+    const schedule = makeSchedule({
+      timezone: "America/New_York",
+      scheduled_words: [{ date: "2026-05-07", word: "CRANE", lang: "en" }]
+    });
+    const now = new Date("2026-05-08T03:30:00Z"); // May 7 23:30 EDT, May 8 03:30 UTC
+    await reconcileDailyWord({
+      schedule,
+      currentWordData: { word: "OLD", lang: "en", date: "2026-05-06", updatedAt: "2026-05-06T12:00:00Z" },
+      now,
+      defaultLang: "en",
+      providersRoot: "/dev/null",
+      languagesPath: "/dev/null",
+      saveWordData: async (data) => { writes.push(data); }
+    });
+    // word.json.date matches server-local — getFullYear/Month/Date on
+    // the Date instance. The expected value depends on the runner's
+    // zone, so we compute it here the same way and compare.
+    const expectedServerDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    expect(writes[0].date).toBe(expectedServerDate);
+    // lastScheduledFor still reflects the schedule's TZ — May 7 in NY,
+    // not May 8 in UTC.
+    expect(writes[0].lastScheduledFor).toBe("2026-05-07");
+  });
+
   test("DST-forward day still triggers exactly one write", async () => {
     // 2026-03-08 is the DST-forward day in America/New_York. The reconciler
     // ticking at 03:30 EDT (07:30Z) and again at 04:00 EDT (08:00Z) should
