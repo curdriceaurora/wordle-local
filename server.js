@@ -1416,16 +1416,27 @@ const dailyNotificationScheduler = new DailyNotificationScheduler({
   getConfig: getNotificationsConfig,
   buildPayload: () => {
     // Pull today's word into the body so a notification reads
-    // "Today's Wordle is ready: 5 letters". Falls back to a generic
-    // copy if the daily word isn't set yet.
+    // "Today's puzzle is live — 5 letters". `/daily` 404s when the
+    // cached word's date doesn't match today's server-local date,
+    // so check that BEFORE claiming a daily exists. If stale or
+    // unset, drop into generic-non-daily copy and link to `/` (the
+    // create-a-puzzle page) instead.
     const data = wordDataCache || readWordData() || buildDefaultWordData();
-    const wordLen = typeof data.word === "string" ? data.word.length : null;
-    const body = wordLen
-      ? `Today's puzzle is live — ${wordLen} letters.`
-      : "Open the app to play today's puzzle.";
+    const today = getLocalDateString(new Date());
+    const isFresh = typeof data.word === "string"
+      && typeof data.date === "string"
+      && data.date === today;
+    if (isFresh) {
+      return {
+        title: "Today's Wordle is ready",
+        body: `Today's puzzle is live — ${data.word.length} letters.`,
+        url: "/daily",
+        tag: "daily-puzzle"
+      };
+    }
     return {
-      title: "Today's Wordle is ready",
-      body,
+      title: "Wordle",
+      body: "Open the app to play.",
       url: "/",
       tag: "daily-puzzle"
     };
