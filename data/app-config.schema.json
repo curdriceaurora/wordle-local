@@ -18,33 +18,6 @@
       "type": "string",
       "format": "date-time"
     },
-    "pushKeys": {
-      "description": "VAPID keypair for Web Push, generated on first boot and persisted forever. Private key never exposed to clients or via runtime-config; absence indicates push notifications are disabled.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["publicKey", "privateKey", "subject"],
-      "properties": {
-        "publicKey": {
-          "description": "URL-safe base64 (87 chars from generateVAPIDKeys).",
-          "type": "string",
-          "minLength": 80,
-          "maxLength": 200
-        },
-        "privateKey": {
-          "description": "URL-safe base64 (43 chars from generateVAPIDKeys).",
-          "type": "string",
-          "minLength": 40,
-          "maxLength": 100
-        },
-        "subject": {
-          "description": "RFC 8292 jws_t identifier; must be mailto: or https: URL.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256,
-          "pattern": "^(mailto:|https:)"
-        }
-      }
-    },
     "overrides": {
       "type": "object",
       "additionalProperties": false,

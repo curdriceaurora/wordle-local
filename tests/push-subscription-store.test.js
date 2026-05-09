@@ -38,14 +38,28 @@ describe("push-subscription-store helpers", () => {
 
   test("normalizeSubscription rejects non-https endpoint", () => {
     expect(() => normalizeSubscription({
-      endpointHash: "a".repeat(16),
+      endpointHash: endpointHashOf("http://insecure.example"),
       endpoint: "http://insecure.example",
       keys: { p256dh: "x", auth: "y" },
       createdAt: "2026-05-09T00:00:00.000Z"
     })).toThrow();
   });
 
-  test("normalizeStore drops duplicate endpointHashes", () => {
+  test("normalizeSubscription rejects mismatched endpointHash", () => {
+    expect(() => normalizeSubscription({
+      endpointHash: "a".repeat(16),
+      endpoint: "https://example.com/p",
+      keys: { p256dh: "x", auth: "y" },
+      createdAt: "2026-05-09T00:00:00.000Z"
+    })).toThrow(/does not match/);
+  });
+
+  test("normalizeStore drops rows with duplicate canonical endpointHashes", () => {
+    // Two rows with the same endpoint will produce the same expected
+    // hash; the second is dropped on dedupe even when the inputs
+    // claim different (mismatched) hashes — but we can only test the
+    // dedupe path with VALID inputs now, so use the same endpoint.
+    const sharedHash = endpointHashOf("https://example.com/a");
     const out = normalizeStore({
       version: 1,
       updatedAt: "2026-05-09T00:00:00.000Z",
@@ -53,21 +67,21 @@ describe("push-subscription-store helpers", () => {
       lastDailyFireAt: null,
       subscriptions: [
         {
-          endpointHash: "a".repeat(16),
+          endpointHash: sharedHash,
           endpoint: "https://example.com/a",
           keys: { p256dh: "k1", auth: "a1" },
           createdAt: "2026-05-09T00:00:00.000Z"
         },
         {
-          endpointHash: "a".repeat(16),
-          endpoint: "https://example.com/a-dup",
+          endpointHash: sharedHash,
+          endpoint: "https://example.com/a",
           keys: { p256dh: "k2", auth: "a2" },
           createdAt: "2026-05-09T00:00:01.000Z"
         }
       ]
     });
     expect(out.subscriptions).toHaveLength(1);
-    expect(out.subscriptions[0].endpoint).toBe("https://example.com/a");
+    expect(out.subscriptions[0].keys.p256dh).toBe("k1"); // first wins
   });
 });
 

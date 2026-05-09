@@ -36,9 +36,9 @@ The admin Notifications tab surfaces:
 | Item | Behavior |
 | --- | --- |
 | **Generation** | Once on first boot via `web-push.generateVAPIDKeys()`. |
-| **Persistence** | `data/app-config.json` under `pushKeys`. |
-| **Rotation** | Not currently supported in the admin UI. Manual rotation requires deleting `pushKeys` from `data/app-config.json` (server restart will regenerate); ALL existing subscriptions become invalid and need to re-register. |
-| **Server-only** | `privateKey` is never exposed via `/api/meta`, runtime config, or any admin endpoint. The integration test `tests/notification-routes.test.js` enforces this. |
+| **Persistence** | `data/vapid-keys.json` (server-only file, **NOT** included in the backup `IN_SCOPE_FILES` set). |
+| **Rotation** | Not currently supported in the admin UI. Manual rotation requires deleting `data/vapid-keys.json` (server restart will regenerate); ALL existing subscriptions become invalid and need to re-register. |
+| **Server-only** | `privateKey` is never exposed via `/api/meta`, runtime config, any admin endpoint, OR the backup archive. Splitting VAPID into its own file (rather than nesting under `app-config.json`) keeps the secret pinned to the host that generated it — admin-key-holders downloading a backup can't extract the private half from offline copies. |
 | **Subject** | `mailto:` or `https:` per RFC 8292. Defaults to `mailto:admin@localhost`; override with `PUSH_VAPID_SUBJECT`. |
 
 ## Browser support
@@ -87,9 +87,10 @@ need HTTPS or localhost." in this case.
 | --- | --- | --- | --- |
 | `PUSH_NOTIFICATIONS_ENABLED` | `true` | bool | Seed for the runtime `notifications.enabled` flag. After first boot, the admin UI override wins. |
 | `PUSH_DAILY_FIRE_LOCAL_TIME` | `00:00` | HH:MM 24h | Server-local time of the daily fire. Seed only; the runtime override wins. |
-| `PUSH_GRACE_PERIOD_MINUTES` | `60` | 0–1440 | Fire-late grace window on boot. |
+| `PUSH_GRACE_PERIOD_MINUTES` | `60` | 0–60 | Fire-late grace window on boot. Capped at 60 so a long downtime doesn't blur day boundaries. |
 | `PUSH_VAPID_SUBJECT` | `mailto:admin@localhost` | mailto: or https: | RFC 8292 subject for VAPID JWT. |
 | `PUSH_SUBSCRIPTIONS_STORE_PATH` | `data/push-subscriptions.json` | path | Override the subscription store location. |
+| `VAPID_KEYS_STORE_PATH` | `data/vapid-keys.json` | path | Override the VAPID keypair location (server-only; not backed up). |
 
 The `notifications.{enabled,localFireTime,gracePeriodMinutes}` keys
 under `overrides` in `data/app-config.json` shadow the env vars at

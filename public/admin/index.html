@@ -1176,7 +1176,8 @@
                     id="notifBroadcastUrl"
                     maxlength="256"
                     placeholder="/"
-                    pattern="^/.*"
+                    pattern="^/(?!/).*"
+                    title="Must be a root-relative path starting with a single /"
                     autocomplete="off"
                   />
                 </label>

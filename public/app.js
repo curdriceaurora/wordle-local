@@ -1648,16 +1648,28 @@ async function subscribeToPush() {
     applicationServerKey: urlBase64ToUint8Array(publicKey)
   });
   const subJson = sub.toJSON();
-  const res = await fetch('/api/notifications/subscribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      endpoint: subJson.endpoint,
-      keys: subJson.keys
-    })
-  });
+  let res;
+  try {
+    res = await fetch('/api/notifications/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: subJson.keys
+      })
+    });
+  } catch (err) {
+    // Network error: roll back the browser-side subscription so the
+    // next refreshNotificationToggle() doesn't read a phantom "on"
+    // state with no matching server row. Without this, the user has
+    // to toggle off and on again to recover, and the off path can't
+    // even DELETE because we never persisted endpointHash.
+    try { await sub.unsubscribe(); } catch (_e) { /* best-effort */ }
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    try { await sub.unsubscribe(); } catch (_e) { /* best-effort */ }
     throw new Error(body.error || `Subscribe failed (HTTP ${res.status}).`);
   }
   const json = await res.json();

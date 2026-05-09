@@ -29,6 +29,7 @@ const {
 } = require("./lib/push-subscription-store");
 const { NotificationService } = require("./lib/notification-service");
 const { DailyNotificationScheduler } = require("./lib/daily-notification-scheduler");
+const { VapidStore } = require("./lib/vapid-store");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -169,6 +170,9 @@ const WEBHOOK_DELIVERIES_DATA_PATH = process.env.WEBHOOK_DELIVERIES_STORE_PATH
 const PUSH_SUBSCRIPTIONS_DATA_PATH = process.env.PUSH_SUBSCRIPTIONS_STORE_PATH
   ? path.resolve(process.env.PUSH_SUBSCRIPTIONS_STORE_PATH)
   : path.join(__dirname, "data", "push-subscriptions.json");
+const VAPID_KEYS_DATA_PATH = process.env.VAPID_KEYS_STORE_PATH
+  ? path.resolve(process.env.VAPID_KEYS_STORE_PATH)
+  : path.join(__dirname, "data", "vapid-keys.json");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -324,7 +328,7 @@ const ENV_PUSH_GRACE_PERIOD_MINUTES_DEFAULT = clampEnvBounded(
   process.env.PUSH_GRACE_PERIOD_MINUTES,
   60,
   0,
-  1440,
+  60,
   "PUSH_GRACE_PERIOD_MINUTES"
 );
 const ENV_PUSH_VAPID_SUBJECT = (() => {
@@ -1372,6 +1376,13 @@ const pushSubscriptionStore = new PushSubscriptionStore({
   logger: console,
   claimDirectDataWriteSlot
 });
+// VAPID keys live in their own file (NOT in backup scope) so the
+// private half can't leak through admin backup exports. See
+// lib/vapid-store.js for the full rationale.
+const vapidStore = new VapidStore({
+  filePath: VAPID_KEYS_DATA_PATH,
+  logger: console
+});
 // Resolve runtime notifications config from app-config overrides (live)
 // with env-var seed fallbacks. Called every time scheduler/service
 // needs the config so admin edits take effect without restart.
@@ -1389,11 +1400,14 @@ function getNotificationsConfig() {
 }
 const notificationService = new NotificationService({
   subscriptionStore: pushSubscriptionStore,
-  enabled: true,
+  // Read the runtime `notifications.enabled` flag on every send so
+  // toggling off in the admin UI also stops admin broadcasts (not
+  // just the daily scheduler).
+  isEnabled: () => getNotificationsConfig().enabled,
   logger: console,
-  // Read pushKeys from app-config on every send so admin-rotated keys
-  // (future feature) take effect without restart.
-  getPushKeys: () => appConfigStore.getPushKeysSync()
+  // Read VAPID keys from the dedicated store on every send so admin-
+  // rotated keys (future feature) take effect without restart.
+  getPushKeys: () => vapidStore.getKeysSync()
 });
 const dailyNotificationScheduler = new DailyNotificationScheduler({
   subscriptionStore: pushSubscriptionStore,
@@ -3223,7 +3237,7 @@ const createNotificationsRouter = require("./routes/notifications.js");
 app.use(
   createNotificationsRouter({
     pushSubscriptionStore,
-    appConfigStore,
+    vapidStore,
     PushSubscriptionStoreError
   })
 );
@@ -3420,12 +3434,11 @@ async function startServer(listener = app.listen.bind(app)) {
     }
   }
   // Provision VAPID keys on first boot. Idempotent: subsequent boots
-  // see existing keys and skip generation. Persisting in app-config.json
-  // means a single keypair survives across restarts forever, which is
-  // what subscribers expect (rotating VAPID would invalidate every
-  // existing subscription).
+  // see existing keys and skip generation. The keypair lives in its
+  // own file (NOT backed up) so admin-key-holders downloading a
+  // backup archive can't extract the private half offline.
   try {
-    appConfigStore.ensurePushKeysSync({
+    vapidStore.ensureKeysSync({
       generate: () => require("web-push").generateVAPIDKeys(),
       subject: ENV_PUSH_VAPID_SUBJECT
     });

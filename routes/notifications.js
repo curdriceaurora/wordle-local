@@ -14,15 +14,15 @@ const express = require("express");
 function createNotificationsRouter(deps) {
   const {
     pushSubscriptionStore,
-    appConfigStore,
+    vapidStore,
     PushSubscriptionStoreError
   } = deps;
 
   if (!pushSubscriptionStore) {
     throw new TypeError("createNotificationsRouter: pushSubscriptionStore dep is required.");
   }
-  if (!appConfigStore) {
-    throw new TypeError("createNotificationsRouter: appConfigStore dep is required.");
+  if (!vapidStore) {
+    throw new TypeError("createNotificationsRouter: vapidStore dep is required.");
   }
 
   const router = express.Router();
@@ -30,7 +30,7 @@ function createNotificationsRouter(deps) {
   // Public endpoint — never returns the private key. The client uses
   // this to subscribe via PushManager.subscribe({applicationServerKey}).
   router.get("/api/notifications/vapid-public-key", (req, res) => {
-    const keys = appConfigStore.getPushKeysSync();
+    const keys = vapidStore.getKeysSync();
     if (!keys || !keys.publicKey) {
       return res.status(503).json({
         error: "VAPID keys not provisioned yet. Try again after server boot completes.",

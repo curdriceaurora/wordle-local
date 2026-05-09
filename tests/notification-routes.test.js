@@ -29,6 +29,7 @@ function loadApp({ adminKey, dir, env = {} } = {}) {
   process.env.SCHEDULER_CHECK_INTERVAL_MS = String(60 * 60 * 1000);
   if (dir) {
     process.env.PUSH_SUBSCRIPTIONS_STORE_PATH = path.join(dir, "push.json");
+    process.env.VAPID_KEYS_STORE_PATH = path.join(dir, "vapid-keys.json");
     process.env.APP_CONFIG_PATH = path.join(dir, "app-config.json");
     process.env.SCHEDULE_STORE_PATH = path.join(dir, "schedule.json");
     process.env.STATS_STORE_PATH = path.join(dir, "leaderboard.json");
@@ -198,6 +199,17 @@ describe("POST /api/admin/notifications/broadcast", () => {
     expect(res.status).toBe(200);
     expect(res.body.dryRun).toBe(true);
     expect(res.body.result.recipients).toBe(1);
+  });
+});
+
+describe("VAPID private key is excluded from backup IN_SCOPE_FILES", () => {
+  test("data/vapid-keys.json is NOT a backup-scope file", () => {
+    const { IN_SCOPE_FILES } = require("../lib/backup-store");
+    expect(IN_SCOPE_FILES).not.toContain("data/vapid-keys.json");
+    // Sanity: app-config IS in scope (the public-half side of the keys
+    // never lived there after the move, but we still expect the rest of
+    // app-config to ship).
+    expect(IN_SCOPE_FILES).toContain("data/app-config.json");
   });
 });
 

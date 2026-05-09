@@ -1057,12 +1057,15 @@ function createAdminRouter(deps) {
           code: "INVALID_REQUEST"
         });
       }
-      // Reject absolute URLs to other origins — the click handler in
-      // sw.js opens the URL in a tab, and a malicious admin URL could
-      // be a phishing redirect. Allow site-relative paths only.
-      if (url && /^[a-z]+:/i.test(url) && !url.startsWith("/")) {
+      // Require a true root-relative path: must start with `/`, must
+      // NOT start with `//` (scheme-relative — `//evil.example/x`
+      // navigates off-origin from the click handler), and must not
+      // be a bare segment like `play` (`new URL('play', origin)`
+      // would resolve relative to the current page rather than the
+      // site root, which is also surprising for a stored config).
+      if (url && (!url.startsWith("/") || url.startsWith("//"))) {
         return res.status(400).json({
-          error: "url must be a site-relative path (e.g. /, /play).",
+          error: "url must be a root-relative path (e.g. /, /play). Scheme-relative // and bare segments are rejected.",
           code: "INVALID_REQUEST"
         });
       }

@@ -37,6 +37,9 @@ function makeTempState() {
     "data/app-config.schema.json",
     "data/classes.schema.json",
     "data/schedule.schema.json",
+    "data/webhooks.schema.json",
+    "data/webhook-deliveries.schema.json",
+    "data/push-subscriptions.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     const dest = path.join(projectRoot, rel);
