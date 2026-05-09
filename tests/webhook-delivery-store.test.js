@@ -97,18 +97,52 @@ describe("WebhookDeliveryStore", () => {
     expect(updated.nextAttemptAt).toBeUndefined();
   });
 
-  test("retention cap evicts oldest deliveries when count exceeds max", async () => {
+  test("retention cap evicts oldest TERMINAL deliveries when count exceeds max", async () => {
     let now = new Date("2026-05-08T00:00:00.000Z");
     store.now = () => now;
+    const ids = [];
     for (let i = 0; i < 8; i++) {
       now = new Date(now.getTime() + 1000);
-      await store.enqueue({ subscriptionId: "sub1", event: `evt.${i}` });
+      const d = await store.enqueue({ subscriptionId: "sub1", event: `evt.${i}` });
+      ids.push(d.id);
+    }
+    // Mark all as terminal so retention can evict freely.
+    for (const id of ids) {
+      await store.update(id, { status: "succeeded" });
     }
     const snap = await store.load();
     expect(snap.deliveries).toHaveLength(5); // historyMax
     // The oldest 3 (evt.0, evt.1, evt.2) should be evicted.
     const remainingEvents = snap.deliveries.map((d) => d.event);
     expect(remainingEvents).toEqual(["evt.3", "evt.4", "evt.5", "evt.6", "evt.7"]);
+  });
+
+  test("retention preserves queued/running rows even when over cap", async () => {
+    let now = new Date("2026-05-08T00:00:00.000Z");
+    store.now = () => now;
+    // 6 succeeded (terminal) plus 4 queued (active) → total 10, cap is 5.
+    // Eviction must touch ONLY succeeded rows; queued rows must survive
+    // because their timer is still pending in-process.
+    const succeededIds = [];
+    const queuedIds = [];
+    for (let i = 0; i < 6; i++) {
+      now = new Date(now.getTime() + 1000);
+      const d = await store.enqueue({ subscriptionId: "sub1", event: `done.${i}` });
+      await store.update(d.id, { status: "succeeded" });
+      succeededIds.push(d.id);
+    }
+    for (let i = 0; i < 4; i++) {
+      now = new Date(now.getTime() + 1000);
+      const d = await store.enqueue({ subscriptionId: "sub1", event: `pend.${i}` });
+      queuedIds.push(d.id);
+    }
+    const snap = await store.load();
+    const ids = snap.deliveries.map((d) => d.id);
+    // All 4 queued rows must still be present.
+    for (const qid of queuedIds) expect(ids).toContain(qid);
+    // The file holds queued (4) + at least 1 surviving succeeded
+    // (5 total = historyMax). Some succeeded rows are evicted.
+    expect(snap.deliveries.length).toBeGreaterThanOrEqual(5);
   });
 
   test("findRecent reverses order so newest comes first", async () => {
