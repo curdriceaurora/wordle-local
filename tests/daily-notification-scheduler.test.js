@@ -104,6 +104,48 @@ describe("decideBootAction", () => {
     });
     expect(result.action).toBe("fire-now");
   });
+
+  test("cross-midnight: late fire time, brief downtime that crossed midnight, fires for yesterday's window", () => {
+    // Fire time 23:30. Server was down through 23:30 yesterday and
+    // boots at 00:10 today. Today's 23:30 hasn't arrived yet, but
+    // yesterday's 23:30 was 40 min ago — within the 60-min grace.
+    const now = new Date(2026, 4, 9, 0, 10, 0);
+    const result = decideBootAction({
+      now,
+      localFireTime: "23:30",
+      lastDailyFireAt: null,
+      gracePeriodMinutes: 60
+    });
+    expect(result.action).toBe("fire-now");
+    expect(result.missedAt).toBeTruthy();
+    // Should be yesterday's 23:30, not today's.
+    expect(new Date(result.missedAt).getTime()).toBeLessThan(now.getTime());
+  });
+
+  test("cross-midnight: yesterday already fired → no-recent-miss when today's window not yet arrived", () => {
+    const now = new Date(2026, 4, 9, 0, 10, 0);
+    const yesterdayFireAt = new Date(2026, 4, 8, 23, 30, 5).toISOString();
+    const result = decideBootAction({
+      now,
+      localFireTime: "23:30",
+      lastDailyFireAt: yesterdayFireAt,
+      gracePeriodMinutes: 60
+    });
+    expect(result.action).toBe("no-recent-miss");
+  });
+
+  test("cross-midnight: yesterday's window outside grace → no-recent-miss", () => {
+    // Boot 3h after yesterday's 23:30 fire (i.e. today 02:30). Beyond
+    // 60-min grace from yesterday, but today's 23:30 hasn't arrived.
+    const now = new Date(2026, 4, 9, 2, 30, 0);
+    const result = decideBootAction({
+      now,
+      localFireTime: "23:30",
+      lastDailyFireAt: null,
+      gracePeriodMinutes: 60
+    });
+    expect(result.action).toBe("no-recent-miss");
+  });
 });
 
 describe("DailyNotificationScheduler", () => {

@@ -80,14 +80,17 @@ self.addEventListener('notificationclick', (event) => {
   // If a tab is already open at the target URL, focus it; otherwise
   // open a new window. clients.matchAll requires the includeUncontrolled
   // option so we see tabs from before this SW activated.
+  // Compare PATH-ONLY: an URL with a query/hash like /play?day=123
+  // would never match `clientUrl.pathname === '/play?day=123'` if we
+  // compared the raw string, so we'd always open a new window.
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then((windowClients) => {
         for (const client of windowClients) {
           try {
             const clientUrl = new URL(client.url);
-            const targetPath = targetUrl.startsWith('/') ? targetUrl : new URL(targetUrl, clientUrl.origin).pathname;
-            if (clientUrl.pathname === targetPath && 'focus' in client) {
+            const targetParsed = new URL(targetUrl, clientUrl.origin);
+            if (clientUrl.pathname === targetParsed.pathname && 'focus' in client) {
               return client.focus();
             }
           } catch (_err) {

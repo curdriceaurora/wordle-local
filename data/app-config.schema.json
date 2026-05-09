@@ -93,10 +93,10 @@
               "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
             },
             "gracePeriodMinutes": {
-              "description": "If the daily fire window was missed by more than this many minutes (e.g. server was down), skip the missed fire instead of firing late.",
+              "description": "If the daily fire window was missed by more than this many minutes (e.g. server was down), skip the missed fire instead of firing late. Capped at 60 so a long downtime can't blur day boundaries.",
               "type": "integer",
               "minimum": 0,
-              "maximum": 1440
+              "maximum": 60
             }
           }
         }
