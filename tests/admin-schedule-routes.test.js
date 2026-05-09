@@ -32,10 +32,13 @@ function loadApp({ adminKey, schedulePath, statsPath }) {
   process.env.NODE_ENV = "test";
   if (schedulePath) process.env.SCHEDULE_STORE_PATH = schedulePath;
   if (statsPath) process.env.STATS_STORE_PATH = statsPath;
-  // Disable the scheduler interval driver: it would tick mid-test and fight
-  // with our hand-driven HTTP calls. We still want the boot reconcile to
-  // run because some tests check that data/word.json reflects the
-  // schedule's state at boot.
+  // Tests load the server module via `require("../server")`, which does
+  // NOT call startServer() — neither the boot reconcile nor the
+  // setInterval driver fires. The supertest harness directly invokes
+  // route handlers on the express app. This SCHEDULER_CHECK_INTERVAL_MS
+  // env var is therefore belt-and-suspenders; it would only matter if
+  // a future test invoked startServer() too. Setting it to an hour
+  // also keeps clampEnvBounded from logging a warning.
   process.env.SCHEDULER_CHECK_INTERVAL_MS = String(60 * 60 * 1000);
   return require("../server");
 }

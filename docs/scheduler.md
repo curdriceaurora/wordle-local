@@ -55,7 +55,7 @@ registered with `npm run schema:check`).
 | `auto_rotate` | boolean | yes | When true, days without an explicit entry get filled from the active language's answer pool. |
 | `auto_rotate_seed` | string ≤128 | no | If present, mixed into the seeded pick so two operators can deterministically diverge their picks (or pin them). |
 | `retention_days` | integer 0-36500 | yes | Past entries older than `today − retention_days` are eligible for `POST /api/admin/schedule/prune`. |
-| `scheduled_words[]` | array | yes | Each entry is `{ date: YYYY-MM-DD, word: A-Z{1,15}, lang: en|en-US|...,  notes?: string≤200 }`. Uniqueness enforced on `(date, lang)`. |
+| `scheduled_words[]` | array | yes | Each entry is `{ date: YYYY-MM-DD, word: A-Z{3,12}, lang: en\|en-US\|..., notes?: string≤200 }`. Uniqueness enforced on `(date, lang)`. The 3–12 cap matches the game's `MIN_LEN`/`MAX_LEN` so a scheduled puzzle is always playable through `/api/guess`. |
 | `last_reconciled_at` | ISO-8601 string | no | Stamped by the reconciler. |
 | `last_reconciled_for` | YYYY-MM-DD | no | Stamped by the reconciler — the local date it most recently wrote (or attempted to write). |
 
@@ -147,11 +147,21 @@ for the next tick.
 
 ## Rollback
 
-Stop the server, delete `data/schedule.json`, restart. The runtime
-reverts to today's manual-only behavior with no data loss outside the
-schedule itself. The `data/word.json` file is untouched by uninstall —
-if the scheduler had written today's word, it stays until the operator
-changes it manually.
+Stop the server and delete `data/schedule.json`. On the next boot
+the store recreates an empty default file (with `auto_rotate=false`
+and an empty `scheduled_words` array) — there's no separate
+"scheduler off" mode in v1. Functionally this is the same as
+disabled: the reconciler tick has nothing to apply and `decideReconcile`
+returns `noop` every minute, so `data/word.json` is never touched
+by the scheduler.
+
+Manual `POST /api/word` overrides keep working as they did before.
+`data/word.json` itself is untouched by the rollback — if the
+scheduler had written today's word, it stays until the operator
+changes it manually. To prevent the scheduler from running entirely,
+the operator can also unset `SCHEDULER_CHECK_INTERVAL_MS` and
+disable the boot reconcile by reverting the scheduler wiring (a
+separate code change, not a config knob in v1).
 
 ## Drift considerations
 
