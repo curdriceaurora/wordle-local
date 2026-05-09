@@ -159,7 +159,19 @@ const state = {
   // handler can route to PUT /entries/:date/:lang instead of
   // POST /entries (which would leave the original row behind if the
   // operator changed the date or lang of the entry they were editing).
-  scheduleEditingKey: null
+  scheduleEditingKey: null,
+  webhooksEnabled: true,
+  webhooksLoading: false,
+  webhooksRequestId: 0,
+  webhookSubscriptions: [],
+  webhookDefaultMaxAttempts: 5,
+  webhookDeliveriesLoading: false,
+  webhookDeliveriesSubscriptionId: null,
+  // Bumped on every loadWebhookDeliveries() call so a slow response from
+  // an older subscription can't overwrite a fresh table when the
+  // operator switches the dropdown rapidly.
+  webhookDeliveriesRequestId: 0,
+  webhookDeliveries: []
 };
 
 let jobsRefreshTimer = null;
@@ -329,6 +341,9 @@ function activateTab(nextTab, focus = false) {
   }
   if (tabId === "schedule" && state.unlocked && !state.scheduleLoading) {
     loadSchedule({ announce: true }).catch(() => {});
+  }
+  if (tabId === "webhooks" && state.unlocked && !state.webhooksLoading) {
+    loadWebhooks({ announce: true }).catch(() => {});
   }
 }
 
@@ -2004,6 +2019,9 @@ async function unlockWorkspace() {
     if (state.unlocked && state.activeTab === "schedule") {
       loadSchedule({ announce: true }).catch(() => {});
     }
+    if (state.unlocked && state.activeTab === "webhooks") {
+      loadWebhooks({ announce: true }).catch(() => {});
+    }
   } finally {
     state.loading = false;
     renderWorkspace();
@@ -2341,6 +2359,29 @@ lockSessionBtnEl.addEventListener("click", () => {
   state.scheduleRequestId += 1;
   state.scheduleLoading = false;
   state.schedule = null;
+  state.webhooksRequestId += 1;
+  state.webhooksLoading = false;
+  state.webhookSubscriptions = [];
+  state.webhookDeliveries = [];
+  state.webhookDeliveriesSubscriptionId = null;
+  // Clear any one-time secret that's still on screen — without this,
+  // locking on the Webhooks tab and unlocking again would leave the
+  // previously revealed secret visible until loadWebhooks() finishes.
+  if (typeof webhookCreatedSecretBoxEl !== "undefined" && webhookCreatedSecretBoxEl) {
+    webhookCreatedSecretBoxEl.hidden = true;
+  }
+  if (typeof webhookCreatedSecretValueEl !== "undefined" && webhookCreatedSecretValueEl) {
+    webhookCreatedSecretValueEl.textContent = "";
+  }
+  if (typeof webhooksTableBody !== "undefined" && webhooksTableBody) {
+    webhooksTableBody.innerHTML = "";
+  }
+  if (typeof webhookDeliveriesTableBody !== "undefined" && webhookDeliveriesTableBody) {
+    webhookDeliveriesTableBody.innerHTML = "";
+  }
+  if (typeof webhookDeliveriesSubscriptionEl !== "undefined" && webhookDeliveriesSubscriptionEl) {
+    webhookDeliveriesSubscriptionEl.innerHTML = "";
+  }
   destroyAllAnalyticsCharts();
   if (analyticsCardsEl) {
     analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
@@ -3319,6 +3360,344 @@ if (scheduleReconcileBtnEl) {
     const detail = r?.action ? `(${r.action}, ${r.todayLocal || "unknown date"})` : "";
     setStatus(scheduleStatusEl, `Reconcile complete ${detail}`, "admin-status-ok");
     loadSchedule({ announce: false }).catch(() => {});
+  });
+}
+
+// ── Webhooks tab ───────────────────────────────────────────────────────
+const webhooksDisabledBannerEl = document.getElementById("webhooksDisabledBanner");
+const webhooksStatusEl = document.getElementById("webhooksStatus");
+const webhookCreateFormEl = document.getElementById("webhookCreateForm");
+const webhookUrlInputEl = document.getElementById("webhookUrlInput");
+const webhookEventsInputEl = document.getElementById("webhookEventsInput");
+const webhookLabelInputEl = document.getElementById("webhookLabelInput");
+const webhookMaxAttemptsInputEl = document.getElementById("webhookMaxAttemptsInput");
+const webhookEnabledInputEl = document.getElementById("webhookEnabledInput");
+const webhookCreatedSecretBoxEl = document.getElementById("webhookCreatedSecretBox");
+const webhookCreatedSecretValueEl = document.getElementById("webhookCreatedSecretValue");
+const webhooksTableBody = document.querySelector("#webhooksTable tbody");
+const webhookDeliveriesSubscriptionEl = document.getElementById("webhookDeliveriesSubscription");
+const webhookDeliveriesRefreshBtnEl = document.getElementById("webhookDeliveriesRefreshBtn");
+const webhookDeliveriesTableBody = document.querySelector("#webhookDeliveriesTable tbody");
+
+function parseEventsCsv(input) {
+  return String(input || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function loadWebhooks(options = {}) {
+  if (!state.unlocked) return;
+  if (state.webhooksLoading) return;
+  state.webhooksLoading = true;
+  const requestId = ++state.webhooksRequestId;
+  if (options.announce !== false) setStatus(webhooksStatusEl, "Loading webhooks…");
+  try {
+    const payload = await requestAdminJson("/api/admin/webhooks");
+    if (requestId !== state.webhooksRequestId) return;
+    state.webhooksEnabled = payload.enabled !== false;
+    state.webhookSubscriptions = Array.isArray(payload.subscriptions) ? payload.subscriptions : [];
+    state.webhookDefaultMaxAttempts = Number.isInteger(payload.defaultMaxAttempts)
+      ? payload.defaultMaxAttempts
+      : 5;
+    if (webhookMaxAttemptsInputEl && !webhookMaxAttemptsInputEl.value) {
+      webhookMaxAttemptsInputEl.placeholder = String(state.webhookDefaultMaxAttempts);
+    }
+    if (webhooksDisabledBannerEl) {
+      webhooksDisabledBannerEl.hidden = state.webhooksEnabled;
+    }
+    renderWebhooks();
+    if (options.announce !== false) setStatus(webhooksStatusEl, "Webhooks loaded.", "admin-status-ok");
+  } catch (err) {
+    if (requestId !== state.webhooksRequestId) return;
+    setStatus(webhooksStatusEl, `Load failed: ${err.message}`, "admin-status-missing");
+  } finally {
+    if (requestId === state.webhooksRequestId) {
+      state.webhooksLoading = false;
+    }
+  }
+}
+
+function renderWebhooks() {
+  if (!webhooksTableBody) return;
+  webhooksTableBody.innerHTML = "";
+  if (!state.webhookSubscriptions.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No webhook subscriptions configured yet.";
+    row.appendChild(cell);
+    webhooksTableBody.appendChild(row);
+  } else {
+    const fragment = document.createDocumentFragment();
+    for (const sub of state.webhookSubscriptions) {
+      const row = document.createElement("tr");
+      row.appendChild(buildCell(sub.label || "—"));
+      row.appendChild(buildCell(sub.url));
+      row.appendChild(buildCell((sub.events || []).join(", ")));
+      row.appendChild(buildCell(sub.enabled ? "yes" : "no"));
+      row.appendChild(buildCell(String(sub.maxAttempts ?? "—")));
+      row.appendChild(buildCell(formatTimestamp(sub.createdAt)));
+      const actions = document.createElement("td");
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.className = "ghost";
+      toggleBtn.textContent = sub.enabled ? "Disable" : "Enable";
+      toggleBtn.addEventListener("click", () => toggleWebhook(sub.id, !sub.enabled));
+      actions.appendChild(toggleBtn);
+      const testBtn = document.createElement("button");
+      testBtn.type = "button";
+      testBtn.className = "ghost";
+      testBtn.textContent = "Test";
+      testBtn.addEventListener("click", () => sendWebhookTest(sub.id));
+      actions.appendChild(testBtn);
+      const rotateBtn = document.createElement("button");
+      rotateBtn.type = "button";
+      rotateBtn.className = "ghost";
+      rotateBtn.textContent = "Rotate secret";
+      rotateBtn.addEventListener("click", () => rotateWebhookSecret(sub.id));
+      actions.appendChild(rotateBtn);
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "ghost";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", () => deleteWebhook(sub.id, sub.label || sub.url));
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+      fragment.appendChild(row);
+    }
+    webhooksTableBody.appendChild(fragment);
+  }
+  // Re-populate the deliveries subscription <select>.
+  if (webhookDeliveriesSubscriptionEl) {
+    const previousValue = state.webhookDeliveriesSubscriptionId
+      || webhookDeliveriesSubscriptionEl.value;
+    webhookDeliveriesSubscriptionEl.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— select subscription —";
+    webhookDeliveriesSubscriptionEl.appendChild(placeholder);
+    for (const sub of state.webhookSubscriptions) {
+      const opt = document.createElement("option");
+      opt.value = sub.id;
+      opt.textContent = sub.label ? `${sub.label} (${sub.url})` : sub.url;
+      webhookDeliveriesSubscriptionEl.appendChild(opt);
+    }
+    if (previousValue && state.webhookSubscriptions.some((s) => s.id === previousValue)) {
+      webhookDeliveriesSubscriptionEl.value = previousValue;
+    }
+  }
+}
+
+function buildCell(text) {
+  const td = document.createElement("td");
+  td.textContent = text === null || text === undefined ? "" : String(text);
+  return td;
+}
+
+async function toggleWebhook(id, nextEnabled) {
+  if (!state.unlocked) return;
+  try {
+    await requestAdminJson(`/api/admin/webhooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: nextEnabled })
+    });
+  } catch (err) {
+    setStatus(webhooksStatusEl, `Toggle failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(
+    webhooksStatusEl,
+    `Subscription ${nextEnabled ? "enabled" : "disabled"}.`,
+    "admin-status-ok"
+  );
+  loadWebhooks({ announce: false }).catch(() => {});
+}
+
+async function sendWebhookTest(id) {
+  if (!state.unlocked) return;
+  try {
+    const payload = await requestAdminJson(`/api/admin/webhooks/${encodeURIComponent(id)}/test`, {
+      method: "POST"
+    });
+    setStatus(
+      webhooksStatusEl,
+      `Test event queued (delivery ${payload.deliveryId}).`,
+      "admin-status-ok"
+    );
+  } catch (err) {
+    setStatus(webhooksStatusEl, `Test failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function rotateWebhookSecret(id) {
+  if (!state.unlocked) return;
+  if (!window.confirm("Rotate this subscription's secret? The old secret will stop being valid immediately.")) return;
+  try {
+    const payload = await requestAdminJson(`/api/admin/webhooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rotateSecret: true })
+    });
+    if (webhookCreatedSecretBoxEl && webhookCreatedSecretValueEl && payload?.subscription?.secret) {
+      webhookCreatedSecretValueEl.textContent = payload.subscription.secret;
+      webhookCreatedSecretBoxEl.hidden = false;
+    }
+    setStatus(webhooksStatusEl, "Secret rotated. Copy it now.", "admin-status-ok");
+    loadWebhooks({ announce: false }).catch(() => {});
+  } catch (err) {
+    setStatus(webhooksStatusEl, `Rotate failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+async function deleteWebhook(id, label) {
+  if (!state.unlocked) return;
+  if (!window.confirm(`Delete subscription "${label}"? Delivery history will also be removed.`)) return;
+  try {
+    await requestAdminJson(`/api/admin/webhooks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (err) {
+    setStatus(webhooksStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(webhooksStatusEl, "Subscription deleted.", "admin-status-ok");
+  loadWebhooks({ announce: false }).catch(() => {});
+}
+
+if (webhookCreateFormEl) {
+  webhookCreateFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) return;
+    const url = String(webhookUrlInputEl?.value || "").trim();
+    const events = parseEventsCsv(webhookEventsInputEl?.value);
+    const label = String(webhookLabelInputEl?.value || "").trim() || undefined;
+    const maxAttemptsRaw = String(webhookMaxAttemptsInputEl?.value || "").trim();
+    const maxAttempts = maxAttemptsRaw ? Number(maxAttemptsRaw) : undefined;
+    const enabled = Boolean(webhookEnabledInputEl?.checked);
+    if (!url) {
+      setStatus(webhooksStatusEl, "URL is required.", "admin-status-missing");
+      return;
+    }
+    if (events.length === 0) {
+      setStatus(webhooksStatusEl, "At least one event is required.", "admin-status-missing");
+      return;
+    }
+    let payload;
+    try {
+      payload = await requestAdminJson("/api/admin/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, events, label, maxAttempts, enabled })
+      });
+    } catch (err) {
+      setStatus(webhooksStatusEl, `Create failed: ${err.message}`, "admin-status-missing");
+      return;
+    }
+    if (webhookCreatedSecretBoxEl && webhookCreatedSecretValueEl && payload?.subscription?.secret) {
+      webhookCreatedSecretValueEl.textContent = payload.subscription.secret;
+      webhookCreatedSecretBoxEl.hidden = false;
+    }
+    setStatus(webhooksStatusEl, "Subscription created. Copy the secret now.", "admin-status-ok");
+    webhookCreateFormEl.reset();
+    if (webhookEnabledInputEl) webhookEnabledInputEl.checked = true;
+    loadWebhooks({ announce: false }).catch(() => {});
+  });
+}
+
+async function loadWebhookDeliveries(subscriptionId) {
+  if (!state.unlocked || !subscriptionId) {
+    if (webhookDeliveriesTableBody) webhookDeliveriesTableBody.innerHTML = "";
+    state.webhookDeliveries = [];
+    return;
+  }
+  const requestId = ++state.webhookDeliveriesRequestId;
+  try {
+    const payload = await requestAdminJson(
+      `/api/admin/webhooks/${encodeURIComponent(subscriptionId)}/deliveries?limit=50`
+    );
+    // Drop late responses — the operator may have switched
+    // subscriptions or locked the workspace before this fetch
+    // resolved, and the rendered table+retry buttons must reflect
+    // the most recent request.
+    if (requestId !== state.webhookDeliveriesRequestId) return;
+    state.webhookDeliveries = Array.isArray(payload.deliveries) ? payload.deliveries : [];
+    state.webhookDeliveriesSubscriptionId = subscriptionId;
+    renderWebhookDeliveries();
+  } catch (err) {
+    if (requestId !== state.webhookDeliveriesRequestId) return;
+    setStatus(webhooksStatusEl, `Deliveries fetch failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+function renderWebhookDeliveries() {
+  if (!webhookDeliveriesTableBody) return;
+  webhookDeliveriesTableBody.innerHTML = "";
+  if (!state.webhookDeliveries.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No deliveries yet.";
+    row.appendChild(cell);
+    webhookDeliveriesTableBody.appendChild(row);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const d of state.webhookDeliveries) {
+    const row = document.createElement("tr");
+    row.appendChild(buildCell(formatTimestamp(d.createdAt)));
+    row.appendChild(buildCell(d.event));
+    row.appendChild(buildCell(d.status));
+    row.appendChild(buildCell(String(d.attempts ?? 0)));
+    row.appendChild(buildCell(d.responseStatus !== null && d.responseStatus !== undefined ? String(d.responseStatus) : "—"));
+    row.appendChild(buildCell(d.lastError || ""));
+    const actions = document.createElement("td");
+    if (d.status === "failed") {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "ghost";
+      retryBtn.textContent = "Retry";
+      retryBtn.addEventListener("click", () => retryWebhookDelivery(d.subscriptionId, d.id));
+      actions.appendChild(retryBtn);
+    }
+    row.appendChild(actions);
+    fragment.appendChild(row);
+  }
+  webhookDeliveriesTableBody.appendChild(fragment);
+}
+
+async function retryWebhookDelivery(subscriptionId, deliveryId) {
+  if (!state.unlocked) return;
+  try {
+    await requestAdminJson(
+      `/api/admin/webhooks/${encodeURIComponent(subscriptionId)}/deliveries/${encodeURIComponent(deliveryId)}/retry`,
+      { method: "POST" }
+    );
+  } catch (err) {
+    setStatus(webhooksStatusEl, `Retry failed: ${err.message}`, "admin-status-missing");
+    return;
+  }
+  setStatus(webhooksStatusEl, "Delivery requeued.", "admin-status-ok");
+  loadWebhookDeliveries(subscriptionId).catch(() => {});
+}
+
+if (webhookDeliveriesSubscriptionEl) {
+  webhookDeliveriesSubscriptionEl.addEventListener("change", () => {
+    const id = webhookDeliveriesSubscriptionEl.value || null;
+    state.webhookDeliveriesSubscriptionId = id;
+    if (id) {
+      loadWebhookDeliveries(id).catch(() => {});
+    } else {
+      state.webhookDeliveries = [];
+      renderWebhookDeliveries();
+    }
+  });
+}
+
+if (webhookDeliveriesRefreshBtnEl) {
+  webhookDeliveriesRefreshBtnEl.addEventListener("click", () => {
+    const id = state.webhookDeliveriesSubscriptionId
+      || (webhookDeliveriesSubscriptionEl && webhookDeliveriesSubscriptionEl.value);
+    if (id) loadWebhookDeliveries(id).catch(() => {});
   });
 }
 

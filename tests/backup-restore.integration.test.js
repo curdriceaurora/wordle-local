@@ -118,7 +118,30 @@ function makeTempState() {
     }, null, 2)}\n`,
     "utf8"
   );
-  return { statsPath, classesPath, adminJobsPath, appConfigPath, schedulePath, projectRoot };
+  const webhooksPath = path.join(dir, "webhooks.json");
+  fs.writeFileSync(
+    webhooksPath,
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      subscriptions: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  const webhookDeliveriesPath = path.join(dir, "webhook-deliveries.json");
+  fs.writeFileSync(
+    webhookDeliveriesPath,
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      deliveries: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  return {
+    statsPath, classesPath, adminJobsPath, appConfigPath, schedulePath,
+    webhooksPath, webhookDeliveriesPath, projectRoot
+  };
 }
 
 function loadFreshApp(adminKey, paths, extraEnv = {}) {
@@ -129,6 +152,9 @@ function loadFreshApp(adminKey, paths, extraEnv = {}) {
   process.env.CLASSES_STORE_PATH = paths.classesPath;
   process.env.ADMIN_JOBS_STORE_PATH = paths.adminJobsPath;
   process.env.APP_CONFIG_PATH = paths.appConfigPath;
+  if (paths.schedulePath) process.env.SCHEDULE_STORE_PATH = paths.schedulePath;
+  if (paths.webhooksPath) process.env.WEBHOOKS_STORE_PATH = paths.webhooksPath;
+  if (paths.webhookDeliveriesPath) process.env.WEBHOOK_DELIVERIES_STORE_PATH = paths.webhookDeliveriesPath;
   process.env.RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_WRITE_RATE_LIMIT_MAX = "1000";

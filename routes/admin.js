@@ -130,7 +130,15 @@ function createAdminRouter(deps) {
     analyticsTimezone,
     scheduleStore,
     runSchedulerReconcile,
-    ScheduleStoreError
+    ScheduleStoreError,
+    webhookStore,
+    webhookDeliveryStore,
+    webhookService,
+    WebhookStoreError,
+    WebhookDeliveryStoreError,
+    redactWebhookSecret,
+    webhooksEnabled,
+    webhookDefaultMaxAttempts
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -637,6 +645,340 @@ function createAdminRouter(deps) {
     }
   });
 
+  // ── Webhooks ────────────────────────────────────────────────────────
+  // Map a WebhookStoreError code to an HTTP status. 400 covers shape /
+  // validation failures, 404 for not-found, 503 for store I/O failures.
+  function webhookErrorStatus(err) {
+    if (err instanceof WebhookStoreError || err instanceof WebhookDeliveryStoreError) {
+      switch (err.code) {
+        case "INVALID_REQUEST":
+        case "INVALID_URL":
+        case "INVALID_EVENTS":
+        case "INVALID_LABEL":
+        case "INVALID_MAX_ATTEMPTS":
+        case "INVALID_SUBSCRIPTION":
+        case "INVALID_DELIVERY":
+        case "INVALID_STORE":
+        case "VERSION_UNSUPPORTED":
+          return 400;
+        case "SUBSCRIPTION_NOT_FOUND":
+        case "DELIVERY_NOT_FOUND":
+          return 404;
+        case "STORE_READ_FAILED":
+        case "STORE_WRITE_FAILED":
+        case "STORE_PARSE_FAILED":
+          return 503;
+        default:
+          return 500;
+      }
+    }
+    return 500;
+  }
+  function webhookErrorBody(err) {
+    const STORE_LEVEL = new Set([
+      "STORE_READ_FAILED",
+      "STORE_WRITE_FAILED",
+      "STORE_PARSE_FAILED"
+    ]);
+    const code = err?.code || "INTERNAL";
+    const message = STORE_LEVEL.has(code)
+      ? "Webhook store unavailable. See server logs."
+      : err?.message || "Webhook operation failed.";
+    return { error: message, code };
+  }
+  function webhookAudit(action, fields) {
+    try {
+      console.log(JSON.stringify({
+        event: `[webhook] ${action}`,
+        ts: new Date().toISOString(),
+        ...fields
+      }));
+    } catch (_err) {
+      // best-effort
+    }
+  }
+  function ensureWebhookDeps() {
+    if (!webhookStore || typeof webhookStore.load !== "function") {
+      throw new TypeError("createAdminRouter: webhookStore dep is required.");
+    }
+    if (!webhookDeliveryStore || typeof webhookDeliveryStore.load !== "function") {
+      throw new TypeError("createAdminRouter: webhookDeliveryStore dep is required.");
+    }
+    if (!webhookService) {
+      throw new TypeError("createAdminRouter: webhookService dep is required.");
+    }
+    if (!WebhookStoreError) {
+      throw new TypeError("createAdminRouter: WebhookStoreError dep is required.");
+    }
+    if (!WebhookDeliveryStoreError) {
+      throw new TypeError("createAdminRouter: WebhookDeliveryStoreError dep is required.");
+    }
+    if (typeof redactWebhookSecret !== "function") {
+      throw new TypeError("createAdminRouter: redactWebhookSecret dep is required.");
+    }
+  }
+  ensureWebhookDeps();
+
+  router.get("/api/admin/webhooks", async (req, res) => {
+    try {
+      const snapshot = await webhookStore.getSnapshot();
+      const subscriptions = snapshot.subscriptions.map((sub) => redactWebhookSecret(sub));
+      return res.json({
+        ok: true,
+        enabled: webhooksEnabled !== false,
+        subscriptions,
+        defaultMaxAttempts: webhookDefaultMaxAttempts
+      });
+    } catch (err) {
+      if (err instanceof WebhookStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] list failed:", err);
+      return res.status(503).json({
+        error: "Webhook list failed.",
+        code: "STORE_READ_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/webhooks", async (req, res) => {
+    try {
+      const created = await withSlot(async () => {
+        return webhookStore.create({
+          url: req.body?.url,
+          events: req.body?.events,
+          enabled: req.body?.enabled !== false,
+          maxAttempts: req.body?.maxAttempts,
+          label: req.body?.label
+        });
+      });
+      webhookAudit("subscription.create", {
+        actor: actorFingerprint(req),
+        id: created.id,
+        events: created.events,
+        url: created.url
+      });
+      // Return the secret ONCE on creation. Subsequent reads redact it
+      // so the operator must rotate-and-fetch to retrieve it again.
+      return res.status(201).json({ ok: true, subscription: created });
+    } catch (err) {
+      if (err instanceof WebhookStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] create failed:", err);
+      return res.status(503).json({
+        error: "Webhook create failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.patch("/api/admin/webhooks/:id", async (req, res) => {
+    try {
+      const result = await withSlot(async () => {
+        return webhookStore.update(req.params.id, req.body || {});
+      });
+      const rotated = req.body?.rotateSecret === true;
+      webhookAudit("subscription.update", {
+        actor: actorFingerprint(req),
+        id: result.id,
+        rotated
+      });
+      // If rotateSecret was requested, reveal the new secret in the
+      // response (one-time view); otherwise redact.
+      const payload = rotated ? result : redactWebhookSecret(result);
+      return res.json({ ok: true, subscription: payload });
+    } catch (err) {
+      if (err instanceof WebhookStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] update failed:", err);
+      return res.status(503).json({
+        error: "Webhook update failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.delete("/api/admin/webhooks/:id", async (req, res) => {
+    try {
+      await withSlot(async () => {
+        await webhookStore.remove(req.params.id);
+        // Best-effort cascade: delivery rows for the removed
+        // subscription have no admin UI to inspect anyway.
+        await webhookDeliveryStore.deleteForSubscription(req.params.id).catch((cascadeErr) => {
+          // Pass id as a separate arg (not interpolated) so a hostile
+          // path param can't inject %s-style format placeholders into
+          // the format string. The store's pattern check rejects ids
+          // outside [A-Za-z0-9_-], but defense in depth.
+          console.warn(
+            "[webhook] could not cascade-delete deliveries for %s:",
+            req.params.id,
+            cascadeErr.message
+          );
+        });
+      });
+      webhookAudit("subscription.delete", {
+        actor: actorFingerprint(req),
+        id: req.params.id
+      });
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof WebhookStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] delete failed:", err);
+      return res.status(503).json({
+        error: "Webhook delete failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/webhooks/:id/test", async (req, res) => {
+    if (!webhooksEnabled) {
+      return res.status(409).json({
+        error: "Webhooks are disabled at the server level (WEBHOOKS_ENABLED=false). Cannot fire test events.",
+        code: "WEBHOOKS_DISABLED"
+      });
+    }
+    try {
+      const sub = await webhookStore.findById(req.params.id);
+      if (!sub) {
+        return res.status(404).json({
+          error: `No subscription with id ${req.params.id}.`,
+          code: "SUBSCRIPTION_NOT_FOUND"
+        });
+      }
+      // Synthesize a queued delivery for the test event. We use the
+      // same emit() path so signature, headers, and store rows match
+      // what a real provider event would look like — operators
+      // verifying their endpoint should see exactly what production
+      // payloads will send.
+      const testPayload = {
+        message: "Test event from local-hosted-wordle admin.",
+        subscriptionId: sub.id,
+        requestedAt: new Date().toISOString()
+      };
+      const delivery = await withSlot(async () => {
+        return webhookDeliveryStore.enqueue({
+          subscriptionId: sub.id,
+          event: "webhook.test",
+          url: sub.url,
+          payload: testPayload
+        });
+      });
+      webhookService.scheduleDelivery(delivery.id, 0, {
+        event: "webhook.test",
+        payload: testPayload,
+        subscription: sub
+      });
+      webhookAudit("subscription.test", {
+        actor: actorFingerprint(req),
+        id: sub.id,
+        deliveryId: delivery.id
+      });
+      return res.status(202).json({ ok: true, deliveryId: delivery.id });
+    } catch (err) {
+      if (err instanceof WebhookStoreError || err instanceof WebhookDeliveryStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] test failed:", err);
+      return res.status(503).json({
+        error: "Webhook test failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.get("/api/admin/webhooks/:id/deliveries", async (req, res) => {
+    try {
+      const limitRaw = req.query.limit;
+      let limit = 50;
+      if (limitRaw !== undefined) {
+        const n = Number(limitRaw);
+        if (!Number.isInteger(n) || n < 1 || n > 500) {
+          return res.status(400).json({ error: "limit must be between 1 and 500.", code: "INVALID_REQUEST" });
+        }
+        limit = n;
+      }
+      const sub = await webhookStore.findById(req.params.id);
+      if (!sub) {
+        return res.status(404).json({
+          error: `No subscription with id ${req.params.id}.`,
+          code: "SUBSCRIPTION_NOT_FOUND"
+        });
+      }
+      const status = req.query.status ? String(req.query.status) : undefined;
+      const event = req.query.event ? String(req.query.event) : undefined;
+      const deliveries = await webhookDeliveryStore.findRecent({
+        subscriptionId: sub.id,
+        status,
+        event,
+        limit
+      });
+      return res.json({ ok: true, deliveries });
+    } catch (err) {
+      if (err instanceof WebhookDeliveryStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] deliveries list failed:", err);
+      return res.status(503).json({
+        error: "Webhook deliveries fetch failed.",
+        code: "STORE_READ_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/webhooks/:id/deliveries/:deliveryId/retry", async (req, res) => {
+    if (!webhooksEnabled) {
+      return res.status(409).json({
+        error: "Webhooks are disabled at the server level (WEBHOOKS_ENABLED=false). Cannot retry deliveries.",
+        code: "WEBHOOKS_DISABLED"
+      });
+    }
+    try {
+      const sub = await webhookStore.findById(req.params.id);
+      if (!sub) {
+        return res.status(404).json({
+          error: `No subscription with id ${req.params.id}.`,
+          code: "SUBSCRIPTION_NOT_FOUND"
+        });
+      }
+      const delivery = await webhookDeliveryStore.findById(req.params.deliveryId);
+      if (!delivery || delivery.subscriptionId !== sub.id) {
+        return res.status(404).json({
+          error: `No delivery with id ${req.params.deliveryId} for this subscription.`,
+          code: "DELIVERY_NOT_FOUND"
+        });
+      }
+      if (delivery.status !== "failed") {
+        return res.status(409).json({
+          error: `Delivery is in ${delivery.status} state and cannot be retried.`,
+          code: "INVALID_REQUEST"
+        });
+      }
+      const retried = await withSlot(async () => {
+        return webhookService.retryDelivery(delivery.id);
+      });
+      webhookAudit("delivery.retry", {
+        actor: actorFingerprint(req),
+        id: sub.id,
+        deliveryId: delivery.id
+      });
+      return res.json({ ok: true, delivery: retried });
+    } catch (err) {
+      if (err instanceof WebhookStoreError || err instanceof WebhookDeliveryStoreError) {
+        return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
+      }
+      console.error("[webhook] retry failed:", err);
+      return res.status(503).json({
+        error: "Webhook retry failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
   router.delete("/api/admin/stats/profile/:id", async (req, res) => {
     const profileId = String(req.params.id || "").trim();
     if (!profileId) {
@@ -998,8 +1340,10 @@ function createAdminRouter(deps) {
       }
 
       providerImportSyncActiveRef.value = true;
+      let syncResult = null;
+      let syncError = null;
       try {
-        const result = await runProviderImportPipeline({
+        syncResult = await runProviderImportPipeline({
           sourceType,
           variant,
           commit: commitInput || null,
@@ -1008,13 +1352,44 @@ function createAdminRouter(deps) {
           manualFiles: req.body?.manualFiles
         });
         return res.json({
-          ...result,
+          ...syncResult,
           providers: buildProviderStatusRows()
         });
       } catch (err) {
+        syncError = err;
         return providerAdminError(res, mapProviderPipelineError(err));
       } finally {
         providerImportSyncActiveRef.value = false;
+        // Fire-and-forget emit so the response isn't held up by webhook
+        // delivery. Errors are logged but never bubble to the client.
+        if (webhookService) {
+          if (syncResult) {
+            webhookService
+              .emit("provider.import.completed", {
+                jobId: null,
+                variant: syncResult.variant,
+                commit: syncResult.commit,
+                sourceType: syncResult.sourceType,
+                filterMode: syncResult.filterMode,
+                counts: syncResult.counts,
+                artifacts: syncResult.artifacts
+              })
+              .catch((emitErr) => {
+                console.error("[webhook] emit failed for sync import:", emitErr);
+              });
+          } else if (syncError) {
+            webhookService
+              .emit("provider.import.failed", {
+                jobId: null,
+                variant,
+                sourceType,
+                error: { message: syncError?.message || String(syncError) }
+              })
+              .catch((emitErr) => {
+                console.error("[webhook] emit failed for sync import:", emitErr);
+              });
+          }
+        }
         startProviderImportQueueIfNeeded().catch((queueErr) => {
           console.error("Provider import queue processing failed.", queueErr);
         });

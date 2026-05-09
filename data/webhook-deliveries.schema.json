@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wordle-local/webhook-deliveries.schema.json",
+  "title": "Webhook delivery history",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "updatedAt", "deliveries"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "deliveries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "subscriptionId", "event", "status", "attempts", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "subscriptionId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "event": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "succeeded", "failed", "canceled"]
+          },
+          "attempts": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "url": { "type": "string", "maxLength": 2048 },
+          "responseStatus": { "type": "integer" },
+          "responseSnippet": {
+            "description": "Persisted snippet of the response body. Capped at 4096 chars by lib/webhook-delivery-store.js even though the dispatcher's runtime fetch reads up to WEBHOOK_MAX_BODY_BYTES (default 65536). The schema cap matches the persisted clamp so a hand-edited file outside this size is rejected at load.",
+            "type": "string",
+            "maxLength": 4096
+          },
+          "lastError": { "type": "string", "maxLength": 2048 },
+          "nextAttemptAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "payload": {
+            "description": "Original event payload, persisted at enqueue time so boot recovery and manual retries can resend the real body instead of an empty object. Capped at 8 KiB serialized size.",
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

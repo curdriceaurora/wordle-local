@@ -44,3 +44,5 @@ logs/security/
 data/admin-jobs.json
 data/app-config.json
 data/schedule.json
+data/webhooks.json
+data/webhook-deliveries.json

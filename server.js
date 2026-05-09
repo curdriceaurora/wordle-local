@@ -20,6 +20,9 @@ const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store"
 const { aggregate: aggregateAnalytics } = require("./lib/analytics-aggregator");
 const { ScheduleStore } = require("./lib/schedule-store");
 const { reconcileDailyWord } = require("./lib/scheduler-tick");
+const { WebhookStore, WebhookStoreError, redactSecret } = require("./lib/webhook-store");
+const { WebhookDeliveryStore, WebhookDeliveryStoreError } = require("./lib/webhook-delivery-store");
+const { WebhookService } = require("./lib/webhook-service");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -151,6 +154,12 @@ const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
 const SCHEDULE_DATA_PATH = process.env.SCHEDULE_STORE_PATH
   ? path.resolve(process.env.SCHEDULE_STORE_PATH)
   : path.join(__dirname, "data", "schedule.json");
+const WEBHOOKS_DATA_PATH = process.env.WEBHOOKS_STORE_PATH
+  ? path.resolve(process.env.WEBHOOKS_STORE_PATH)
+  : path.join(__dirname, "data", "webhooks.json");
+const WEBHOOK_DELIVERIES_DATA_PATH = process.env.WEBHOOK_DELIVERIES_STORE_PATH
+  ? path.resolve(process.env.WEBHOOK_DELIVERIES_STORE_PATH)
+  : path.join(__dirname, "data", "webhook-deliveries.json");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -244,6 +253,48 @@ const ENV_SCHEDULE_RETENTION_DAYS = clampEnvBounded(
   0,
   36500,
   "SCHEDULE_RETENTION_DAYS"
+);
+
+// Webhooks env vars — outbound notifications for events such as
+// provider.import.completed. Kept off by default so a fresh boot is
+// silent until an operator explicitly opts in via the admin UI.
+const ENV_WEBHOOKS_ENABLED = String(process.env.WEBHOOKS_ENABLED || "").toLowerCase() === "true";
+const ENV_WEBHOOK_REQUEST_TIMEOUT_MS = clampEnvBounded(
+  process.env.WEBHOOK_REQUEST_TIMEOUT_MS,
+  10_000,
+  1000,
+  60_000,
+  "WEBHOOK_REQUEST_TIMEOUT_MS"
+);
+const ENV_WEBHOOK_MAX_BODY_BYTES = clampEnvBounded(
+  process.env.WEBHOOK_MAX_BODY_BYTES,
+  64 * 1024,
+  1024,
+  1024 * 1024,
+  "WEBHOOK_MAX_BODY_BYTES"
+);
+const ENV_WEBHOOK_ALLOW_PRIVATE_NETWORKS =
+  String(process.env.WEBHOOK_ALLOW_PRIVATE_NETWORKS || "").toLowerCase() === "true";
+const ENV_WEBHOOK_DELIVERY_HISTORY_MAX = clampEnvBounded(
+  process.env.WEBHOOK_DELIVERY_HISTORY_MAX,
+  200,
+  10,
+  10_000,
+  "WEBHOOK_DELIVERY_HISTORY_MAX"
+);
+const ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT = clampEnvBounded(
+  process.env.WEBHOOK_MAX_ATTEMPTS_DEFAULT,
+  5,
+  1,
+  20,
+  "WEBHOOK_MAX_ATTEMPTS_DEFAULT"
+);
+const ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT = clampEnvBounded(
+  process.env.WEBHOOK_GLOBAL_INFLIGHT_LIMIT,
+  4,
+  1,
+  64,
+  "WEBHOOK_GLOBAL_INFLIGHT_LIMIT"
 );
 
 const MIN_LEN = 3;
@@ -1248,6 +1299,33 @@ const scheduleStore = new ScheduleStore({
   filePath: SCHEDULE_DATA_PATH,
   defaultTimezone: ENV_SCHEDULE_TIMEZONE_DEFAULT,
   defaultRetentionDays: ENV_SCHEDULE_RETENTION_DAYS,
+  logger: console
+});
+const webhookStore = new WebhookStore({
+  filePath: WEBHOOKS_DATA_PATH,
+  defaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT,
+  logger: console,
+  // Atomic check-and-claim: waits for the data-mutation lock AND
+  // increments directDataWriteActiveRef so backup/restore's busy
+  // check observes us. Background delivery attempts (executeOnce)
+  // bypass the admin /api gate, so this is the only thing keeping
+  // them from racing a backup that just observed the queue empty.
+  claimDirectDataWriteSlot
+});
+const webhookDeliveryStore = new WebhookDeliveryStore({
+  filePath: WEBHOOK_DELIVERIES_DATA_PATH,
+  historyMax: ENV_WEBHOOK_DELIVERY_HISTORY_MAX,
+  logger: console,
+  claimDirectDataWriteSlot
+});
+const webhookService = new WebhookService({
+  subscriptionStore: webhookStore,
+  deliveryStore: webhookDeliveryStore,
+  enabled: ENV_WEBHOOKS_ENABLED,
+  allowPrivateNetworks: ENV_WEBHOOK_ALLOW_PRIVATE_NETWORKS,
+  timeoutMs: ENV_WEBHOOK_REQUEST_TIMEOUT_MS,
+  maxBodyBytes: ENV_WEBHOOK_MAX_BODY_BYTES,
+  globalInflight: ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT,
   logger: console
 });
 let schedulerIntervalRef = null;
@@ -2537,16 +2615,42 @@ async function startProviderImportQueueIfNeeded() {
         break;
       }
 
+      let result = null;
+      let failure = null;
       try {
-        const result = await runProviderImportPipeline(job.request);
+        result = await runProviderImportPipeline(job.request);
         await adminJobsStore.markSucceeded(job.id, {
           artifacts: result.artifacts
         });
       } catch (err) {
-        const failure = formatProviderJobError(err);
+        failure = formatProviderJobError(err);
         await adminJobsStore.markFailed(job.id, failure);
       } finally {
         await cleanupManualUploadStaging(job.request?.manualUpload).catch(() => {});
+        // Best-effort emit. Failures here are logged but never block the
+        // queue — the job's persisted status is the source of truth.
+        try {
+          if (result) {
+            await webhookService.emit("provider.import.completed", {
+              jobId: job.id,
+              variant: result.variant,
+              commit: result.commit,
+              sourceType: result.sourceType,
+              filterMode: result.filterMode,
+              counts: result.counts,
+              artifacts: result.artifacts
+            });
+          } else if (failure) {
+            await webhookService.emit("provider.import.failed", {
+              jobId: job.id,
+              variant: job.request?.variant || null,
+              sourceType: job.request?.sourceType || null,
+              error: failure
+            });
+          }
+        } catch (emitErr) {
+          console.error("[webhook] emit failed for provider import:", emitErr);
+        }
       }
     }
   } finally {
@@ -2834,6 +2938,8 @@ app.use(
     appConfigStore,
     classesStore,
     scheduleStore,
+    webhookStore,
+    webhookDeliveryStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData: () => {
       // Re-read data/word.json from disk and refresh the in-memory cache
@@ -2932,7 +3038,15 @@ app.use(
     analyticsTimezone: ENV_ANALYTICS_TIMEZONE,
     scheduleStore,
     runSchedulerReconcile,
-    ScheduleStoreError: require("./lib/schedule-store").ScheduleStoreError
+    ScheduleStoreError: require("./lib/schedule-store").ScheduleStoreError,
+    webhookStore,
+    webhookDeliveryStore,
+    webhookService,
+    WebhookStoreError,
+    WebhookDeliveryStoreError,
+    redactWebhookSecret: redactSecret,
+    webhooksEnabled: ENV_WEBHOOKS_ENABLED,
+    webhookDefaultMaxAttempts: ENV_WEBHOOK_MAX_ATTEMPTS_DEFAULT
   })
 );
 
@@ -3188,6 +3302,21 @@ async function startServer(listener = app.listen.bind(app)) {
     console.error("[scheduler] boot reconcile error:", err);
   }
   startSchedulerInterval();
+  // Restart recovery: any delivery left in `running` (process died
+  // mid-flight) or `queued` (timer was lost across restart) gets
+  // requeued so a crash doesn't permanently strand a notification.
+  // Errors are logged-and-swallowed because webhooks are a soft layer
+  // and shouldn't block the listener from coming up.
+  if (ENV_WEBHOOKS_ENABLED) {
+    try {
+      const recovered = await webhookService.recoverOnBoot();
+      if (recovered > 0) {
+        console.log(`[webhook] recovered ${recovered} delivery(ies) after restart.`);
+      }
+    } catch (err) {
+      console.error("[webhook] recovery failed:", err);
+    }
+  }
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3224,3 +3353,6 @@ module.exports.startServer = startServer;
 module.exports.runSchedulerReconcile = runSchedulerReconcile;
 module.exports.stopSchedulerInterval = stopSchedulerInterval;
 module.exports.scheduleStore = scheduleStore;
+module.exports.webhookStore = webhookStore;
+module.exports.webhookDeliveryStore = webhookDeliveryStore;
+module.exports.webhookService = webhookService;
