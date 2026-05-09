@@ -168,6 +168,18 @@
             >
               Schedule
             </button>
+            <button
+              id="admin-tab-webhooks"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="webhooks"
+              role="tab"
+              aria-controls="admin-panel-webhooks"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Webhooks
+            </button>
           </nav>
 
           <section
@@ -975,6 +987,126 @@
                       <th scope="col">Lang</th>
                       <th scope="col">Word</th>
                       <th scope="col">Notes</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <section
+            id="admin-panel-webhooks"
+            class="admin-slot"
+            data-panel="webhooks"
+            role="tabpanel"
+            aria-labelledby="admin-tab-webhooks"
+            tabindex="0"
+            hidden
+          >
+            <h3>Webhooks</h3>
+            <p class="note">
+              Outbound HTTP notifications for events like provider imports.
+              Subscribers receive a signed JSON POST whose body the recipient
+              should verify with HMAC-SHA-256 over the secret. See
+              <code>docs/webhooks.md</code> for the event catalog and verification
+              snippet.
+            </p>
+            <div id="webhooksDisabledBanner" class="message" role="status" aria-live="polite" hidden>
+              Webhooks are currently disabled at the server level
+              (<code>WEBHOOKS_ENABLED=false</code>). Subscriptions can still be
+              managed but no events will be delivered until the server is
+              restarted with webhooks enabled.
+            </div>
+            <div id="webhooksStatus" class="message" role="status" aria-live="polite"></div>
+
+            <section class="admin-subpanel">
+              <h4>Create a subscription</h4>
+              <form id="webhookCreateForm" class="form-inline">
+                <label class="form-inline">
+                  <span>URL</span>
+                  <input
+                    type="url"
+                    id="webhookUrlInput"
+                    placeholder="https://example.com/webhooks/wordle"
+                    required
+                    maxlength="2048"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <label class="form-inline">
+                  <span>Events</span>
+                  <input
+                    type="text"
+                    id="webhookEventsInput"
+                    placeholder="provider.import.completed,provider.import.failed"
+                    required
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <label class="form-inline">
+                  <span>Label</span>
+                  <input type="text" id="webhookLabelInput" maxlength="80" autocomplete="off" />
+                </label>
+                <label class="form-inline">
+                  <span>Max attempts</span>
+                  <input type="number" id="webhookMaxAttemptsInput" min="1" max="20" step="1" />
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="webhookEnabledInput" checked />
+                  Enabled
+                </label>
+                <button type="submit">Create subscription</button>
+              </form>
+              <div id="webhookCreatedSecretBox" class="message" role="status" aria-live="polite" hidden>
+                <strong>Secret (one-time view):</strong>
+                <code id="webhookCreatedSecretValue"></code>
+                <p class="note">Copy this now — the secret will be redacted on every subsequent read. Rotate the secret to issue a new one.</p>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Subscriptions</h4>
+              <div class="admin-table-wrap">
+                <table id="webhooksTable" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Label</th>
+                      <th scope="col">URL</th>
+                      <th scope="col">Events</th>
+                      <th scope="col">Enabled</th>
+                      <th scope="col">Max attempts</th>
+                      <th scope="col">Created</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Recent deliveries</h4>
+              <div class="form-inline">
+                <label class="form-inline">
+                  <span>Subscription</span>
+                  <select id="webhookDeliveriesSubscription"></select>
+                </label>
+                <button type="button" id="webhookDeliveriesRefreshBtn">Refresh</button>
+              </div>
+              <div class="admin-table-wrap">
+                <table id="webhookDeliveriesTable" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Created</th>
+                      <th scope="col">Event</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Attempts</th>
+                      <th scope="col">HTTP</th>
+                      <th scope="col">Last error</th>
                       <th scope="col">Actions</th>
                     </tr>
                   </thead>

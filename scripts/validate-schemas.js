@@ -33,6 +33,10 @@ const backupManifestSchemaPath = path.join(projectRoot, "data", "backup-manifest
 const backupManifestExamplePath = path.join(projectRoot, "data", "backup-manifest.example.json");
 const scheduleSchemaPath = path.join(projectRoot, "data", "schedule.schema.json");
 const scheduleExamplePath = path.join(projectRoot, "data", "schedule.example.json");
+const webhooksSchemaPath = path.join(projectRoot, "data", "webhooks.schema.json");
+const webhooksExamplePath = path.join(projectRoot, "data", "webhooks.example.json");
+const webhookDeliveriesSchemaPath = path.join(projectRoot, "data", "webhook-deliveries.schema.json");
+const webhookDeliveriesExamplePath = path.join(projectRoot, "data", "webhook-deliveries.example.json");
 
 function readJson(filePath, kind) {
   let raw;
@@ -110,6 +114,16 @@ function runSchemaChecks() {
       schemaPath: scheduleSchemaPath,
       dataPath: scheduleExamplePath,
       schemaLabel: "schedule schema"
+    },
+    {
+      schemaPath: webhooksSchemaPath,
+      dataPath: webhooksExamplePath,
+      schemaLabel: "webhooks schema"
+    },
+    {
+      schemaPath: webhookDeliveriesSchemaPath,
+      dataPath: webhookDeliveriesExamplePath,
+      schemaLabel: "webhook deliveries schema"
     }
   ];
 

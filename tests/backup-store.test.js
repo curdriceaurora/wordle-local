@@ -41,6 +41,8 @@ async function makeProjectRoot() {
     "data/app-config.schema.json",
     "data/classes.schema.json",
     "data/schedule.schema.json",
+    "data/webhooks.schema.json",
+    "data/webhook-deliveries.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     await copyFileFromRepo(rel, dir);
@@ -100,6 +102,24 @@ async function makeProjectRoot() {
       auto_rotate: false,
       retention_days: 90,
       scheduled_words: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await fsp.writeFile(
+    path.join(dir, "data", "webhooks.json"),
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      subscriptions: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await fsp.writeFile(
+    path.join(dir, "data", "webhook-deliveries.json"),
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deliveries: []
     }, null, 2)}\n`,
     "utf8"
   );

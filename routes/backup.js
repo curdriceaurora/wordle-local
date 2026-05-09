@@ -214,6 +214,8 @@ function createBackupRouter(deps) {
     appConfigStore,
     classesStore,
     scheduleStore,
+    webhookStore,
+    webhookDeliveryStore,
     rebuildLanguageRuntimeCatalog,
     reloadWordData,
     providerImportQueueActiveRef,
@@ -238,6 +240,8 @@ function createBackupRouter(deps) {
     if (adminJobsStore?.load) await adminJobsStore.load();
     if (classesStore?.load) await classesStore.load();
     if (scheduleStore?.load) await scheduleStore.load();
+    if (webhookStore?.load) await webhookStore.load();
+    if (webhookDeliveryStore?.load) await webhookDeliveryStore.load();
     if (appConfigStore?.loadSync) appConfigStore.loadSync();
     if (languageRegistryStore?.loadSync) languageRegistryStore.loadSync();
   }
@@ -254,7 +258,9 @@ function createBackupRouter(deps) {
       leaderboardStore?.writeQueue,
       adminJobsStore?.writeQueue,
       classesStore?.writeQueue,
-      scheduleStore?.commitQueue
+      scheduleStore?.commitQueue,
+      webhookStore?.commitQueue,
+      webhookDeliveryStore?.commitQueue
     ].filter(Boolean);
     if (queues.length === 0) return;
     await Promise.allSettled(queues);
@@ -616,6 +622,8 @@ function createBackupRouter(deps) {
         ["adminJobsStore", () => adminJobsStore?.reload?.()],
         ["classesStore", () => classesStore?.reload?.()],
         ["scheduleStore", () => scheduleStore?.reload?.()],
+        ["webhookStore", () => webhookStore?.reload?.()],
+        ["webhookDeliveryStore", () => webhookDeliveryStore?.reload?.()],
         ["appConfigStore", () => appConfigStore?.reloadSync?.()],
         ["languageRegistryStore", () => languageRegistryStore?.reloadSync?.()],
         ["languageRuntimeCatalog", () => rebuildLanguageRuntimeCatalog?.()],

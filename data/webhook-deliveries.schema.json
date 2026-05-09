@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wordle-local/webhook-deliveries.schema.json",
+  "title": "Webhook delivery history",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "updatedAt", "deliveries"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "deliveries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "subscriptionId", "event", "status", "attempts", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "subscriptionId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "event": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "succeeded", "failed", "canceled"]
+          },
+          "attempts": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "url": { "type": "string", "maxLength": 2048 },
+          "responseStatus": { "type": "integer" },
+          "responseSnippet": { "type": "string", "maxLength": 4096 },
+          "lastError": { "type": "string", "maxLength": 2048 },
+          "nextAttemptAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
