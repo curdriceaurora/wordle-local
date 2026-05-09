@@ -46,7 +46,7 @@ The admin **Challenges** tab supports:
 
 ## Scoring formula
 
-```
+```text
 score = sum(perPuzzleScore for each solved puzzle)
       + max(0, timeBudgetSeconds - elapsedSeconds) * speedBonusFactor
 ```
