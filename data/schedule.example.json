@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-01T00:00:00.000Z",
+  "timezone": "UTC",
+  "auto_rotate": false,
+  "retention_days": 90,
+  "scheduled_words": []
+}

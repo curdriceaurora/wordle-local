@@ -55,6 +55,7 @@ If you want admin controls or are hosting behind a VPN/proxy, see `advanced-sett
 - Admin platform architecture contracts (schemas, config precedence, queue semantics): `docs/admin-platform-architecture-contract.md`.
 - Runtime settings tab edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
 - Data tab: download a versioned, schema-checked backup archive and restore it atomically. Operator runbook: `docs/backup-restore.md`.
+- Schedule tab: queue words against specific dates or turn on auto-rotate from the active answer pool; the runtime owns `data/word.json` from then on. Operator runbook: `docs/scheduler.md`.
 
 ## Daily Word (API)
 Daily word endpoints remain available:
@@ -63,6 +64,7 @@ Daily word endpoints remain available:
 - `POST /api/word` — set daily word
   - Body: `{ "word": "CRANE", "lang": "en", "date": "YYYY-MM-DD" }`
   - If `date` is provided, it is interpreted in server local time.
+- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. Manual `POST /api/word` overrides for the rest of the day; the next day the schedule wins again. Delete `data/schedule.json` to disable. See `docs/scheduler.md` for the full contract.
 
 ## Languages & Dictionaries
 - English dictionary is baked in (`en`).

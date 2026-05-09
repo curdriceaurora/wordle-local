@@ -43,3 +43,4 @@ logs/security/
 # Runtime-generated admin state files
 data/admin-jobs.json
 data/app-config.json
+data/schedule.json

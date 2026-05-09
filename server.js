@@ -18,6 +18,8 @@ const { buildCsv, parseBulkNames, UTF8_BOM } = require("./lib/csv-format");
 const { requireAdmin } = require("./lib/admin-auth");
 const { AppConfigStore, AppConfigStoreError } = require("./lib/app-config-store");
 const { aggregate: aggregateAnalytics } = require("./lib/analytics-aggregator");
+const { ScheduleStore } = require("./lib/schedule-store");
+const { reconcileDailyWord } = require("./lib/scheduler-tick");
 const { LanguageRegistryError, LanguageRegistryStore } = require("./lib/language-registry");
 const { SUPPORTED_VARIANT_IDS } = require("./lib/provider-artifact-shared");
 const { fetchAndPersistProviderSource, computeSha256 } = require("./lib/provider-fetch");
@@ -146,6 +148,12 @@ const APP_CONFIG_PATH = process.env.APP_CONFIG_PATH
 const CLASSES_DATA_PATH = process.env.CLASSES_STORE_PATH
   ? path.resolve(process.env.CLASSES_STORE_PATH)
   : path.join(__dirname, "data", "classes.json");
+const SCHEDULE_DATA_PATH = process.env.SCHEDULE_STORE_PATH
+  ? path.resolve(process.env.SCHEDULE_STORE_PATH)
+  : path.join(__dirname, "data", "schedule.json");
+const PROVIDERS_DATA_ROOT = process.env.PROVIDERS_ROOT
+  ? path.resolve(process.env.PROVIDERS_ROOT)
+  : path.join(__dirname, "data", "providers");
 const ENV_CLASSES_MAX_MEMBERS_PER_CLASS = clampEnvBounded(
   process.env.CLASSES_MAX_MEMBERS_PER_CLASS,
   1000,
@@ -209,6 +217,37 @@ const ENV_ANALYTICS_TIMEZONE = (() => {
     return "UTC";
   }
 })();
+// Scheduler env vars — all optional, sensible defaults. The schedule's
+// timezone is stored ON the schedule itself (so operators can change it
+// at runtime via the admin UI); SCHEDULE_TIMEZONE_DEFAULT only seeds a
+// freshly-created data/schedule.json on first boot.
+const ENV_SCHEDULE_TIMEZONE_DEFAULT = (() => {
+  const raw = String(process.env.SCHEDULE_TIMEZONE_DEFAULT || "").trim();
+  const candidate = raw || process.env.TZ || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate });
+    return candidate;
+  } catch (_err) {
+    console.warn(
+      `SCHEDULE_TIMEZONE_DEFAULT=${candidate} is not a recognised IANA zone; falling back to UTC.`
+    );
+    return "UTC";
+  }
+})();
+const ENV_SCHEDULER_CHECK_INTERVAL_MS = clampEnvBounded(
+  process.env.SCHEDULER_CHECK_INTERVAL_MS,
+  60 * 1000,
+  1000,
+  60 * 60 * 1000,
+  "SCHEDULER_CHECK_INTERVAL_MS"
+);
+const ENV_SCHEDULE_RETENTION_DAYS = clampEnvBounded(
+  process.env.SCHEDULE_RETENTION_DAYS,
+  90,
+  0,
+  36500,
+  "SCHEDULE_RETENTION_DAYS"
+);
 
 const MIN_LEN = 3;
 const MAX_LEN = 12;
@@ -736,6 +775,13 @@ function isValidWordData(data) {
   if (typeof data.word !== "string") return false;
   if (typeof data.lang !== "string") return false;
   if (!(data.date === null || typeof data.date === "string")) return false;
+  // lastScheduledFor is optional. When present it must be a YYYY-MM-DD
+  // string — the reconciler reads it to decide whether the most recent
+  // write was scheduler or manual-override. Reject other shapes so we
+  // don't silently pass garbage into the reconcile decision.
+  if (data.lastScheduledFor !== undefined && data.lastScheduledFor !== null) {
+    if (typeof data.lastScheduledFor !== "string") return false;
+  }
   return true;
 }
 
@@ -748,6 +794,13 @@ function normalizeWordData(data) {
   normalized.updatedAt = normalized.updatedAt
     ? String(normalized.updatedAt)
     : new Date().toISOString();
+  // Pass-through if present-and-valid; drop otherwise so legacy files
+  // and malformed values both end up with the field absent.
+  if (typeof data?.lastScheduledFor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.lastScheduledFor)) {
+    normalized.lastScheduledFor = data.lastScheduledFor;
+  } else {
+    delete normalized.lastScheduledFor;
+  }
   return normalized;
 }
 
@@ -1168,6 +1221,74 @@ const classesStore = new ClassesStore({
   logger: console,
   waitForDataMutationLock
 });
+const scheduleStore = new ScheduleStore({
+  filePath: SCHEDULE_DATA_PATH,
+  defaultTimezone: ENV_SCHEDULE_TIMEZONE_DEFAULT,
+  defaultRetentionDays: ENV_SCHEDULE_RETENTION_DAYS,
+  logger: console
+});
+let schedulerIntervalRef = null;
+
+// Run a single reconcile pass: re-load schedule, fetch current word.json,
+// route through reconcileDailyWord, persist via saveWordDataAtomic, update
+// the in-memory wordDataCache. All errors are logged and swallowed because
+// the caller (boot path / setInterval) cannot meaningfully react.
+async function runSchedulerReconcile(reason = "tick") {
+  let schedule;
+  try {
+    schedule = await scheduleStore.load();
+  } catch (err) {
+    console.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
+    return null;
+  }
+  const currentWord = wordDataCache || readWordData() || buildDefaultWordData();
+  try {
+    const result = await reconcileDailyWord({
+      schedule,
+      currentWordData: currentWord,
+      now: new Date(),
+      defaultLang: DEFAULT_LANG,
+      providersRoot: PROVIDERS_DATA_ROOT,
+      languagesPath: LANGUAGE_REGISTRY_PATH,
+      saveWordData: async (data) => {
+        await saveWordDataAtomic(data);
+        wordDataCache = normalizeWordData(data);
+      },
+      recordReconcile: async ({ date, at }) => {
+        try {
+          await scheduleStore.recordReconcile({ date, at });
+        } catch (err) {
+          console.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
+        }
+      },
+      logger: console
+    });
+    return result;
+  } catch (err) {
+    console.error(`[scheduler] reconcile failed (${reason}):`, err.message);
+    return null;
+  }
+}
+
+function startSchedulerInterval() {
+  if (schedulerIntervalRef) return;
+  schedulerIntervalRef = setInterval(() => {
+    runSchedulerReconcile("interval").catch((err) => {
+      console.error("[scheduler] unhandled interval error:", err);
+    });
+  }, ENV_SCHEDULER_CHECK_INTERVAL_MS);
+  // unref so the timer doesn't keep the process alive past test teardown.
+  if (typeof schedulerIntervalRef.unref === "function") {
+    schedulerIntervalRef.unref();
+  }
+}
+
+function stopSchedulerInterval() {
+  if (schedulerIntervalRef) {
+    clearInterval(schedulerIntervalRef);
+    schedulerIntervalRef = null;
+  }
+}
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
 const providerImportQueueActiveRef = { value: false };
@@ -2732,7 +2853,10 @@ app.use(
     getLocalDateString,
     aggregateAnalytics,
     analyticsCacheTtlMs: ENV_ANALYTICS_CACHE_TTL_MS,
-    analyticsTimezone: ENV_ANALYTICS_TIMEZONE
+    analyticsTimezone: ENV_ANALYTICS_TIMEZONE,
+    scheduleStore,
+    runSchedulerReconcile,
+    ScheduleStoreError: require("./lib/schedule-store").ScheduleStoreError
   })
 );
 
@@ -2977,6 +3101,14 @@ function renderDailyMissing(message) {
 }
 
 function startServer(listener = app.listen.bind(app)) {
+  // Run a single boot reconcile BEFORE the listener accepts traffic so the
+  // first GET /api/word and /daily see the scheduler's pick (or the
+  // operator's manual override, if newer). Failures are logged inside
+  // runSchedulerReconcile and don't block boot — the schedule is meant to
+  // be a soft layer over manual word.json writes, not a hard dependency.
+  runSchedulerReconcile("boot")
+    .catch((err) => console.error("[scheduler] boot reconcile error:", err))
+    .finally(() => startSchedulerInterval());
   return listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
@@ -3005,3 +3137,8 @@ if (require.main === module) {
 
 module.exports = app;
 module.exports.startServer = startServer;
+// Exposed for tests so they can run a deterministic reconcile and stop the
+// interval timer cleanly during teardown.
+module.exports.runSchedulerReconcile = runSchedulerReconcile;
+module.exports.stopSchedulerInterval = stopSchedulerInterval;
+module.exports.scheduleStore = scheduleStore;

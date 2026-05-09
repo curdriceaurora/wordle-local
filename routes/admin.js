@@ -127,7 +127,10 @@ function createAdminRouter(deps) {
     getLocalDateString,
     aggregateAnalytics,
     analyticsCacheTtlMs,
-    analyticsTimezone
+    analyticsTimezone,
+    scheduleStore,
+    runSchedulerReconcile,
+    ScheduleStoreError
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -141,6 +144,72 @@ function createAdminRouter(deps) {
   }
   if (typeof aggregateAnalytics !== "function") {
     throw new TypeError("createAdminRouter: aggregateAnalytics dep is required.");
+  }
+  if (!scheduleStore || typeof scheduleStore.load !== "function") {
+    throw new TypeError("createAdminRouter: scheduleStore dep is required.");
+  }
+  if (typeof runSchedulerReconcile !== "function") {
+    throw new TypeError("createAdminRouter: runSchedulerReconcile dep is required.");
+  }
+  if (!ScheduleStoreError) {
+    throw new TypeError("createAdminRouter: ScheduleStoreError dep is required.");
+  }
+
+  // Map a ScheduleStoreError code to an HTTP status. 400 covers shape /
+  // validation failures; 404 for entry-not-found; 409 for duplicates;
+  // 503 for store-level read/write failures so clients can retry.
+  function scheduleErrorStatus(err) {
+    if (!(err instanceof ScheduleStoreError)) return 500;
+    switch (err.code) {
+      case "INVALID_REQUEST":
+      case "INVALID_DATE":
+      case "INVALID_WORD":
+      case "INVALID_LANG":
+      case "INVALID_NOTES":
+      case "INVALID_TIMEZONE":
+      case "INVALID_SCHEDULE":
+      case "INVALID_ENTRY":
+      case "VERSION_UNSUPPORTED":
+        return 400;
+      case "ENTRY_NOT_FOUND":
+        return 404;
+      case "DUPLICATE_ENTRY":
+        return 409;
+      case "STORE_READ_FAILED":
+      case "STORE_WRITE_FAILED":
+      case "STORE_PARSE_FAILED":
+        return 503;
+      default:
+        return 500;
+    }
+  }
+  function scheduleErrorBody(err) {
+    return {
+      error: err?.message || "Schedule operation failed.",
+      code: err?.code || "INTERNAL"
+    };
+  }
+  function scheduleAudit(action, fields) {
+    // Single-line audit log entry per write. `actor` is intentionally a
+    // fingerprint of the admin key (first 6 chars of sha256) so the log
+    // doesn't contain the secret itself; the requireAdminAccess middleware
+    // already attaches the raw key on req for the duration of the request,
+    // and we hash here at the call site.
+    try {
+      console.log(JSON.stringify({
+        event: `[schedule] ${action}`,
+        ts: new Date().toISOString(),
+        ...fields
+      }));
+    } catch (_err) {
+      // best-effort; never block a write on logging failure
+    }
+  }
+  function actorFingerprint(req) {
+    const key = req?.headers?.["x-admin-key"];
+    if (typeof key !== "string" || !key) return "unknown";
+    const crypto = require("node:crypto");
+    return crypto.createHash("sha256").update(key).digest("hex").slice(0, 12);
   }
 
   const router = express.Router();
@@ -340,6 +409,186 @@ function createAdminRouter(deps) {
     analyticsCache.set(cacheKey, { cachedAt: now, payload });
     res.setHeader("X-Analytics-Cache", "MISS");
     return res.json(payload);
+  });
+
+  // ============================================================================
+  // SCHEDULE ROUTES — daily-word scheduler
+  // ============================================================================
+
+  router.get("/api/admin/schedule", async (req, res) => {
+    try {
+      const snapshot = await scheduleStore.getSnapshot();
+      return res.json(snapshot);
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] read failed:", err);
+      return res.status(503).json({
+        error: "Schedule read failed.",
+        code: "STORE_READ_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/schedule/entries", async (req, res) => {
+    const overwriteFlag = String(req.query.overwrite || "").toLowerCase() === "true";
+    try {
+      const before = await scheduleStore.getSnapshot();
+      const result = await scheduleStore.addEntry(req.body || {}, { overwrite: overwriteFlag });
+      scheduleAudit("entries.add", {
+        actor: actorFingerprint(req),
+        before_count: before.scheduled_words.length,
+        replaced: result.replaced,
+        entry: result.entry
+      });
+      return res.status(result.replaced ? 200 : 201).json({
+        ok: true,
+        entry: result.entry,
+        replaced: result.replaced,
+        schedule: result.schedule
+      });
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] add entry failed:", err);
+      return res.status(503).json({
+        error: "Schedule write failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.put("/api/admin/schedule/entries/:date/:lang", async (req, res) => {
+    try {
+      const result = await scheduleStore.updateEntry(
+        req.params.date,
+        req.params.lang,
+        req.body || {}
+      );
+      scheduleAudit("entries.update", {
+        actor: actorFingerprint(req),
+        date: req.params.date,
+        lang: req.params.lang,
+        entry: result.entry
+      });
+      return res.json({ ok: true, entry: result.entry, schedule: result.schedule });
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] update entry failed:", err);
+      return res.status(503).json({
+        error: "Schedule write failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.delete("/api/admin/schedule/entries/:date/:lang", async (req, res) => {
+    try {
+      const result = await scheduleStore.removeEntry(req.params.date, req.params.lang);
+      scheduleAudit("entries.delete", {
+        actor: actorFingerprint(req),
+        date: req.params.date,
+        lang: req.params.lang,
+        removed: result.entry
+      });
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] delete entry failed:", err);
+      return res.status(503).json({
+        error: "Schedule write failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.put("/api/admin/schedule/config", async (req, res) => {
+    try {
+      const before = await scheduleStore.getSnapshot();
+      const next = await scheduleStore.setConfig(req.body || {});
+      scheduleAudit("config.update", {
+        actor: actorFingerprint(req),
+        before: {
+          timezone: before.timezone,
+          auto_rotate: before.auto_rotate,
+          retention_days: before.retention_days
+        },
+        after: {
+          timezone: next.timezone,
+          auto_rotate: next.auto_rotate,
+          retention_days: next.retention_days
+        }
+      });
+      return res.json({ ok: true, schedule: next });
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] config update failed:", err);
+      return res.status(503).json({
+        error: "Schedule config update failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/schedule/prune", async (req, res) => {
+    try {
+      const snapshot = await scheduleStore.getSnapshot();
+      // Compute the cutoff in the schedule's own zone — if we used
+      // server-local "today" minus retention_days here we'd inadvertently
+      // shift the cutoff away from the dates the entries are keyed by.
+      const todayLocal = new Intl.DateTimeFormat("en-CA", {
+        timeZone: snapshot.timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date());
+      const [y, m, d] = todayLocal.split("-").map(Number);
+      const cutoffMs = Date.UTC(y, m - 1, d) - snapshot.retention_days * 24 * 60 * 60 * 1000;
+      const cutoff = new Date(cutoffMs);
+      const cutoffStr = `${cutoff.getUTCFullYear()}-${String(cutoff.getUTCMonth() + 1).padStart(2, "0")}-${String(cutoff.getUTCDate()).padStart(2, "0")}`;
+      const result = await scheduleStore.pruneBefore(cutoffStr);
+      scheduleAudit("prune", {
+        actor: actorFingerprint(req),
+        cutoff: cutoffStr,
+        pruned: result.pruned
+      });
+      return res.json({ ok: true, pruned: result.pruned, cutoff: cutoffStr });
+    } catch (err) {
+      if (err instanceof ScheduleStoreError) {
+        return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
+      }
+      console.error("[schedule] prune failed:", err);
+      return res.status(503).json({
+        error: "Schedule prune failed.",
+        code: "STORE_WRITE_FAILED"
+      });
+    }
+  });
+
+  router.post("/api/admin/schedule/reconcile", async (req, res) => {
+    try {
+      const result = await runSchedulerReconcile("admin-trigger");
+      scheduleAudit("reconcile.manual", {
+        actor: actorFingerprint(req),
+        action: result?.action || "noop",
+        todayLocal: result?.todayLocal || null
+      });
+      return res.json({ ok: true, result });
+    } catch (err) {
+      console.error("[schedule] manual reconcile failed:", err);
+      return res.status(503).json({
+        error: "Manual reconcile failed.",
+        code: "RECONCILE_FAILED"
+      });
+    }
   });
 
   router.delete("/api/admin/stats/profile/:id", async (req, res) => {

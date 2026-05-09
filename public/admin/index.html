@@ -156,6 +156,18 @@
             >
               Analytics
             </button>
+            <button
+              id="admin-tab-schedule"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="schedule"
+              role="tab"
+              aria-controls="admin-panel-schedule"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Schedule
+            </button>
           </nav>
 
           <section
@@ -851,6 +863,123 @@
                   </table>
                 </div>
               </details>
+            </section>
+          </section>
+
+          <section
+            id="admin-panel-schedule"
+            class="admin-slot"
+            data-panel="schedule"
+            role="tabpanel"
+            aria-labelledby="admin-tab-schedule"
+            tabindex="0"
+            hidden
+          >
+            <h3>Daily word schedule</h3>
+            <p class="note">
+              Queue words against specific dates, turn on auto-rotate from the
+              language's curated answer pool, and let the runtime own
+              <code>data/word.json</code>. Manual <code>POST /api/word</code>
+              writes still override for the rest of the day; the schedule wins
+              again at the next local midnight.
+            </p>
+
+            <div id="scheduleStatusStrip" class="schedule-status-strip" role="status" aria-live="polite">
+              <span><strong>Timezone:</strong> <span data-schedule-field="timezone">—</span></span>
+              <span><strong>Today:</strong> <span data-schedule-field="todayResolved">—</span></span>
+              <span><strong>Last reconciled:</strong> <span data-schedule-field="lastReconciledAt">—</span></span>
+            </div>
+
+            <div id="scheduleStatus" class="message" role="status" aria-live="polite"></div>
+
+            <section class="admin-subpanel">
+              <h4>Configuration</h4>
+              <form id="scheduleConfigForm" class="form-inline">
+                <label class="form-inline">
+                  <span>Timezone</span>
+                  <input
+                    type="text"
+                    id="scheduleTimezoneInput"
+                    list="scheduleTimezoneList"
+                    autocomplete="off"
+                    spellcheck="false"
+                    required
+                  />
+                  <datalist id="scheduleTimezoneList"></datalist>
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="scheduleAutoRotate" />
+                  Auto-rotate from active answer pool when no entry is scheduled
+                </label>
+                <label class="form-inline">
+                  <span>Retention (days)</span>
+                  <input type="number" id="scheduleRetentionDays" min="0" max="36500" step="1" />
+                </label>
+                <button type="submit">Save config</button>
+                <button type="button" id="schedulePruneBtn">Prune now</button>
+                <button type="button" id="scheduleReconcileBtn">Apply now</button>
+              </form>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Add or update an entry</h4>
+              <form id="scheduleEntryForm" class="form-inline">
+                <label class="form-inline">
+                  <span>Date</span>
+                  <input type="date" id="scheduleEntryDate" required />
+                </label>
+                <label class="form-inline">
+                  <span>Word</span>
+                  <input
+                    type="text"
+                    id="scheduleEntryWord"
+                    pattern="[A-Za-z]{1,15}"
+                    autocapitalize="characters"
+                    autocomplete="off"
+                    required
+                    maxlength="15"
+                  />
+                </label>
+                <label class="form-inline">
+                  <span>Language</span>
+                  <input
+                    type="text"
+                    id="scheduleEntryLang"
+                    pattern="[a-z]{2}(-[A-Z]{2})?"
+                    autocomplete="off"
+                    required
+                    maxlength="6"
+                    value="en"
+                  />
+                </label>
+                <label class="form-inline">
+                  <span>Notes</span>
+                  <input type="text" id="scheduleEntryNotes" maxlength="200" />
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="scheduleEntryOverwrite" />
+                  Overwrite existing entry for this (date, lang)
+                </label>
+                <button type="submit">Save entry</button>
+              </form>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Scheduled entries</h4>
+              <div class="admin-table-wrap">
+                <table id="scheduleEntriesTable" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">Lang</th>
+                      <th scope="col">Word</th>
+                      <th scope="col">Notes</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
             </section>
           </section>
 

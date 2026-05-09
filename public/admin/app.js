@@ -151,7 +151,10 @@ const state = {
     attempts: null,
     language: null,
     hour: null
-  }
+  },
+  schedule: null,
+  scheduleLoading: false,
+  scheduleRequestId: 0
 };
 
 let jobsRefreshTimer = null;
@@ -318,6 +321,9 @@ function activateTab(nextTab, focus = false) {
   }
   if (tabId === "analytics" && state.unlocked && !state.analyticsLoading) {
     loadAnalytics({ announce: true }).catch(() => {});
+  }
+  if (tabId === "schedule" && state.unlocked && !state.scheduleLoading) {
+    loadSchedule({ announce: true }).catch(() => {});
   }
 }
 
@@ -1990,6 +1996,9 @@ async function unlockWorkspace() {
     if (state.unlocked && state.activeTab === "analytics") {
       loadAnalytics({ announce: true }).catch(() => {});
     }
+    if (state.unlocked && state.activeTab === "schedule") {
+      loadSchedule({ announce: true }).catch(() => {});
+    }
   } finally {
     state.loading = false;
     renderWorkspace();
@@ -2324,6 +2333,9 @@ lockSessionBtnEl.addEventListener("click", () => {
   // pre-lock request.
   state.analyticsRequestId += 1;
   state.analyticsLoading = false;
+  state.scheduleRequestId += 1;
+  state.scheduleLoading = false;
+  state.schedule = null;
   destroyAllAnalyticsCharts();
   if (analyticsCardsEl) {
     analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
@@ -2956,6 +2968,299 @@ if (analyticsWindowControlEl) {
 }
 
 window.addEventListener("beforeunload", destroyAllAnalyticsCharts);
+
+// ============================================================================
+// SCHEDULE TAB
+// ============================================================================
+
+const scheduleStatusStripEl = document.getElementById("scheduleStatusStrip");
+const scheduleStatusEl = document.getElementById("scheduleStatus");
+const scheduleConfigFormEl = document.getElementById("scheduleConfigForm");
+const scheduleTimezoneInputEl = document.getElementById("scheduleTimezoneInput");
+const scheduleTimezoneListEl = document.getElementById("scheduleTimezoneList");
+const scheduleAutoRotateEl = document.getElementById("scheduleAutoRotate");
+const scheduleRetentionDaysEl = document.getElementById("scheduleRetentionDays");
+const schedulePruneBtnEl = document.getElementById("schedulePruneBtn");
+const scheduleReconcileBtnEl = document.getElementById("scheduleReconcileBtn");
+const scheduleEntryFormEl = document.getElementById("scheduleEntryForm");
+const scheduleEntryDateEl = document.getElementById("scheduleEntryDate");
+const scheduleEntryWordEl = document.getElementById("scheduleEntryWord");
+const scheduleEntryLangEl = document.getElementById("scheduleEntryLang");
+const scheduleEntryNotesEl = document.getElementById("scheduleEntryNotes");
+const scheduleEntryOverwriteEl = document.getElementById("scheduleEntryOverwrite");
+const scheduleEntriesTableBody = document.querySelector("#scheduleEntriesTable tbody");
+
+function setStripField(name, text) {
+  if (!scheduleStatusStripEl) return;
+  const el = scheduleStatusStripEl.querySelector(`[data-schedule-field="${name}"]`);
+  if (el) el.textContent = text;
+}
+
+function populateTimezoneList() {
+  if (!scheduleTimezoneListEl) return;
+  // Intl.supportedValuesOf is a recent API but covered everywhere we
+  // care about; if it's missing the input still works as a free-text
+  // field (validated server-side).
+  if (typeof Intl.supportedValuesOf !== "function") return;
+  if (scheduleTimezoneListEl.children.length > 0) return;
+  let zones;
+  try {
+    zones = Intl.supportedValuesOf("timeZone");
+  } catch (_err) {
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const zone of zones) {
+    const opt = document.createElement("option");
+    opt.value = zone;
+    fragment.appendChild(opt);
+  }
+  scheduleTimezoneListEl.appendChild(fragment);
+}
+
+function renderScheduleStrip(snapshot) {
+  if (!snapshot) {
+    setStripField("timezone", "—");
+    setStripField("todayResolved", "—");
+    setStripField("lastReconciledAt", "—");
+    return;
+  }
+  setStripField("timezone", snapshot.timezone || "—");
+  let todayLocal = "—";
+  try {
+    todayLocal = new Intl.DateTimeFormat("en-CA", {
+      timeZone: snapshot.timezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+  } catch (_err) {
+    // best-effort; bad zone surfaces in the existing form
+  }
+  const todayEntry = (snapshot.scheduled_words || []).find(
+    (row) => row.date === todayLocal
+  );
+  setStripField(
+    "todayResolved",
+    todayEntry
+      ? `${todayLocal} → ${todayEntry.word} (${todayEntry.lang})`
+      : `${todayLocal} (no entry)`
+  );
+  setStripField(
+    "lastReconciledAt",
+    snapshot.last_reconciled_at
+      ? `${snapshot.last_reconciled_for || "?"} at ${new Date(snapshot.last_reconciled_at).toLocaleString()}`
+      : "never"
+  );
+}
+
+function renderScheduleEntries(snapshot) {
+  if (!scheduleEntriesTableBody) return;
+  while (scheduleEntriesTableBody.firstChild) {
+    scheduleEntriesTableBody.removeChild(scheduleEntriesTableBody.firstChild);
+  }
+  const entries = snapshot && Array.isArray(snapshot.scheduled_words)
+    ? snapshot.scheduled_words
+    : [];
+  if (entries.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "muted";
+    td.textContent = "No scheduled entries yet.";
+    tr.appendChild(td);
+    scheduleEntriesTableBody.appendChild(tr);
+    return;
+  }
+  for (const entry of entries) {
+    const tr = document.createElement("tr");
+    const dateTd = document.createElement("td");
+    dateTd.textContent = entry.date;
+    const langTd = document.createElement("td");
+    langTd.textContent = entry.lang;
+    const wordTd = document.createElement("td");
+    wordTd.textContent = entry.word;
+    const notesTd = document.createElement("td");
+    notesTd.textContent = entry.notes || "";
+    const actionsTd = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => loadEntryIntoForm(entry));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    // Plain styled button rather than .admin-action-destructive: that
+    // class's amber-on-light combination fails WCAG AA on the light
+    // theme (color-contrast 2.77:1). The Delete label + a confirm
+    // dialog are sufficient affordances here.
+    delBtn.className = "schedule-delete-btn";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", () => deleteScheduleEntry(entry.date, entry.lang));
+    actionsTd.append(editBtn, document.createTextNode(" "), delBtn);
+    tr.append(dateTd, langTd, wordTd, notesTd, actionsTd);
+    scheduleEntriesTableBody.appendChild(tr);
+  }
+}
+
+function loadEntryIntoForm(entry) {
+  if (!scheduleEntryDateEl || !scheduleEntryWordEl || !scheduleEntryLangEl) return;
+  scheduleEntryDateEl.value = entry.date;
+  scheduleEntryWordEl.value = entry.word;
+  scheduleEntryLangEl.value = entry.lang;
+  scheduleEntryNotesEl.value = entry.notes || "";
+  scheduleEntryOverwriteEl.checked = true;
+  scheduleEntryDateEl.focus();
+}
+
+function applyScheduleSnapshot(snapshot) {
+  state.schedule = snapshot;
+  if (scheduleTimezoneInputEl) scheduleTimezoneInputEl.value = snapshot?.timezone || "";
+  if (scheduleAutoRotateEl) scheduleAutoRotateEl.checked = Boolean(snapshot?.auto_rotate);
+  if (scheduleRetentionDaysEl) {
+    scheduleRetentionDaysEl.value = Number.isInteger(snapshot?.retention_days)
+      ? String(snapshot.retention_days)
+      : "";
+  }
+  renderScheduleStrip(snapshot);
+  renderScheduleEntries(snapshot);
+}
+
+async function loadSchedule(options = {}) {
+  if (!state.unlocked) return;
+  state.scheduleRequestId += 1;
+  const requestId = state.scheduleRequestId;
+  state.scheduleLoading = true;
+  if (options.announce !== false) {
+    setStatus(scheduleStatusEl, "Loading schedule…", "");
+  }
+  try {
+    const payload = await requestAdminJson("/api/admin/schedule");
+    if (requestId !== state.scheduleRequestId) return payload;
+    populateTimezoneList();
+    applyScheduleSnapshot(payload);
+    if (options.announce !== false) {
+      const count = (payload?.scheduled_words || []).length;
+      setStatus(
+        scheduleStatusEl,
+        count === 0 ? "No scheduled entries yet." : `Loaded ${count} entr${count === 1 ? "y" : "ies"}.`,
+        count === 0 ? "admin-status-off" : "admin-status-ok"
+      );
+    }
+    return payload;
+  } catch (err) {
+    if (options.announce !== false && requestId === state.scheduleRequestId) {
+      setStatus(scheduleStatusEl, `Schedule load failed: ${err.message}`, "admin-status-missing");
+    }
+    throw err;
+  } finally {
+    if (requestId === state.scheduleRequestId) state.scheduleLoading = false;
+  }
+}
+
+if (scheduleConfigFormEl) {
+  scheduleConfigFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) return;
+    const body = {
+      timezone: scheduleTimezoneInputEl?.value?.trim(),
+      auto_rotate: Boolean(scheduleAutoRotateEl?.checked),
+      retention_days: Number(scheduleRetentionDaysEl?.value || 0)
+    };
+    try {
+      const payload = await requestAdminJson("/api/admin/schedule/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      applyScheduleSnapshot(payload.schedule || payload);
+      setStatus(scheduleStatusEl, "Configuration saved.", "admin-status-ok");
+    } catch (err) {
+      setStatus(scheduleStatusEl, `Save failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+if (scheduleEntryFormEl) {
+  scheduleEntryFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.unlocked) return;
+    const body = {
+      date: scheduleEntryDateEl?.value,
+      word: scheduleEntryWordEl?.value?.toUpperCase(),
+      lang: scheduleEntryLangEl?.value?.trim(),
+      notes: scheduleEntryNotesEl?.value || undefined
+    };
+    const overwrite = scheduleEntryOverwriteEl?.checked ? "?overwrite=true" : "";
+    try {
+      const payload = await requestAdminJson(`/api/admin/schedule/entries${overwrite}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      applyScheduleSnapshot(payload.schedule || payload);
+      setStatus(
+        scheduleStatusEl,
+        payload.replaced ? "Entry replaced." : "Entry added.",
+        "admin-status-ok"
+      );
+      scheduleEntryFormEl.reset();
+      if (scheduleEntryLangEl) scheduleEntryLangEl.value = "en";
+    } catch (err) {
+      setStatus(scheduleStatusEl, `Save failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+async function deleteScheduleEntry(date, lang) {
+  if (!state.unlocked) return;
+  if (!window.confirm(`Delete the schedule entry for ${date} (${lang})?`)) return;
+  try {
+    await requestAdminJson(
+      `/api/admin/schedule/entries/${encodeURIComponent(date)}/${encodeURIComponent(lang)}`,
+      { method: "DELETE" }
+    );
+    await loadSchedule({ announce: false });
+    setStatus(scheduleStatusEl, `Deleted entry for ${date} (${lang}).`, "admin-status-ok");
+  } catch (err) {
+    setStatus(scheduleStatusEl, `Delete failed: ${err.message}`, "admin-status-missing");
+  }
+}
+
+if (schedulePruneBtnEl) {
+  schedulePruneBtnEl.addEventListener("click", async () => {
+    if (!state.unlocked) return;
+    try {
+      const payload = await requestAdminJson("/api/admin/schedule/prune", {
+        method: "POST"
+      });
+      await loadSchedule({ announce: false });
+      setStatus(
+        scheduleStatusEl,
+        `Pruned ${payload.pruned} entr${payload.pruned === 1 ? "y" : "ies"} before ${payload.cutoff}.`,
+        "admin-status-ok"
+      );
+    } catch (err) {
+      setStatus(scheduleStatusEl, `Prune failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
+
+if (scheduleReconcileBtnEl) {
+  scheduleReconcileBtnEl.addEventListener("click", async () => {
+    if (!state.unlocked) return;
+    try {
+      const payload = await requestAdminJson("/api/admin/schedule/reconcile", {
+        method: "POST"
+      });
+      await loadSchedule({ announce: false });
+      const r = payload.result;
+      const detail = r?.action ? `(${r.action}, ${r.todayLocal || "unknown date"})` : "";
+      setStatus(scheduleStatusEl, `Reconcile complete ${detail}`, "admin-status-ok");
+    } catch (err) {
+      setStatus(scheduleStatusEl, `Reconcile failed: ${err.message}`, "admin-status-missing");
+    }
+  });
+}
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
