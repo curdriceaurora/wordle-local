@@ -196,13 +196,23 @@ function showErrorPanel(message) {
   createPanel.classList.add("hidden");
   playPanel.classList.add("hidden");
   errorPanel.classList.remove("hidden");
-  errorMessageEl.textContent = message || "That link doesn't work. Let's make a new puzzle.";
+  // The link-failure message is owned by JS (it's never in markup),
+  // so localize it here at render time. Falls back to English if i18n
+  // hasn't loaded — though init() now awaits window.i18nReady so this
+  // path should always have a real translation when callable from
+  // route validation.
+  const fallbackMsg = "That link doesn't work. Let's make a new puzzle.";
+  errorMessageEl.textContent = message
+    || (window.i18n ? window.i18n.t("error.linkFailed") : fallbackMsg);
 
   let remaining = 10;
-  errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+  const fmtCountdown = (n) => (window.i18n
+    ? window.i18n.t("error.goingBack", { seconds: n })
+    : `Going back in ${n}s...`);
+  errorCountdownEl.textContent = fmtCountdown(remaining);
   errorTimer = setInterval(() => {
     remaining -= 1;
-    errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+    errorCountdownEl.textContent = fmtCountdown(remaining);
     if (remaining <= 0) {
       clearInterval(errorTimer);
       window.location.href = "/";
@@ -1456,6 +1466,14 @@ strictToggle.addEventListener("change", () => {
  * If a URL-provided puzzle link fails validation, an error panel is shown with a generic link-failure message.
  */
 async function init() {
+  // Wait for i18n messages to land BEFORE we route. Without this, a
+  // malformed shared/daily link would invoke showErrorPanel() with
+  // hardcoded English copy because the locale fetch hadn't completed
+  // yet. window.i18nReady is set up immediately above this call so
+  // it's always defined by the time init() runs.
+  if (window.i18nReady) {
+    try { await window.i18nReady; } catch (_e) { /* fall back to English */ }
+  }
   await loadMeta();
   profileState = {
     profiles: [],
@@ -1552,8 +1570,6 @@ async function init() {
   }
 }
 
-init();
-
 // ── i18n bootstrap + language switcher ────────────────────────────────
 // Loads locale messages and applies translations to all data-i18n
 // nodes. The `<html lang>` attribute is set pre-paint by the inline
@@ -1566,6 +1582,10 @@ init();
 // it before producing strings — otherwise t() returns the literal key
 // before fetch completes and the resulting buttons can't be repaired
 // by a later updateDOM() pass.
+//
+// Started BEFORE init() so init's awaited routing path
+// (showErrorPanel, profile rendering, etc.) can rely on translations
+// being available.
 window.i18nReady = (async function bootstrapI18n() {
   if (typeof window === "undefined" || !window.i18n) return;
   try {
@@ -1575,6 +1595,8 @@ window.i18nReady = (async function bootstrapI18n() {
     // to do here beyond letting the page render with literal keys.
   }
 })();
+
+init();
 
 (async function wireLanguageSwitcher() {
   if (typeof window === "undefined" || !window.i18n) return;

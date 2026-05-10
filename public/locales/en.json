@@ -77,7 +77,9 @@
   "error": {
     "heading": "Oops!",
     "makeNewPuzzle": "Make a new puzzle",
-    "invalidWord": "Word must be A-Z only and {min}-{max} letters."
+    "invalidWord": "Word must be A-Z only and {min}-{max} letters.",
+    "linkFailed": "That link doesn't work. Let's make a new puzzle.",
+    "goingBack": "Going back in {seconds}s..."
   },
   "challenge": {
     "heading": "Timed challenges",

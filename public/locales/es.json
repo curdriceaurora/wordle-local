@@ -77,7 +77,9 @@
   "error": {
     "heading": "¡Vaya!",
     "makeNewPuzzle": "Crear un puzle nuevo",
-    "invalidWord": "La palabra debe ser solo A-Z y tener {min}-{max} letras."
+    "invalidWord": "La palabra debe ser solo A-Z y tener {min}-{max} letras.",
+    "linkFailed": "Ese enlace no funciona. Crea un puzle nuevo.",
+    "goingBack": "Volviendo en {seconds}s..."
   },
   "challenge": {
     "heading": "Retos cronometrados",
