@@ -20,7 +20,7 @@ A two-minute walkthrough from `git clone` to playing your first puzzle. **No adm
 
 ### 1. Install and run
 
-Node 18+ (local):
+Node 20+ (matches CI and the bundled Docker image):
 
 ```bash
 npm install
@@ -28,13 +28,16 @@ cp .env.example .env
 npm start
 ```
 
-…or Docker:
+…or Docker (also needs `.env` first — `docker-compose.yml` declares it as `env_file`):
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
 Open `http://localhost:3000`.
+
+> **Heads up:** `.env.example` ships with `ADMIN_KEY=change-me` and `REQUIRE_ADMIN_KEY=true`. That's fine on a private LAN/Tailscale, but **change `ADMIN_KEY` to a long random value before exposing the server publicly** — admin endpoints accept the value verbatim and have no rate-limit protection beyond the global per-IP limiter.
 
 ### 2. Create and share a puzzle
 
@@ -52,8 +55,11 @@ If you want everyone on the host to play the same word at `/daily`:
 ```bash
 curl -X POST http://localhost:3000/api/word \
   -H 'Content-Type: application/json' \
+  -H 'x-admin-key: change-me' \
   -d '{"word":"CRANE","lang":"en"}'
 ```
+
+`POST /api/word` is admin-gated; pass your `ADMIN_KEY` in the `x-admin-key` header (`change-me` is the value from `.env.example` — change it). The same gate also covers the admin console at `/admin`.
 
 Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
 
@@ -194,7 +200,7 @@ Daily word endpoints remain available:
 ## Troubleshooting
 
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
-- Daily link says no puzzle set: set one via `POST /api/word`.
+- Daily link says no puzzle set: set one via `POST /api/word` (admin-gated — pass your `ADMIN_KEY` in the `x-admin-key` header).
 - Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
 - `/challenges` link is missing from the header: no challenges are configured. The admin Challenges tab can create one.
 - Notifications toggle is hidden: page is loaded over plain HTTP, or the browser lacks `PushManager` / Service Worker. Use HTTPS (or `localhost`) and a modern browser.
