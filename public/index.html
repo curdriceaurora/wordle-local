@@ -328,6 +328,13 @@
       </div>
     </div>
 
-    <script src="/app.js"></script>
+    <!-- defer so app.js runs AFTER the deferred /js/i18n.js in
+         <head>. Defer guarantees source order across deferred
+         scripts: i18n.js (head) executes first, then app.js (body),
+         so window.i18n is defined before the bootstrap IIFE runs.
+         Without this, app.js would be parser-blocking and run BEFORE
+         the deferred i18n.js, leaving window.i18n undefined and
+         silently no-oping the language switcher. -->
+    <script src="/app.js" defer></script>
   </body>
 </html>
