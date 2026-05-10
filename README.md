@@ -2,7 +2,8 @@
 
 Local, privacy-first Wordle you can run anywhere.
 
-For families, classrooms, and friend groups who want a simple, self-hosted Wordle — with daily words, classroom rosters, timed challenges, opt-in notifications, and UI in English or Spanish.
+For families, classrooms, and friend groups who want a self-hosted Wordle.
+Beyond the basics: daily words, timed challenges, classroom rosters, opt-in push notifications, and an English/Spanish UI.
 
 ## How To Use
 
@@ -11,12 +12,12 @@ For families, classrooms, and friend groups who want a simple, self-hosted Wordl
 3. Share the link.
 4. Play it together.
 
-Want a daily puzzle? Visit `/daily` after you've set one (see below).
-Want timed multi-puzzle runs? Visit `/challenges` after the admin enables one.
+Want a daily puzzle? Visit `/daily` after you've set one ([step 3 below](#3-optional-set-a-daily-word)).
+Want timed multi-puzzle runs? Visit `/challenges` once a challenge is configured (Admin Console → Challenges).
 
 ## Quick Start
 
-A two-minute walkthrough from `git clone` to playing your first puzzle. **No admin setup required** — everything below works against an out-of-the-box install.
+A two-minute walkthrough from install to your first puzzle. **No admin setup required** — everything below works against an out-of-the-box install on `localhost`.
 
 ### 1. Install and run
 
@@ -36,18 +37,12 @@ docker compose up --build
 
 Open `http://localhost:3000`.
 
-> **Local-vs-Docker, important caveat:** `npm start` is `node server.js` and does **not** load `.env` on its own. With nothing in the environment, `ADMIN_KEY` is empty and admin endpoints (`/admin`, `POST /api/word`) run **open** (no key required). That's fine for a quick local game on `localhost`. If you need real auth — for the steps below, or before exposing the server beyond your machine — either use the Docker path (which loads `.env`) **or** start with Node's `--env-file` flag after creating `.env`:
->
-> ```bash
-> cp .env.example .env
-> # Edit .env: set ADMIN_KEY to a long random value before exposing publicly.
-> node --env-file=.env server.js
-> ```
+> `npm start` doesn't load `.env`, so admin endpoints run **open** by default — fine for a local game on `localhost`. To lock the server down before exposing it beyond your machine, see [Locking it down](#locking-it-down) under Admin Console.
 
 ### 2. Create and share a puzzle
 
 1. On the home page, type a word into **Word** (3–12 letters, A–Z), or click **Random word**.
-2. Optional: tweak **Length** or **Guesses**. The form auto-syncs `Length` to your word.
+2. Optional: tweak **Length** or **Guesses**. The Length field updates automatically as you type.
 3. Click **Start puzzle**. The play screen shows a **Share link** at the bottom.
 4. Copy the link and send it. Anyone who opens it plays the same word — no login required.
 
@@ -55,7 +50,7 @@ Open `http://localhost:3000`.
 
 ### 3. (Optional) Set a daily word
 
-If you want everyone on the host to play the same word at `/daily`:
+If you want everyone using your install to play the same word at `/daily`:
 
 ```bash
 curl -X POST http://localhost:3000/api/word \
@@ -63,16 +58,7 @@ curl -X POST http://localhost:3000/api/word \
   -d '{"word":"CRANE","lang":"en"}'
 ```
 
-This works as-is on the default `npm start` (no `--env-file`) because admin endpoints run open in that mode. **If you locked the server down** (Docker path, or `node --env-file=.env server.js`), add your `ADMIN_KEY` to the request:
-
-```bash
-curl -X POST http://localhost:3000/api/word \
-  -H 'Content-Type: application/json' \
-  -H 'x-admin-key: YOUR_ADMIN_KEY' \
-  -d '{"word":"CRANE","lang":"en"}'
-```
-
-The same gate covers all `/api/admin/*` API routes that the admin console talks to. The `/admin` HTML page itself is served unauthenticated — the gate fires on the API calls the unlock form makes, so an unauthenticated visitor sees the unlock form but can't read or change anything until they enter the right key.
+If you locked the server down, add `-H 'x-admin-key: YOUR_ADMIN_KEY'` to the request. Details: [Locking it down](#locking-it-down).
 
 Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
 
@@ -109,6 +95,33 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - Visit `/admin` for the operator console.
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
 - Admin platform architecture contracts (schemas, config precedence, queue semantics): [docs/admin-platform-architecture-contract.md](docs/admin-platform-architecture-contract.md).
+
+### Locking it down
+
+By default, `npm start` runs **open** — `node server.js` doesn't load `.env`, `ADMIN_KEY` is empty, and the admin gate falls through. Fine for a local game on `localhost`; not fine if you're exposing the server beyond your machine.
+
+Two ways to load env vars and turn the gate on:
+
+```bash
+# Option A — Docker (Compose loads .env automatically via env_file)
+cp .env.example .env
+docker compose up --build
+
+# Option B — Node 20+'s built-in --env-file flag (no dotenv dependency)
+cp .env.example .env
+node --env-file=.env server.js
+```
+
+Then edit `.env` and **set `ADMIN_KEY` to a long random value**. The gate covers `/api/admin/*` (the API the admin console talks to). The `/admin` HTML page itself is served unauthenticated — so an unauthenticated visitor can see the unlock form, but every read or write the form makes goes through the gate.
+
+After locking down, requests to admin endpoints need the header:
+
+```bash
+curl -X POST http://localhost:3000/api/word \
+  -H 'Content-Type: application/json' \
+  -H 'x-admin-key: YOUR_ADMIN_KEY' \
+  -d '{"word":"CRANE","lang":"en"}'
+```
 
 ### Provider workflows
 
@@ -213,7 +226,7 @@ Daily word endpoints remain available:
 ## Troubleshooting
 
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
-- Daily link says no puzzle set: set one via `POST /api/word`. On the default `npm start` the endpoint runs open; on the Docker path or `node --env-file=.env`, pass your `ADMIN_KEY` in the `x-admin-key` header.
+- Daily link says no puzzle set: set one via `POST /api/word` (Quick Start step 3). If you locked the server down, pass `x-admin-key` — see [Locking it down](#locking-it-down).
 - Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
 - `/challenges` link is missing from the header: no challenges are configured. The admin Challenges tab can create one.
 - Notifications toggle is hidden: page is loaded over plain HTTP, or the browser lacks `PushManager` / Service Worker. Use HTTPS (or `localhost`) and a modern browser.
