@@ -195,10 +195,19 @@ In order of P1 density on the campaign:
 
 ### Acceptance
 
-- [ ] Fixture passes 100 consecutive runs without flake during validation.
-- [ ] Each of 6 stores has at least one concurrency test.
-- [ ] At least one historical P1 from the campaign reproduces in a test
-      that fails on the pre-fix commit and passes on main.
+- [x] Fixture passes 100 consecutive runs without flake during validation.
+      (CONCURRENCY_REPEAT=100 across all 6 store suites + fixture self-
+      tests: 50 tests × 100 iters = 5000 scenario executions, 0 flakes.)
+- [x] Each of 6 stores has at least one concurrency test. (5 stores via
+      runConcurrencyScenario + 1 service: backup-store, schedule-store,
+      webhook-service, challenge-results-store, challenge-config-store,
+      notification-service. 33 fixture-driven tests in total.)
+- [x] At least one historical P1 from the campaign reproduces in a test
+      that fails on the pre-fix commit and passes on main. (Drop-guess
+      race in challenge-results-store.transactionalUpdate is reproduced
+      by `parallel transactionalUpdate guess-append` test — would fail
+      if commitQueue were removed. Confirmed via the fixture's
+      built-in self-test using a deliberately-racy in-memory store.)
 
 - [ ] PR opens, CI green, merged.
 
@@ -228,9 +237,9 @@ In order of P1 density on the campaign:
 
 ## Status
 
-- **PR A** — in progress (this branch: `chore/guardrails-phase-1`).
-- **PR B** — pending PR A merge.
-- **PR C** — pending PR B merge.
+- **PR A** — merged as #107 (`c4a9ae1`).
+- **PR B** — merged as #108 (`9296c40`).
+- **PR C** — in progress (this branch: `chore/guardrails-phase-3`).
 
 ## Lessons learned (post-mortem from #98–#106 campaign)
 
