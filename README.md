@@ -69,12 +69,13 @@ The header has a language switcher (English, Spanish). Selection persists in the
 ### What next?
 
 - **More player features** — timed challenges, notifications, classroom rosters: see [Highlights](#highlights).
-- **Operator controls** — provider imports, scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
+- **Operator controls** — BYOD (bring your own dictionary), scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
 - **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](advanced-settings.md).
 
 ## Highlights
 
 - **Custom puzzles**: create-and-share links, no login.
+- **BYOD — Bring Your Own Dictionary** — import Hunspell `.dic` + `.aff` files for English variants (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) without a server restart or any CLI work.
 - **Daily word** with optional admin-managed schedule + auto-rotate from the active answer pool.
 - **Timed challenges** — solve N puzzles inside a server-authoritative time budget; per-challenge leaderboard.
 - **Classroom mode** — admin manages classes, rosters, and CSV reports ([docs/classroom-mode.md](docs/classroom-mode.md)).
@@ -128,13 +129,13 @@ curl -X POST http://localhost:3000/api/word \
   -d '{"word":"CRANE","lang":"en"}'
 ```
 
-### Provider workflows (dictionary imports)
+### BYOD — Bring Your Own Dictionary
 
-A *provider* is a source of dictionary data — Hunspell-format word/affix files that the runtime turns into the guess and answer dictionaries used by the game. English (`en`) ships baked-in; the Providers tab lets an operator add or refresh additional language **variants** (currently `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) without restarting the server or touching a CLI.
+English (`en`) ships baked in. To go beyond that, the **Providers** tab is your **BYOD** entry point — bring your own Hunspell-format word/affix files (`.dic` + `.aff`) and the runtime turns them into the guess and answer dictionaries the game uses, without a server restart or any CLI work. Currently supported language variants: `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`.
 
 What the Providers tab can do:
 
-- **Import / re-import** a language variant via either remote fetch (pinned commit + required SHA-256 checksums for the `.dic` and `.aff` files) or manual upload (drop a `.dic` + `.aff` pair into the form). Re-import is how you pick up upstream updates.
+- **Import / re-import** a variant. Two paths: remote fetch (pinned commit + required SHA-256 checksums for the `.dic` and `.aff`), or manual upload (drop a `.dic` + `.aff` pair into the form). Re-import is how you pick up upstream updates.
 - **Async import queue** so a long-running import doesn't block the request; job history is persisted under `data/admin-jobs.json` so an operator can audit recent imports across server restarts.
 - **Check for upstream updates on demand** — the tab pings each variant's pinned source and reports `up-to-date`, `update-available`, `unknown`, or `error` per variant.
 - **Enable / disable imported variants** — disabled variants disappear from the player UI's language picker without losing the imported data on disk.
@@ -142,7 +143,7 @@ What the Providers tab can do:
 
 ### Tabs
 
-- **Providers** — provider/dictionary lifecycle (above).
+- **Providers** — BYOD: import / re-import / enable / disable Hunspell dictionaries (see above).
 - **Import Queue** — live status of async import jobs.
 - **Runtime Settings** — edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
 - **Profiles** — leaderboard profile management.
