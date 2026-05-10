@@ -100,21 +100,26 @@ The header has a language switcher (English, Spanish). Selection persists in the
 
 By default, `npm start` runs **open** — `node server.js` doesn't load `.env`, `ADMIN_KEY` is empty, and the admin gate falls through. Fine for a local game on `localhost`; not fine if you're exposing the server beyond your machine.
 
-Two ways to load env vars and turn the gate on:
+Set the key **before** starting the server. `server.js` reads `ADMIN_KEY` and `REQUIRE_ADMIN_KEY` once at boot, and both `docker compose`'s `env_file` and Node's `--env-file` flag are evaluated at process startup — editing `.env` after launch leaves the running process using whatever values were in place when it started (notably the `change-me` placeholder from `.env.example`). If you need to rotate the key on a running server, edit `.env` then restart.
 
 ```bash
-# Option A — Docker (Compose loads .env automatically via env_file)
 cp .env.example .env
+# Edit .env now — set ADMIN_KEY to a long random value.
+```
+
+Then load it with one of:
+
+```bash
+# Option A — Docker (Compose reads .env automatically via env_file)
 docker compose up --build
 
 # Option B — Node 20+'s built-in --env-file flag (no dotenv dependency)
-cp .env.example .env
 node --env-file=.env server.js
 ```
 
-Then edit `.env` and **set `ADMIN_KEY` to a long random value**. The gate covers `/api/admin/*` (the API the admin console talks to). The `/admin` HTML page itself is served unauthenticated — so an unauthenticated visitor can see the unlock form, but every read or write the form makes goes through the gate.
+The gate covers `/api/admin/*` (the API the admin console talks to). The `/admin` HTML page itself is served unauthenticated — so an unauthenticated visitor can see the unlock form, but every read or write the form makes goes through the gate.
 
-After locking down, requests to admin endpoints need the header:
+Once locked down, requests to admin endpoints need the header:
 
 ```bash
 curl -X POST http://localhost:3000/api/word \
