@@ -40,31 +40,32 @@ const acorn = require("acorn");
 
 const projectRoot = path.resolve(__dirname, "..");
 
-// Names whose function body is exempt from needing an explicit
-// slot claim. These are the documented patterns from `lib/locks.md`.
+// Per-(file, function-name) allowlist of `writeJsonAtomic` callers
+// that are KNOWN documented patterns from `lib/locks.md`. These are
+// scoped to the files where the pattern actually lives — a generic
+// name like `commit` or `load` is only exempt INSIDE the listed
+// store files. A future bypass in `routes/` or `server.js` (or in
+// a new lib file) using one of these names would not match this
+// allowlist and would still be flagged.
 //
-// The list covers two pattern families:
-//   * Modern stores: `#commit` / `#loadInternal` (challenge-config,
-//     challenge-results, push-subscription, webhook, webhook-delivery).
-//   * Legacy / sync stores: `commit`, `load`, `loadSync`, `#persist`,
-//     `replaceOverridesSync`, `recoverOnBoot`, `reload[Sync]`,
-//     `loadOrInitSync` / `loadOrCreateSync`, `updateSync`,
-//     `#recoverWithDefaults`, `ensureKeysSync`. These predate the
-//     slot-in-`#commit` standardization; the slot is claimed by
-//     callers (or the path runs at boot before any concurrency).
-const SAFE_FUNCTION_NAMES = new Set([
-  // Modern stores
-  "#commit", "commit",
-  "#loadInternal", "loadSync", "load",
-  // Older write-queue stores' commit equivalent
-  "#persist",
-  // Per-store sync entry points and recovery paths
-  "replaceOverridesSync", "saveSync", "updateSync",
-  "recoverOnBoot", "reload", "reloadSync",
-  "loadOrInitSync", "loadOrCreateSync",
-  "#recoverWithDefaults",
-  // Boot-time keypair init (vapid-store)
-  "ensureKeysSync",
+// Each entry is justified by its store's role in `lib/locks.md` —
+// either store-claims-slot via `#commit` (modern pattern) or
+// caller-claims-slot via the route layer (legacy pattern). Adding
+// a new entry here requires linking back to the lock-graph rationale.
+const SAFE_PER_FILE = new Map([
+  // Modern commitQueue stores — slot claimed inside `#commit`.
+  ["lib/challenge-config-store.js", new Set(["#commit", "#loadInternal"])],
+  ["lib/challenge-results-store.js", new Set(["#commit", "#loadInternal"])],
+  ["lib/push-subscription-store.js", new Set(["#commit", "#loadInternal"])],
+  ["lib/schedule-store.js", new Set(["#commit", "#loadInternal"])],
+  ["lib/webhook-delivery-store.js", new Set(["#commit", "#loadInternal"])],
+  ["lib/webhook-store.js", new Set(["#commit", "#loadInternal"])],
+  // Legacy writeQueue / sync stores — caller claims slot at the
+  // admin route layer or the boot path.
+  ["lib/admin-jobs-store.js", new Set(["#persist", "load"])],
+  ["lib/app-config-store.js", new Set(["loadSync", "replaceOverridesSync"])],
+  ["lib/language-registry.js", new Set(["#recoverWithDefaults", "updateSync"])],
+  ["lib/vapid-store.js", new Set(["ensureKeysSync"])],
 ]);
 
 // Files whose `writeJsonAtomic` call sites are exempt entirely.
@@ -270,6 +271,8 @@ function checkFile(filePath) {
   const ctx = { fnStack: [], calls: [], _pendingMethodName: null };
   visit(ast, ctx);
 
+  const safeNamesForThisFile = SAFE_PER_FILE.get(rel) || new Set();
+
   for (const call of ctx.calls) {
     // Top-level call (no enclosing function) — unambiguous bypass.
     if (call.fnStack.length === 0) {
@@ -278,23 +281,24 @@ function checkFile(filePath) {
     }
     const innermost = call.fnStack[call.fnStack.length - 1];
 
-    // Skip the helper-definition false positive: `writeJsonAtomic`
-    // helpers in store files include calls like
-    // `await fs.rename(...)` after their own body which we don't
-    // mind — but more importantly we don't want to flag calls to
-    // writeJsonAtomic from INSIDE the helper named writeJsonAtomic
+    // Skip the helper-definition false positive: don't flag calls
+    // to writeJsonAtomic from INSIDE the helper named writeJsonAtomic
     // itself (recursive — doesn't happen, but defensive).
     if (HELPER_DEFINITION_NAMES.has(innermost.name)) continue;
 
-    // Safe-named enclosing function: any of the documented patterns.
-    if (call.fnStack.some((f) => SAFE_FUNCTION_NAMES.has(f.name))) continue;
+    // Per-file safe-named enclosing function. The exemption is
+    // scoped to the file in `SAFE_PER_FILE`; a generic name like
+    // `commit` or `load` does NOT earn the exemption in some other
+    // file. This is the round-4 fix for codex's "scope safe writer
+    // names to documented stores" concern.
+    if (call.fnStack.some((f) => safeNamesForThisFile.has(f.name))) continue;
 
     // Slot explicitly claimed somewhere in the enclosing chain.
     if (call.fnStack.some((f) => f.hasSlotClaim)) continue;
 
     errors.push(
       `${rel}:${call.line}: ${call.name} in function ${innermost.name}() not protected by ` +
-        `${SLOT_CLAIM_NAME} and ${innermost.name} not in SAFE_FUNCTION_NAMES.`
+        `${SLOT_CLAIM_NAME} and not in ${rel}'s safe-names allowlist.`
     );
   }
 
@@ -315,9 +319,9 @@ function main() {
     for (const e of allErrors) console.error(`  ${e}`);
     console.error(`\n[locks:check] ${allErrors.length} error(s).`);
     console.error(
-      "[locks:check] To fix: wrap the call in `await claimDirectDataWriteSlot()` or, " +
-        "if it's a documented pattern, name it as one of: " +
-        Array.from(SAFE_FUNCTION_NAMES).join(", ")
+      "[locks:check] To fix: wrap the call in `await claimDirectDataWriteSlot()`, OR " +
+        "if it's a documented store pattern, add an explicit (file, function-name) entry " +
+        "to SAFE_PER_FILE in scripts/check-lock-bypass.js with a justification."
     );
     console.error("[locks:check] See lib/locks.md for the full lock graph.");
     process.exit(1);
