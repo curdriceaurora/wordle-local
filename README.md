@@ -133,6 +133,8 @@ curl -X POST http://localhost:3000/api/word \
 
 English (`en`) ships baked in. To go beyond that, the **Providers** tab is your **BYOD** entry point — bring your own Hunspell-format word/affix files (`.dic` + `.aff`) and the runtime turns them into the guess and answer dictionaries the game uses, without a server restart or any CLI work. Currently supported language variants: `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`.
 
+**Where to get `.dic` + `.aff` files:** the canonical source is the LibreOffice dictionaries repo — [github.com/LibreOffice/dictionaries](https://github.com/LibreOffice/dictionaries) — which ships maintained Hunspell pairs for every supported English variant under [`/en/`](https://github.com/LibreOffice/dictionaries/tree/master/en) (e.g. `en_GB.dic` + `en_GB.aff`). The same files power LibreOffice and OpenOffice's spell-checkers, so they're stable, license-clear, and well-tested. The Providers tab's remote-fetch path is pre-configured for this repo (`providerId: libreoffice-dictionaries`); the manual-upload path accepts any conformant Hunspell pair if you'd rather use a custom dictionary. See [docs/provider-import-contract.md](docs/provider-import-contract.md) for the full provider descriptor and pinning rules.
+
 What the Providers tab can do:
 
 - **Import / re-import** a variant. Two paths: remote fetch (pinned commit + required SHA-256 checksums for the `.dic` and `.aff`), or manual upload (drop a `.dic` + `.aff` pair into the form). Re-import is how you pick up upstream updates.
