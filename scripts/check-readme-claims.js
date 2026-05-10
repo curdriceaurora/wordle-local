@@ -168,13 +168,23 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
     }
 
     // ---- Node version claim check (prose only) ----
+    //
+    // "Node N+" means "Node N or newer is required." We only flag
+    // when `claimed > dockerfile`, i.e. the doc is asking the user
+    // for a higher version than the runtime actually pins. The
+    // reverse direction (claim < dockerfile) is stale-but-still-
+    // accurate — saying "Node 20+" when the Dockerfile is `node:22`
+    // doesn't mislead anyone, since Node 22 IS "20 or newer."
+    // CodeRabbit caught the original strict-equality on PR #108
+    // round 11.
     if (!inFence && dockerfileNodeMajor !== null) {
       const nodeMatch = line.match(/\bNode\s+(\d+)\+/);
       if (nodeMatch) {
         const claimed = parseInt(nodeMatch[1], 10);
-        if (claimed !== dockerfileNodeMajor) {
+        if (claimed > dockerfileNodeMajor) {
           errors.push(
-            `${rel}:${no}: doc says "Node ${claimed}+" but Dockerfile uses node:${dockerfileNodeMajor}-...`
+            `${rel}:${no}: doc says "Node ${claimed}+" but Dockerfile uses node:${dockerfileNodeMajor}-... ` +
+              `(claim asserts a higher floor than the actual runtime).`
           );
         }
       }
