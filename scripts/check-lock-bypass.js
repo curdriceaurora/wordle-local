@@ -208,8 +208,26 @@ function visit(node, ctx) {
       });
     }
     if (calleeName === SLOT_CLAIM_NAME) {
-      // Mark every enclosing function as having an explicit claim.
-      for (const f of ctx.fnStack) f.hasSlotClaim = true;
+      // Mark only the INNERMOST enclosing function as having an
+      // explicit claim. Marking ancestors would incorrectly accept
+      // an unrelated `writeJsonAtomic(...)` in an outer function
+      // when the only `claimDirectDataWriteSlot()` was in a nested
+      // helper:
+      //
+      //   function outer() {
+      //     async function helper() {
+      //       await claimDirectDataWriteSlot();  // marks helper only
+      //     }
+      //     writeJsonAtomic(...);                // ← still flagged
+      //   }
+      //
+      // The reverse direction (claim in outer, write in nested
+      // helper) is still accepted because the writeJsonAtomic
+      // check inspects the entire enclosing chain via
+      // `call.fnStack.some((f) => f.hasSlotClaim)`.
+      if (ctx.fnStack.length > 0) {
+        ctx.fnStack[ctx.fnStack.length - 1].hasSlotClaim = true;
+      }
     }
   }
 
