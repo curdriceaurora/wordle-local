@@ -45,7 +45,14 @@ function readKnownEnvVars() {
   const contents = fs.readFileSync(envExample, "utf8");
   const out = new Set();
   for (const line of contents.split(/\r?\n/)) {
-    const m = line.match(/^([A-Z][A-Z0-9_]+)=/);
+    // Match both active assignments (`FOO=value`) and the commented-
+    // out form (`# FOO=value` / `#FOO=value`) used in `.env.example`
+    // to document optional vars. Codex caught the original regex
+    // missing optional vars on PR #108 round 6 — a future doc
+    // example like `WEBHOOKS_ENABLED=true npm start` would have
+    // failed claims:check even though `.env.example` documents it
+    // as a commented optional.
+    const m = line.match(/^[ \t]*#?[ \t]*([A-Z][A-Z0-9_]+)=/);
     if (m) out.add(m[1]);
   }
   return out;
