@@ -4,69 +4,72 @@ set -eu
 npm run guardrails:nits
 
 # Lint only the staged markdown files, against the *staged* content
-# (not whatever happens to be in the working tree). Three reviewer
-# concerns this block addresses (PR #107 rounds 3-4):
+# (not whatever happens to be in the working tree). Approach:
+#
+#   For each staged .md path, extract the staged blob from git's
+#   object database to a temp file (`git show :path`), then run
+#   markdownlint against the temp files. The worktree is never
+#   touched — no stash, no conflict risk on partial-staged commits.
+#
+# Concerns this addresses (PR #107 review thread history):
 #
 #  1. Path safety. Filenames with spaces or leading `-` would be
 #     split or interpreted as flags by an unquoted shell expansion.
-#     We build a properly-quoted argument list with `set --`, and
-#     pass `--` to markdownlint so a leading-dash filename isn't
-#     parsed as an option.
-#  2. Staged ≠ worktree. A partially-staged commit (some hunks
-#     staged, others not) was linting changes that weren't being
-#     committed and missing ones that were. Stash unstaged +
-#     untracked work for the lint window so the worktree mirrors
-#     the index.
-#  3. Cross-platform. The earlier draft used `grep -z`, `xargs -0`,
-#     and `xargs -r` — all GNU-specific and unavailable on macOS's
-#     default BSD userland. The pure-`sh` `set --` loop below is
-#     portable.
+#     Build a properly-quoted argument list with `set --`, and pass
+#     `--` to markdownlint so a leading-dash filename isn't parsed
+#     as an option.
+#  2. Staged ≠ worktree. A partial-staged commit (some hunks
+#     staged, others not) was previously linting changes that
+#     weren't being committed and missing ones that were. The
+#     temp-file approach reads from the index directly.
+#  3. No stash-pop conflicts. The earlier stash-based version
+#     could conflict on `git stash pop` after lint, leaving the
+#     operator with conflict markers and a kept stash even though
+#     markdownlint hadn't modified anything. Avoiding stash
+#     entirely sidesteps this.
+#  4. Cross-platform. No GNU-only flags (grep -z, xargs -0, -r).
+#     Pure `sh` works on macOS BSD userland.
 #
-# Caveat: filenames containing literal newlines aren't handled (we
-# read paths line-by-line). Documenting rather than coding around
-# it because no path in this repo is permitted to contain a newline
-# (would break too many other tools first).
+# Caveat: error messages from markdownlint will reference the temp
+# paths rather than the original repo paths. Acceptable trade-off:
+# the operator reads the message and knows the linted file was the
+# staged version.
 #
-# `--diff-filter=ACMR` includes renames (R) so a renamed-and-modified
-# .md still gets linted; `D` (deletes) is correctly excluded.
+# `--diff-filter=ACMR` includes renames (R) so a renamed-and-
+# modified .md still gets linted; `D` (deletes) excluded.
 
 STAGED_MD="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.md$' || true)"
 if [ -z "$STAGED_MD" ]; then
   exit 0
 fi
 
-# Detect anything worth stashing: unstaged tracked changes OR
-# untracked files. If neither is present, the worktree already
-# matches the index — skip the stash dance entirely.
-NEEDS_STASH=""
-if ! git diff --quiet; then
-  NEEDS_STASH=1
-fi
-if [ -z "$NEEDS_STASH" ] && [ -n "$(git ls-files --others --exclude-standard)" ]; then
-  NEEDS_STASH=1
+# Temp dir mirrored to the repo's structure so config discovery
+# (markdownlint walks from each linted file upward looking for
+# `.markdownlint.json`) finds the config we copy into the temp root.
+# Cleaned on exit.
+TMPDIR_LINT="$(mktemp -d)"
+# shellcheck disable=SC2064
+trap "rm -rf '$TMPDIR_LINT'" EXIT
+
+# Copy the repo's markdownlint config into the temp tree root so
+# linted temp files inherit the same rule set as a normal lint.
+if [ -f .markdownlint.json ]; then
+  cp .markdownlint.json "$TMPDIR_LINT/.markdownlint.json"
 fi
 
-if [ -n "$NEEDS_STASH" ]; then
-  git stash push --keep-index --include-untracked --quiet --message "pre-commit-md-lint"
-fi
-
-# Build a properly-quoted argument list. `set --` resets positional
-# params; the `while read` loop appends each non-empty line.
 set --
 while IFS= read -r path; do
-  [ -n "$path" ] && set -- "$@" "$path"
+  if [ -n "$path" ]; then
+    target="$TMPDIR_LINT/$path"
+    mkdir -p "$(dirname "$target")"
+    git show ":$path" > "$target"
+    set -- "$@" "$target"
+  fi
 done <<HEREDOC
 $STAGED_MD
 HEREDOC
 
 LINT_STATUS=0
 npx --no-install markdownlint-cli2 -- "$@" || LINT_STATUS=$?
-
-if [ -n "$NEEDS_STASH" ]; then
-  # Restore the operator's working state. If pop conflicts (rare —
-  # markdownlint doesn't modify files), we surface the conflict
-  # rather than swallow it: the operator needs to know.
-  git stash pop --quiet
-fi
 
 exit "$LINT_STATUS"

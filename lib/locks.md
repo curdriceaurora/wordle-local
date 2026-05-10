@@ -155,15 +155,43 @@ Mapping today:
 Each `commitQueue`-style store is driven by a private `#commit(updater)`
 that:
 
-1. Claims `claimDirectDataWriteSlot` for backup/restore safety.
-2. Chains the updater onto `commitQueue` so prior commits drain first.
-3. Inside the updater: reads cached state, runs the mutator, runs
-   `normalizeStore` (the store's structural validator), persists via
-   `writeJsonAtomic`, releases the slot.
+1. Chains the updater onto `commitQueue` so prior commits drain first.
+2. Inside the updater: reads cached state, runs the mutator, runs
+   the store's normalizer, persists via `writeJsonAtomic`, returns.
 
 The older `writeQueue` stores follow the same pattern with slightly
 different method names (e.g. `commit()` rather than `#commit()`); the
 behavioral contract is identical.
+
+#### Slot-claim ownership: store vs caller
+
+The backup-restore slot (`claimDirectDataWriteSlot`) **must** be held
+while the disk write happens. Where that claim originates differs
+across stores — class-wide, two ownership patterns exist:
+
+| Store | Slot claimed by |
+| --- | --- |
+| `lib/challenge-config-store.js` | Store (inside `#commit`) |
+| `lib/challenge-results-store.js` | Store (inside `#commit`) |
+| `lib/push-subscription-store.js` | Store (inside `#commit`) |
+| `lib/webhook-store.js` | Store (inside `#commit`) |
+| `lib/webhook-delivery-store.js` | Store (inside `#commit`) |
+| `lib/schedule-store.js` | Caller (route layer wraps in `withSlot(...)`) |
+| `lib/leaderboard-store.js` | Caller (route layer) |
+| `lib/admin-jobs-store.js` | Caller (provider-import queue) |
+| `lib/classes-store.js` | Caller (route layer) |
+
+Both patterns are correct as long as **something in the call chain**
+claims the slot before the write. Stores that take
+`claimDirectDataWriteSlot` as a constructor dep (the 5 above) embed
+the claim in `#commit`, so callers don't need to know about it.
+Stores that don't (the 4 above) require every mutation site to wrap
+in `withSlot(...)` (or equivalent) explicitly.
+
+When adding a NEW store, prefer the store-claims-slot pattern: it's
+harder to forget the claim at a future caller site. The caller-
+claims pattern persists in older stores for historical reasons (they
+predate the slot mechanism's standardization at the store layer).
 
 - **Use when**: implementing a store update method. Wrap your mutator
   in `#commit`. The mutator should be pure (state in, next state out)
