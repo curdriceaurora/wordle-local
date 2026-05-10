@@ -180,16 +180,23 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
 
     // ---- Env var assignments inside code fences ----
     if (inFence && (fenceLang === "bash" || fenceLang === "sh" || fenceLang === "" || fenceLang === "shell")) {
-      // Match `FOO=value` at line start (allow leading $ or # comment markers).
-      // Skip lines that are just comments.
-      const trimmed = line.replace(/^[#\s]+/, "");
-      const envMatch = trimmed.match(/^([A-Z][A-Z0-9_]{2,})=/);
-      if (envMatch) {
-        const name = envMatch[1];
-        if (!allEnvVars.has(name) && !ENV_VAR_NOISE.has(name)) {
-          errors.push(
-            `${rel}:${no}: code block references "${name}=" but not in .env.example`
-          );
+      // Skip lines that are entirely comments (start with `#` after
+      // any leading whitespace). The earlier draft naively stripped
+      // a leading `#` and then matched, which would treat a comment
+      // like `# FOO=bar` as a real assignment and (incorrectly) flag
+      // FOO if it weren't in .env.example.
+      const isCommentLine = /^\s*#/.test(line);
+      if (!isCommentLine) {
+        // Allow a leading `$ ` shell prompt (e.g. `$ FOO=bar npm run x`).
+        const trimmed = line.replace(/^\s*\$?\s*/, "");
+        const envMatch = trimmed.match(/^([A-Z][A-Z0-9_]{2,})=/);
+        if (envMatch) {
+          const name = envMatch[1];
+          if (!allEnvVars.has(name) && !ENV_VAR_NOISE.has(name)) {
+            errors.push(
+              `${rel}:${no}: code block references "${name}=" but not in .env.example`
+            );
+          }
         }
       }
     }

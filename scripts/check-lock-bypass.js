@@ -8,47 +8,70 @@
 // emit/delivery race conditions, and so on. See `lib/locks.md` for
 // the full lock graph.
 //
-// Heuristic: every `writeJsonAtomic(...)` call must be inside a
-// function whose body either:
+// Implementation: parses each .js file with `acorn` (the ESLint-
+// bundled JS parser; no extra dep) and walks the AST. The earlier
+// regex-based draft missed every method inside a `class { ... }`
+// body because its function-detector keyed on top-level depth,
+// which is a real correctness bug surfaced by reviewers on PR #108.
+// AST-based scope tracking handles classes, nested closures, arrow
+// methods, and other JS forms uniformly.
 //
-//   1. Itself calls `claimDirectDataWriteSlot(...)` (explicit slot
-//      claim), OR
-//   2. Has a name matching one of the allowlisted patterns:
-//      - `#commit` / `commit` (per-store atomic commit; the store's
-//        constructor injects the slot through dep injection and
-//        either the inner `#commit` or a wrapping caller claims).
-//      - `#loadInternal` / `loadSync` (per-store ENOENT bootstrap
-//        path; documented as a known exemption in `lib/locks.md`).
-//      - `replaceOverridesSync` / `saveSync` / `recoverOnBoot` /
-//        `reload` / `reloadSync` (older sync bootstrap conventions).
+// Heuristic per call site:
 //
-// Files in `ALLOWLIST_FILES` are exempt entirely — typically because
-// they own a different domain (e.g. provider artifacts under
-// `data/providers/`) governed by their own coordination mechanism.
+//   1. Walk up the enclosing function/method chain.
+//   2. If the closest named function is in `SAFE_FUNCTION_NAMES`,
+//      the call is allowed (these names are documented patterns
+//      from `lib/locks.md`).
+//   3. If any enclosing function body itself calls
+//      `claimDirectDataWriteSlot(...)`, the call is allowed
+//      (slot is explicitly claimed in scope).
+//   4. If the file is in `ALLOWLIST_FILES`, the call is allowed
+//      (the file owns a different domain — provider artifacts,
+//      etc. — with its own coordination mechanism).
+//   5. Otherwise, flag.
 //
-// Failures here block `npm run check`. Adding a new allowed
-// function name to `SAFE_FUNCTION_NAMES` is fine when justified;
-// adding a file to `ALLOWLIST_FILES` requires a comment explaining
-// the alternative coordination path.
+// The script also flags top-level (module-scope) calls — those are
+// unambiguous bypasses because module-scope code runs at require()
+// time, before any slot can be claimed.
 
 const fs = require("fs");
 const path = require("path");
+const acorn = require("acorn");
 
 const projectRoot = path.resolve(__dirname, "..");
 
 // Names whose function body is exempt from needing an explicit
 // slot claim. These are the documented patterns from `lib/locks.md`.
+//
+// The list covers two pattern families:
+//   * Modern stores: `#commit` / `#loadInternal` (challenge-config,
+//     challenge-results, push-subscription, webhook, webhook-delivery).
+//   * Legacy / sync stores: `commit`, `load`, `loadSync`, `#persist`,
+//     `replaceOverridesSync`, `recoverOnBoot`, `reload[Sync]`,
+//     `loadOrInitSync` / `loadOrCreateSync`, `updateSync`,
+//     `#recoverWithDefaults`, `ensureKeysSync`. These predate the
+//     slot-in-`#commit` standardization; the slot is claimed by
+//     callers (or the path runs at boot before any concurrency).
 const SAFE_FUNCTION_NAMES = new Set([
+  // Modern stores
   "#commit", "commit",
-  "#loadInternal", "loadSync",
-  "replaceOverridesSync", "saveSync",
+  "#loadInternal", "loadSync", "load",
+  // Older write-queue stores' commit equivalent
+  "#persist",
+  // Per-store sync entry points and recovery paths
+  "replaceOverridesSync", "saveSync", "updateSync",
   "recoverOnBoot", "reload", "reloadSync",
   "loadOrInitSync", "loadOrCreateSync",
+  "#recoverWithDefaults",
+  // Boot-time keypair init (vapid-store)
+  "ensureKeysSync",
 ]);
 
 // Files whose `writeJsonAtomic` call sites are exempt entirely.
 // Each entry MUST have a justification comment explaining the
-// alternative coordination mechanism.
+// alternative coordination mechanism. Keys are repo-relative paths
+// using POSIX separators — we normalize Windows separators in `rel`
+// before lookup so cross-platform contributors aren't surprised.
 const ALLOWLIST_FILES = new Map([
   // Provider artifacts under data/providers/<variant>/<commit>/
   // are immutable per-commit and governed by the provider import
@@ -65,21 +88,24 @@ const ALLOWLIST_FILES = new Map([
 
 // Function names that ARE the writer helpers themselves (their
 // bodies call fs.write* / similar, which is not a slot concern).
-// Matching `writeJsonAtomic` / `writeJsonAtomicSync` as function
-// names skips the false-positive flag on the helpers' own bodies.
 const HELPER_DEFINITION_NAMES = new Set([
   "writeJsonAtomic", "writeJsonAtomicSync",
 ]);
 
-// Recursively collect .js files in the given dirs (excluding tests
-// and node_modules). The check applies to production code only.
+const TARGET_CALL_NAMES = new Set([
+  "writeJsonAtomic", "writeJsonAtomicSync",
+]);
+
+const SLOT_CLAIM_NAME = "claimDirectDataWriteSlot";
+
+// ---------- File discovery ----------
+
 function collectJsFiles() {
   const out = [];
   const includeRoots = ["lib", "routes"];
   for (const root of includeRoots) {
     walk(path.join(projectRoot, root), out);
   }
-  // server.js at top level too.
   const top = path.join(projectRoot, "server.js");
   if (fs.existsSync(top)) out.push(top);
   return out;
@@ -96,126 +122,168 @@ function walk(dir, out) {
   }
 }
 
-// Match function/method declarations. Captures the function name in
-// group 1. Handles:
-//   function foo() {
-//   async function foo() {
-//   foo() {
-//   async foo() {
-//   #foo() {
-//   async #foo() {
-const FN_DECL_PATTERN =
-  /^[ \t]*(?:async\s+)?(?:function\s+)?(#?[a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*\{/;
+// ---------- AST helpers ----------
 
-// Match a `writeJsonAtomic(` or `writeJsonAtomicSync(` call (any
-// receiver — we deliberately also catch destructured/aliased forms
-// like `await write(...)` only when the function NAME is exact).
-const WRITE_CALL_PATTERN = /\bwriteJsonAtomic(?:Sync)?\b\s*\(/;
+// Parse a file with acorn. We allow the latest spec so private
+// class fields (`#commit`) etc. are supported.
+function parseFile(filePath) {
+  const source = fs.readFileSync(filePath, "utf8");
+  return acorn.parse(source, {
+    ecmaVersion: "latest",
+    sourceType: "script",
+    locations: true,
+    allowAwaitOutsideFunction: false,
+    allowReturnOutsideFunction: false,
+  });
+}
 
-// Match a slot claim within a function body.
-const SLOT_CLAIM_PATTERN = /\bclaimDirectDataWriteSlot\s*\(/;
+// Get a printable name for a function-like node. Handles regular
+// declarations, named expressions, methods (including private and
+// computed), and falls back to `<anonymous>` for arrow functions
+// without a binding context.
+function nameOf(node, methodKey) {
+  if (methodKey) return methodKey;
+  if (node.id && node.id.name) return node.id.name;
+  return "<anonymous>";
+}
 
-// For each file, segment into top-level functions/methods and check
-// each segment that contains a writeJsonAtomic call. Naive nesting:
-// we treat every `{` after a function declaration as opening a new
-// scope and `}` as closing. Good enough for our codebase's style;
-// false positives would only be triggered by deeply-nested helper
-// closures inside a method, which we don't currently use.
+// Decode a MethodDefinition / PropertyDefinition `key` to a string.
+// Private identifiers come back with a leading `#`.
+function methodKeyName(keyNode) {
+  if (!keyNode) return null;
+  if (keyNode.type === "Identifier") return keyNode.name;
+  if (keyNode.type === "PrivateIdentifier") return "#" + keyNode.name;
+  if (keyNode.type === "Literal") return String(keyNode.value);
+  return null;
+}
+
+// Recursive AST visitor. Tracks a stack of enclosing function-like
+// nodes (with their resolved names) and a parallel stack of body
+// strings (for the "any enclosing fn body claims the slot" check).
+function visit(node, ctx) {
+  if (!node || typeof node !== "object" || !node.type) return;
+
+  // Open a function-like scope. We push BEFORE recursing into
+  // children so calls inside the body see the enclosing chain.
+  let pushed = false;
+  let methodName = null;
+
+  if (node.type === "MethodDefinition" || node.type === "PropertyDefinition") {
+    methodName = methodKeyName(node.key);
+  }
+
+  if (
+    node.type === "FunctionDeclaration"
+    || node.type === "FunctionExpression"
+    || node.type === "ArrowFunctionExpression"
+  ) {
+    const resolvedName = nameOf(node, ctx._pendingMethodName);
+    ctx.fnStack.push({ name: resolvedName, node });
+    pushed = true;
+  }
+
+  // For MethodDefinition we'll resolve the name when visiting the
+  // .value (a FunctionExpression). Stash it on ctx so the
+  // FunctionExpression branch can pick it up.
+  if (node.type === "MethodDefinition") {
+    ctx._pendingMethodName = methodName;
+  }
+
+  // Detect the call site of interest.
+  if (node.type === "CallExpression" && node.callee) {
+    let calleeName = null;
+    if (node.callee.type === "Identifier") calleeName = node.callee.name;
+    if (node.callee.type === "MemberExpression" && node.callee.property) {
+      if (node.callee.property.type === "Identifier") {
+        calleeName = node.callee.property.name;
+      } else if (node.callee.property.type === "PrivateIdentifier") {
+        calleeName = "#" + node.callee.property.name;
+      }
+    }
+    if (calleeName && TARGET_CALL_NAMES.has(calleeName)) {
+      ctx.calls.push({
+        name: calleeName,
+        line: node.loc ? node.loc.start.line : 0,
+        fnStack: ctx.fnStack.slice(),
+      });
+    }
+    if (calleeName === SLOT_CLAIM_NAME) {
+      // Mark every enclosing function as having an explicit claim.
+      for (const f of ctx.fnStack) f.hasSlotClaim = true;
+    }
+  }
+
+  // Recurse.
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "range" || key === "type") continue;
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const c of child) visit(c, ctx);
+    } else if (child && typeof child === "object" && child.type) {
+      visit(child, ctx);
+    }
+  }
+
+  if (node.type === "MethodDefinition") {
+    ctx._pendingMethodName = null;
+  }
+  if (pushed) {
+    ctx.fnStack.pop();
+  }
+}
+
+// ---------- Per-file check ----------
+
 function checkFile(filePath) {
   const errors = [];
-  const rel = path.relative(projectRoot, filePath);
+  const relRaw = path.relative(projectRoot, filePath);
+  const rel = relRaw.split(path.sep).join("/"); // normalize for allowlist lookup
 
-  if (ALLOWLIST_FILES.has(rel)) {
+  if (ALLOWLIST_FILES.has(rel)) return errors;
+
+  let ast;
+  try {
+    ast = parseFile(filePath);
+  } catch (err) {
+    errors.push(`${rel}: parse error — ${err.message}`);
     return errors;
   }
 
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  const ctx = { fnStack: [], calls: [], _pendingMethodName: null };
+  visit(ast, ctx);
 
-  // Build a stack of function names + their start/end line ranges.
-  // This is a lightweight tokenizer — we only care about identifying
-  // which named function each line belongs to.
-  let depth = 0;
-  const fnStack = []; // entries: { name, startLine, body: [] }
-  const fnRanges = []; // { name, body: string }
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    // Strip line comments and string literals to make brace counting
-    // a little less wrong. NOT a real parser — close enough for our
-    // codebase's style (no braces in template literals on the same
-    // line as a fn decl, no string-embedded braces in fn bodies).
-    const stripped = line
-      .replace(/\/\/.*$/, "")
-      .replace(/\/\*.*?\*\//g, "");
-
-    const fnMatch = stripped.match(FN_DECL_PATTERN);
-    if (fnMatch && depth === 0) {
-      fnStack.push({ name: fnMatch[1], startLine: i + 1, body: [line] });
-      depth = 1;
+  for (const call of ctx.calls) {
+    // Top-level call (no enclosing function) — unambiguous bypass.
+    if (call.fnStack.length === 0) {
+      errors.push(`${rel}:${call.line}: top-level ${call.name} call (no enclosing function).`);
       continue;
     }
+    const innermost = call.fnStack[call.fnStack.length - 1];
 
-    if (fnStack.length > 0) {
-      const top = fnStack[fnStack.length - 1];
-      top.body.push(line);
-    }
+    // Skip the helper-definition false positive: `writeJsonAtomic`
+    // helpers in store files include calls like
+    // `await fs.rename(...)` after their own body which we don't
+    // mind — but more importantly we don't want to flag calls to
+    // writeJsonAtomic from INSIDE the helper named writeJsonAtomic
+    // itself (recursive — doesn't happen, but defensive).
+    if (HELPER_DEFINITION_NAMES.has(innermost.name)) continue;
 
-    for (const ch of stripped) {
-      if (ch === "{") depth += 1;
-      else if (ch === "}") {
-        depth -= 1;
-        if (depth === 0 && fnStack.length > 0) {
-          const fn = fnStack.pop();
-          fn.endLine = i + 1;
-          fnRanges.push(fn);
-        }
-      }
-    }
-  }
+    // Safe-named enclosing function: any of the documented patterns.
+    if (call.fnStack.some((f) => SAFE_FUNCTION_NAMES.has(f.name))) continue;
 
-  // Now scan each detected function range. If its body has a
-  // writeJsonAtomic call AND the function isn't safe-named AND
-  // doesn't claim the slot, flag it.
-  for (const fn of fnRanges) {
-    const body = fn.body.join("\n");
-    if (!WRITE_CALL_PATTERN.test(body)) continue;
-    if (HELPER_DEFINITION_NAMES.has(fn.name)) continue;
-    if (SAFE_FUNCTION_NAMES.has(fn.name)) continue;
-    if (SLOT_CLAIM_PATTERN.test(body)) continue;
-    // Find the line within the body where the call appears for a
-    // useful error.
-    let callLine = fn.startLine;
-    for (let j = 0; j < fn.body.length; j += 1) {
-      if (WRITE_CALL_PATTERN.test(fn.body[j])) {
-        callLine = fn.startLine + j;
-        break;
-      }
-    }
+    // Slot explicitly claimed somewhere in the enclosing chain.
+    if (call.fnStack.some((f) => f.hasSlotClaim)) continue;
+
     errors.push(
-      `${rel}:${callLine}: writeJsonAtomic in function ${fn.name}() not protected ` +
-        `by claimDirectDataWriteSlot, and ${fn.name} not in SAFE_FUNCTION_NAMES.`
+      `${rel}:${call.line}: ${call.name} in function ${innermost.name}() not protected by ` +
+        `${SLOT_CLAIM_NAME} and ${innermost.name} not in SAFE_FUNCTION_NAMES.`
     );
-  }
-
-  // Also flag top-level (non-function) writeJsonAtomic calls. These
-  // are unambiguously bypasses.
-  let depthSimple = 0;
-  for (let i = 0; i < lines.length; i += 1) {
-    const stripped = lines[i].replace(/\/\/.*$/, "");
-    if (FN_DECL_PATTERN.test(stripped)) {
-      depthSimple += 1;
-    }
-    for (const ch of stripped) {
-      if (ch === "{") depthSimple += 1;
-      else if (ch === "}") depthSimple = Math.max(0, depthSimple - 1);
-    }
-    if (depthSimple === 0 && WRITE_CALL_PATTERN.test(stripped)) {
-      errors.push(`${rel}:${i + 1}: top-level writeJsonAtomic call (no enclosing function).`);
-    }
   }
 
   return errors;
 }
+
+// ---------- Driver ----------
 
 function main() {
   const files = collectJsFiles();
@@ -230,7 +298,7 @@ function main() {
     console.error(`\n[locks:check] ${allErrors.length} error(s).`);
     console.error(
       "[locks:check] To fix: wrap the call in `await claimDirectDataWriteSlot()` or, " +
-        "if it's a documented pattern, rename to one of: " +
+        "if it's a documented pattern, name it as one of: " +
         Array.from(SAFE_FUNCTION_NAMES).join(", ")
     );
     console.error("[locks:check] See lib/locks.md for the full lock graph.");
@@ -238,7 +306,7 @@ function main() {
   }
 
   console.log(
-    `[locks:check] OK — ${files.length} file(s) scanned; no slot bypass detected.`
+    `[locks:check] OK — ${files.length} file(s) parsed; no slot bypass detected.`
   );
 }
 
