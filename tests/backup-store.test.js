@@ -8,6 +8,7 @@ const {
   BackupError,
   MANIFEST_VERSION,
   IN_SCOPE_FILES,
+  BACKWARDS_COMPATIBLE_FILES,
   buildManifest,
   createArchive,
   validateArchive,
@@ -505,20 +506,17 @@ describe("validateArchive rejection cases", () => {
     const archive = archiver("zip");
     const out = fs.createWriteStream(tamperedPath);
     archive.pipe(out);
-    const BACKWARDS_COMPAT = new Set([
-      "data/schedule.json",
-      "data/webhooks.json",
-      "data/webhook-deliveries.json",
-      "data/push-subscriptions.json",
-      "data/challenges.json",
-      "data/challenge-results.json"
-    ]);
+    // Pull the allowlist from the module under test so this regression
+    // stays in sync with production. Hardcoding it would let the test
+    // pass against an outdated set.
+    const compatSet = new Set(BACKWARDS_COMPATIBLE_FILES);
+    expect(compatSet.size).toBeGreaterThan(0);
     for (const entry of entries) {
       if (entry.name === "manifest.json") {
         const manifest = JSON.parse(entry.buf.toString("utf8"));
-        manifest.files = manifest.files.filter((f) => !BACKWARDS_COMPAT.has(f.path));
+        manifest.files = manifest.files.filter((f) => !compatSet.has(f.path));
         archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: "manifest.json" });
-      } else if (BACKWARDS_COMPAT.has(entry.name)) {
+      } else if (compatSet.has(entry.name)) {
         // skip — emulating an older archive that never had these
       } else {
         archive.append(entry.buf, { name: entry.name });
@@ -531,7 +529,7 @@ describe("validateArchive rejection cases", () => {
     expect(result.manifest.manifestVersion).toBeDefined();
     // Sanity: manifest doesn't declare any of the backwards-compat files.
     const declared = new Set(result.manifest.files.map((f) => f.path));
-    for (const compatPath of BACKWARDS_COMPAT) {
+    for (const compatPath of compatSet) {
       expect(declared.has(compatPath)).toBe(false);
     }
   });

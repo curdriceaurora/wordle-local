@@ -454,12 +454,19 @@ function createAdminRouter(deps) {
       // disambiguate today's entry the same way scheduledEntryFor does
       // server-side. Without this, a multi-language schedule would show
       // the alphabetically-first row and lie about what /daily actually
-      // serves. Treat missing as null so older clients still render.
+      // serves. Treat missing/disabled as null so older clients still
+      // render and so a stale lang (e.g. provider language was turned
+      // off after word.json was written) doesn't point the UI at an
+      // entry the runtime won't actually serve.
       let currentWordLang = null;
       if (typeof getCurrentWordData === "function") {
         const wd = getCurrentWordData();
         if (wd && typeof wd.lang === "string" && wd.lang) {
-          currentWordLang = wd.lang;
+          // resolveLang returns null when the lang isn't in the active
+          // catalog — same fallback /daily applies before serving.
+          currentWordLang = (typeof resolveLang === "function")
+            ? resolveLang(wd.lang)
+            : wd.lang;
         }
       }
       return res.json({ ...snapshot, current_word_lang: currentWordLang });

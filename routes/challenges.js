@@ -54,7 +54,8 @@ function createChallengesRouter(deps) {
     if (err instanceof ChallengeConfigStoreError || err instanceof ChallengeResultsStoreError) {
       const status = err.code === "INVALID_REQUEST" ? 400
         : err.code === "CHALLENGE_NOT_FOUND" || err.code === "SESSION_NOT_FOUND" ? 404
-        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" || err.code === "SESSION_COMPLETE" ? 409
+        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID"
+          || err.code === "SESSION_COMPLETE" || err.code === "SESSION_NOT_ACTIVE" ? 409
         : 503;
       return res.status(status).json({ error: err.message, code: err.code });
     }
@@ -316,7 +317,6 @@ function createChallengesRouter(deps) {
           code: "INVALID_GUESS"
         });
       }
-      const feedback = evaluateGuess(rawGuess, active.word);
       // Mutate atomically inside the store's commit lock. The earlier
       // version computed updatedPuzzles outside the commit and then
       // sent the whole array as a patch — two concurrent /guess
@@ -324,7 +324,29 @@ function createChallengesRouter(deps) {
       // the second commit's puzzles array would overwrite the first
       // guess. Reading the latest session inside the mutator (via
       // transactionalUpdate) closes that race.
+      //
+      // Compute feedback INSIDE the mutator too. The pre-transaction
+      // `active` puzzle and its `active.word` could be stale by the
+      // time the lock is acquired (a concurrent /guess for the same
+      // session may have solved or exhausted it), and `latestActive`
+      // can refer to a different puzzle entirely. Returning feedback
+      // computed from `active.word` would then color the wrong row in
+      // the client. Capture both feedback and the post-mutation status
+      // via outer-scope locals so the response reflects what was
+      // actually applied.
+      let appliedFeedback = null;
       const updated = await challengeResultsStore.transactionalUpdate(session.id, (latest) => {
+        // Latest-status TOCTOU: a concurrent /finish or settle-on-
+        // timeout could have transitioned this session to terminal
+        // since the route's pre-transaction read. Re-check inside the
+        // commit so we never apply a guess to a completed/timed-out/
+        // abandoned session.
+        if (latest.status !== "in-progress" && latest.status !== "pending") {
+          throw new ChallengeResultsStoreError(
+            "SESSION_NOT_ACTIVE",
+            `Session is ${latest.status}; no further guesses accepted.`
+          );
+        }
         // Re-derive the active puzzle from the LATEST persisted state.
         // This handles the case where another /guess has already
         // landed: we'll see its updated puzzle, find the new active
@@ -341,6 +363,12 @@ function createChallengesRouter(deps) {
             "All puzzles in this session are complete."
           );
         }
+        // Feedback is now derived from the puzzle that actually
+        // receives the guess. With concurrent /guess invocations,
+        // latestActive can be a different puzzle than the
+        // pre-transaction `active`; computing here ensures the
+        // returned colors match the persisted update.
+        appliedFeedback = evaluateGuess(rawGuess, latestActive.word);
         const updatedPuzzles = latest.puzzles.map((p) => {
           if (p.index !== latestActive.index) return p;
           const guesses = (p.guesses || []).concat(rawGuess);
@@ -377,7 +405,7 @@ function createChallengesRouter(deps) {
       return res.json({
         ok: true,
         session: projected,
-        feedback
+        feedback: appliedFeedback
       });
     } catch (err) {
       return challengeError(res, err, "guess");

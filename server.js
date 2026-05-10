@@ -1616,6 +1616,18 @@ const providerImportSyncActiveRef = { value: false };
 // staged upload + queued job orphaned. The restore busy check
 // observes this ref and 409s the restore in that window.
 const providerImportEnqueueActiveRef = { value: false };
+// Counter for fire-and-forget webhook emits started from the import
+// queue's finally block. The emit() call goes through the webhook
+// store's commitQueue (disk persistence), so awaiting it would re-
+// introduce the queue stall we documented when this code was
+// awaiting. Detaching the await fixes throughput but opens a window
+// where providerImportQueueActiveRef can drop to false before the
+// delivery row is durably enqueued — a restore racing in that window
+// would roll the import back, then the late emit fires for a
+// reverted job. The restore busy-check observes this counter to
+// keep the import "busy" for as long as any emits are still
+// in-flight, closing the gap.
+const webhookEmitInFlightRef = { count: 0 };
 // Promise-barrier for restoreInProgressRef so direct writers can
 // `await` for the restore to release without busy-spinning on a
 // resolved data-lock barrier (the data lock isn't held during the
@@ -2796,9 +2808,24 @@ async function startProviderImportQueueIfNeeded() {
         // emit() persists to disk through the same commit serialization
         // path as deliveries, so awaiting it pinned the queue to disk
         // I/O (and to whichever delivery is currently being persisted).
-        // Detach via .catch on a non-awaited promise; failures still log.
+        // Detach via .catch on a non-awaited promise; failures still
+        // log. Track the in-flight emit so the restore busy-check
+        // can keep the import "busy" until the delivery is durably
+        // enqueued — without that, a restore can roll the app back
+        // before the late emit lands and the persisted delivery
+        // would describe an import the operator just reverted.
+        function emitDetached(event, payload) {
+          webhookEmitInFlightRef.count += 1;
+          webhookService.emit(event, payload)
+            .catch((emitErr) => {
+              console.error(`[webhook] emit failed for ${event}:`, emitErr);
+            })
+            .finally(() => {
+              webhookEmitInFlightRef.count -= 1;
+            });
+        }
         if (result) {
-          webhookService.emit("provider.import.completed", {
+          emitDetached("provider.import.completed", {
             jobId: job.id,
             variant: result.variant,
             commit: result.commit,
@@ -2806,17 +2833,13 @@ async function startProviderImportQueueIfNeeded() {
             filterMode: result.filterMode,
             counts: result.counts,
             artifacts: result.artifacts
-          }).catch((emitErr) => {
-            console.error("[webhook] emit failed for provider.import.completed:", emitErr);
           });
         } else if (failure) {
-          webhookService.emit("provider.import.failed", {
+          emitDetached("provider.import.failed", {
             jobId: job.id,
             variant: job.request?.variant || null,
             sourceType: job.request?.sourceType || null,
             error: failure
-          }).catch((emitErr) => {
-            console.error("[webhook] emit failed for provider.import.failed:", emitErr);
           });
         }
       }
@@ -3126,6 +3149,7 @@ app.use(
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     providerImportEnqueueActiveRef,
+    webhookEmitInFlightRef,
     dataMutationLockRef,
     restoreInProgressRef,
     directDataWriteActiveRef,
