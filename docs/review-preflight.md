@@ -88,35 +88,6 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 
 Run `npm run check` before requesting review. ESLint + Ajv schema checks + `guardrails:nits` are required and must pass locally.
 
-## PR Readiness Monitor
-
-Use the readiness monitor to enforce merge gates consistently across PRs.
-
-One-shot evaluation (exit `0` on pass, `1` on wait/fail):
-
-- `npm run pr:ready-check -- --pr <number>`
-
-Continuous watch mode (polls until pass or timeout; exit `0` pass, `2` timeout):
-
-- `npm run pr:ready-watch -- --pr <number>`
-
-Repository CI gate:
-
-- Workflow: `.github/workflows/pr-ready.yml`
-- Required branch-protection check name: `pr-ready`
-
-Default readiness gates:
-
-1. Head commit check rollup is `SUCCESS`.
-2. No unresolved actionable review threads (ignores `github-advanced-security` system threads by default).
-3. Latest CodeRabbit comment is not rate-limit related.
-
-Useful overrides:
-
-- Strict unresolved policy: `--strict-threads`
-- Custom ignored authors: `--ignore-authors github-advanced-security,some-bot`
-- Poll interval / timeout: `--interval 20 --timeout 60`
-
 ## Merged PR Learnings Log
 
 Update this table after every successful PR merge.
