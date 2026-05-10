@@ -2394,6 +2394,32 @@ lockSessionBtnEl.addEventListener("click", () => {
   if (typeof webhookDeliveriesSubscriptionEl !== "undefined" && webhookDeliveriesSubscriptionEl) {
     webhookDeliveriesSubscriptionEl.innerHTML = "";
   }
+  // Scrub the challenge-admin tab's state + DOM the same way other
+  // tabs do. Without this, locking on the Challenges tab and unlocking
+  // again would briefly render the previous (now-stale) challenge
+  // table and leaderboard contents until the next loadChallengesAdmin()
+  // fetch completes — same shared-machine PII concern as the classes
+  // tab.
+  state.challengesAdmin = [];
+  state.challengesAdminLoading = false;
+  if (typeof challengesAdminTbodyEl !== "undefined" && challengesAdminTbodyEl) {
+    challengesAdminTbodyEl.innerHTML = "";
+  }
+  if (typeof challengesAdminLbTbodyEl !== "undefined" && challengesAdminLbTbodyEl) {
+    challengesAdminLbTbodyEl.innerHTML = "";
+  }
+  if (typeof challengeAdminLeaderboardNameEl !== "undefined" && challengeAdminLeaderboardNameEl) {
+    challengeAdminLeaderboardNameEl.textContent = "";
+  }
+  if (typeof challengeAdminLeaderboardSectionEl !== "undefined" && challengeAdminLeaderboardSectionEl) {
+    challengeAdminLeaderboardSectionEl.hidden = true;
+  }
+  if (typeof challengeAdminFormEl !== "undefined" && challengeAdminFormEl) {
+    challengeAdminFormEl.reset();
+  }
+  if (typeof challengesAdminStatusEl !== "undefined" && challengesAdminStatusEl) {
+    setStatus(challengesAdminStatusEl, "", "");
+  }
   destroyAllAnalyticsCharts();
   if (analyticsCardsEl) {
     analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
@@ -3102,15 +3128,34 @@ function renderScheduleStrip(snapshot) {
   } catch (_err) {
     // best-effort; bad zone surfaces in the existing form
   }
-  const todayEntry = (snapshot.scheduled_words || []).find(
+  // The reconciler (scheduler-tick.scheduledEntryFor) picks today's
+  // entry by language: prefer the row matching word.json.lang else
+  // fall back to the first today-row by lang asc. Reproduce that
+  // selection in the strip so the operator's "Today" line matches
+  // what /daily will actually serve. With a single language this
+  // collapses to "first match by date" which is what the previous
+  // code did; with multiple langs the strip used to lie by always
+  // showing the first row regardless of which lang word.json names.
+  const todayRows = (snapshot.scheduled_words || []).filter(
     (row) => row.date === todayLocal
   );
-  setStripField(
-    "todayResolved",
-    todayEntry
-      ? `${todayLocal} → ${todayEntry.word} (${todayEntry.lang})`
-      : `${todayLocal} (no entry)`
-  );
+  let todayEntry = null;
+  if (todayRows.length > 0) {
+    const preferredLang = snapshot.current_word_lang || null;
+    todayEntry =
+      (preferredLang && todayRows.find((row) => row.lang === preferredLang))
+      || todayRows[0];
+  }
+  let todayValue;
+  if (todayEntry) {
+    const extra = todayRows.length > 1
+      ? ` · ${todayRows.length - 1} other lang${todayRows.length === 2 ? "" : "s"} scheduled`
+      : "";
+    todayValue = `${todayLocal} → ${todayEntry.word} (${todayEntry.lang})${extra}`;
+  } else {
+    todayValue = `${todayLocal} (no entry)`;
+  }
+  setStripField("todayResolved", todayValue);
   setStripField(
     "lastReconciledAt",
     snapshot.last_reconciled_at

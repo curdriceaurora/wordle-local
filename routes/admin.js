@@ -124,8 +124,10 @@ function createAdminRouter(deps) {
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
+    resolveLang,
     getLocalDateString,
     aggregateAnalytics,
+    getCurrentWordData,
     analyticsCacheTtlMs,
     analyticsTimezone,
     scheduleStore,
@@ -448,7 +450,19 @@ function createAdminRouter(deps) {
   router.get("/api/admin/schedule", async (req, res) => {
     try {
       const snapshot = await scheduleStore.getSnapshot();
-      return res.json(snapshot);
+      // Decorate with the current word.json's lang so the admin UI can
+      // disambiguate today's entry the same way scheduledEntryFor does
+      // server-side. Without this, a multi-language schedule would show
+      // the alphabetically-first row and lie about what /daily actually
+      // serves. Treat missing as null so older clients still render.
+      let currentWordLang = null;
+      if (typeof getCurrentWordData === "function") {
+        const wd = getCurrentWordData();
+        if (wd && typeof wd.lang === "string" && wd.lang) {
+          currentWordLang = wd.lang;
+        }
+      }
+      return res.json({ ...snapshot, current_word_lang: currentWordLang });
     } catch (err) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
@@ -477,6 +491,22 @@ function createAdminRouter(deps) {
 
   router.post("/api/admin/schedule/entries", async (req, res) => {
     const overwriteFlag = String(req.query.overwrite || "").toLowerCase() === "true";
+    // The schedule store only enforces LANG_PATTERN syntax; it doesn't
+    // know which langs are actually loaded into the runtime catalog.
+    // Without this guard, an admin could schedule "zz" or a disabled
+    // locale and the reconciler would write that lang to word.json,
+    // making /daily silently fall back to DEFAULT_LANG and serve the
+    // wrong dictionary. Reject before claiming the data-mutation slot
+    // so we don't waste lock time on a 400.
+    const requestedLang = req.body && req.body.lang;
+    if (requestedLang !== undefined && requestedLang !== null) {
+      if (typeof resolveLang !== "function" || !resolveLang(requestedLang)) {
+        return res.status(400).json({
+          error: `Unknown or disabled language: ${String(requestedLang)}.`,
+          code: "UNKNOWN_LANG"
+        });
+      }
+    }
     try {
       const result = await withSlot(async () => {
         return scheduleStore.addEntry(req.body || {}, { overwrite: overwriteFlag });
@@ -506,6 +536,16 @@ function createAdminRouter(deps) {
   });
 
   router.put("/api/admin/schedule/entries/:date/:lang", async (req, res) => {
+    // Same lang-allowlist guard as POST /entries: the path lang is the
+    // entry being edited, so it must resolve. We don't accept a body
+    // override that swaps to a different lang here (the store treats
+    // (date,lang) as the primary key), so we only validate the path.
+    if (typeof resolveLang !== "function" || !resolveLang(req.params.lang)) {
+      return res.status(400).json({
+        error: `Unknown or disabled language: ${String(req.params.lang)}.`,
+        code: "UNKNOWN_LANG"
+      });
+    }
     try {
       const result = await withSlot(async () => {
         return scheduleStore.updateEntry(req.params.date, req.params.lang, req.body || {});
@@ -1115,6 +1155,23 @@ function createAdminRouter(deps) {
           : err.code === "CHALLENGE_NOT_FOUND" || err.code === "SESSION_NOT_FOUND" ? 404
           : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" ? 409
           : 503;
+        // Mask STORE_* error messages: their templates include the
+        // absolute file path on disk (e.g. "Failed to read challenge
+        // config store from /var/lib/wordle/data/challenges.json: ...")
+        // which leaks deployment-internal layout to admin clients.
+        // Authoring-curated codes (INVALID_REQUEST, CHALLENGE_NOT_FOUND,
+        // CONFIG_LOCKED, DUPLICATE_ID, SESSION_NOT_FOUND) describe the
+        // request, not server filesystem state, so they pass through.
+        const isStoreError = err.code === "STORE_READ_FAILED"
+          || err.code === "STORE_WRITE_FAILED"
+          || err.code === "STORE_PARSE_FAILED";
+        if (isStoreError) {
+          console.error(`[challenge:admin] ${context} ${err.code}:`, err);
+          return res.status(status).json({
+            error: "Challenge admin store unavailable. Try again later.",
+            code: err.code
+          });
+        }
         return res.status(status).json({ error: err.message, code: err.code });
       }
       console.error(`[challenge:admin] ${context} failed:`, err);
@@ -1189,9 +1246,19 @@ function createAdminRouter(deps) {
       try {
         const body = req.body || {};
         enforceEnvCaps(body);
-        const sessions = await challengeResultsStore.getSnapshot();
-        const hasResults = sessions.sessions.some((s) => s.challengeId === req.params.id);
+        // Move the hasResults check INSIDE the slot. Reading sessions
+        // outside the slot lets a /api/challenges/:id/start invocation
+        // race in between this read and the config update — it could
+        // create the first session for the challenge during that
+        // window. The update() then sees hasResults=false (the snapshot
+        // value) and performs an immutable-fields edit that the store
+        // contract forbids once any session exists. Locking the
+        // observation under the same slot the mutation uses closes
+        // that TOCTOU (createSession also runs under withSlot, so they
+        // serialize against each other through the slot).
         const updated = await withSlot(async () => {
+          const sessions = await challengeResultsStore.getSnapshot();
+          const hasResults = sessions.sessions.some((s) => s.challengeId === req.params.id);
           return challengeConfigStore.update(req.params.id, body, { hasResults });
         });
         webhookAudit("challenge.update", {

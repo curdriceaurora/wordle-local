@@ -326,9 +326,13 @@ const ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT = clampEnvBounded(
 );
 
 // Web Push notifications. Disabled at the runtime level via the
-// notifications.enabled config flag (operator-controlled at runtime
-// via the admin Notifications tab). The PUSH_NOTIFICATIONS_ENABLED env
-// var only seeds the default config on first boot.
+// notifications.enabled config flag, set through `PUT
+// /api/admin/runtime-config` (admin Runtime Settings tab) — NOT via
+// the admin Notifications tab, which today only shows status,
+// subscriber count, and the "Send broadcast" / dry-run controls. The
+// PUSH_NOTIFICATIONS_ENABLED env var only seeds the default config on
+// first boot; once a runtime override has been written, the override
+// wins until explicitly cleared. See docs/notifications.md.
 const ENV_PUSH_NOTIFICATIONS_ENABLED_DEFAULT =
   String(process.env.PUSH_NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
 const ENV_PUSH_DAILY_FIRE_LOCAL_TIME_DEFAULT = (() => {
@@ -2786,29 +2790,34 @@ async function startProviderImportQueueIfNeeded() {
         await adminJobsStore.markFailed(job.id, failure);
       } finally {
         await cleanupManualUploadStaging(job.request?.manualUpload).catch(() => {});
-        // Best-effort emit. Failures here are logged but never block the
-        // queue — the job's persisted status is the source of truth.
-        try {
-          if (result) {
-            await webhookService.emit("provider.import.completed", {
-              jobId: job.id,
-              variant: result.variant,
-              commit: result.commit,
-              sourceType: result.sourceType,
-              filterMode: result.filterMode,
-              counts: result.counts,
-              artifacts: result.artifacts
-            });
-          } else if (failure) {
-            await webhookService.emit("provider.import.failed", {
-              jobId: job.id,
-              variant: job.request?.variant || null,
-              sourceType: job.request?.sourceType || null,
-              error: failure
-            });
-          }
-        } catch (emitErr) {
-          console.error("[webhook] emit failed for provider import:", emitErr);
+        // True fire-and-forget emit so a slow/contended commitQueue can't
+        // block the next job in the import queue. Earlier code awaited
+        // emit() but the comment claimed "never block the queue" —
+        // emit() persists to disk through the same commit serialization
+        // path as deliveries, so awaiting it pinned the queue to disk
+        // I/O (and to whichever delivery is currently being persisted).
+        // Detach via .catch on a non-awaited promise; failures still log.
+        if (result) {
+          webhookService.emit("provider.import.completed", {
+            jobId: job.id,
+            variant: result.variant,
+            commit: result.commit,
+            sourceType: result.sourceType,
+            filterMode: result.filterMode,
+            counts: result.counts,
+            artifacts: result.artifacts
+          }).catch((emitErr) => {
+            console.error("[webhook] emit failed for provider.import.completed:", emitErr);
+          });
+        } else if (failure) {
+          webhookService.emit("provider.import.failed", {
+            jobId: job.id,
+            variant: job.request?.variant || null,
+            sourceType: job.request?.sourceType || null,
+            error: failure
+          }).catch((emitErr) => {
+            console.error("[webhook] emit failed for provider.import.failed:", emitErr);
+          });
         }
       }
     }
@@ -3194,8 +3203,10 @@ app.use(
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
+    resolveLang,
     getLocalDateString,
     aggregateAnalytics,
+    getCurrentWordData: () => wordDataCache || null,
     analyticsCacheTtlMs: ENV_ANALYTICS_CACHE_TTL_MS,
     analyticsTimezone: ENV_ANALYTICS_TIMEZONE,
     scheduleStore,

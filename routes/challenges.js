@@ -54,7 +54,7 @@ function createChallengesRouter(deps) {
     if (err instanceof ChallengeConfigStoreError || err instanceof ChallengeResultsStoreError) {
       const status = err.code === "INVALID_REQUEST" ? 400
         : err.code === "CHALLENGE_NOT_FOUND" || err.code === "SESSION_NOT_FOUND" ? 404
-        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" ? 409
+        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" || err.code === "SESSION_COMPLETE" ? 409
         : 503;
       return res.status(status).json({ error: err.message, code: err.code });
     }
@@ -211,7 +211,14 @@ function createChallengesRouter(deps) {
         }
         throw err;
       }
-      const created = await challengeResultsStore.createSession({
+      // createSession returns `{ session, resumed }` because it
+      // re-checks the in-flight invariant atomically inside its
+      // commit. A racing concurrent /start for the same (challengeId,
+      // profileId) gets the existing in-flight session back as a
+      // resume rather than creating a duplicate — matches what
+      // findInFlight above would have caught if the timing had been
+      // serial.
+      const { session: created, resumed: createdResumed } = await challengeResultsStore.createSession({
         challengeId: challenge.id,
         profileId: profile.profileId,
         profileName: profile.profileName,
@@ -219,7 +226,11 @@ function createChallengesRouter(deps) {
         puzzles
       });
       const projected = projectForResponse(created, challenge, now);
-      return res.status(201).json({ ok: true, session: projected, resumed: false });
+      return res.status(createdResumed ? 200 : 201).json({
+        ok: true,
+        session: projected,
+        resumed: createdResumed
+      });
     } catch (err) {
       return challengeError(res, err, "start");
     }
@@ -306,45 +317,60 @@ function createChallengesRouter(deps) {
         });
       }
       const feedback = evaluateGuess(rawGuess, active.word);
-      const updatedPuzzles = session.puzzles.map((p) => {
-        if (p.index !== active.index) return p;
-        const guesses = (p.guesses || []).concat(rawGuess);
-        const solved = rawGuess === p.word;
-        return {
-          ...p,
-          guesses,
-          solved
-        };
-      });
-      let nextStatus = session.status;
-      // Auto-complete if every puzzle is solved or exhausted (last
-      // guess was either the answer or the maxGuesses-th attempt).
-      const allDone = updatedPuzzles.every(
-        (p) => p.solved || (p.guesses?.length || 0) >= challenge.maxGuesses
-      );
-      let scoreFinal;
-      let elapsedFinal;
-      if (allDone) {
-        const now = new Date();
-        elapsedFinal = Math.max(
-          0,
-          Math.floor((now.getTime() - Date.parse(session.startedAt)) / 1000)
+      // Mutate atomically inside the store's commit lock. The earlier
+      // version computed updatedPuzzles outside the commit and then
+      // sent the whole array as a patch — two concurrent /guess
+      // requests would both compute from the same stale snapshot and
+      // the second commit's puzzles array would overwrite the first
+      // guess. Reading the latest session inside the mutator (via
+      // transactionalUpdate) closes that race.
+      const updated = await challengeResultsStore.transactionalUpdate(session.id, (latest) => {
+        // Re-derive the active puzzle from the LATEST persisted state.
+        // This handles the case where another /guess has already
+        // landed: we'll see its updated puzzle, find the new active
+        // puzzle (or none), and append our guess to that one. The
+        // length check above used `active.word.length`, which is
+        // immutable for a given puzzle index, so the request body's
+        // length validation still holds for the latest active puzzle.
+        const latestActive = latest.puzzles.find(
+          (p) => !p.solved && (p.guesses?.length || 0) < challenge.maxGuesses
         );
-        elapsedFinal = Math.min(elapsedFinal, challenge.timeBudgetSeconds);
-        scoreFinal = challengeEngine.computeScore({
-          challenge,
-          puzzles: updatedPuzzles,
-          elapsedSeconds: elapsedFinal
+        if (!latestActive) {
+          throw new ChallengeResultsStoreError(
+            "SESSION_COMPLETE",
+            "All puzzles in this session are complete."
+          );
+        }
+        const updatedPuzzles = latest.puzzles.map((p) => {
+          if (p.index !== latestActive.index) return p;
+          const guesses = (p.guesses || []).concat(rawGuess);
+          const solved = rawGuess === p.word;
+          return { ...p, guesses, solved };
         });
-        nextStatus = "completed";
-      }
-      const patch = { puzzles: updatedPuzzles, status: nextStatus };
-      if (allDone) {
-        patch.finishedAt = new Date().toISOString();
-        patch.elapsedSeconds = elapsedFinal;
-        patch.score = scoreFinal;
-      }
-      const updated = await challengeResultsStore.update(session.id, patch);
+        const merged = { ...latest, puzzles: updatedPuzzles };
+        const allDone = updatedPuzzles.every(
+          (p) => p.solved || (p.guesses?.length || 0) >= challenge.maxGuesses
+        );
+        if (allDone) {
+          const now = new Date();
+          let elapsedFinal = Math.max(
+            0,
+            Math.floor((now.getTime() - Date.parse(latest.startedAt)) / 1000)
+          );
+          elapsedFinal = Math.min(elapsedFinal, challenge.timeBudgetSeconds);
+          merged.finishedAt = now.toISOString();
+          merged.elapsedSeconds = elapsedFinal;
+          merged.score = challengeEngine.computeScore({
+            challenge,
+            puzzles: updatedPuzzles,
+            elapsedSeconds: elapsedFinal
+          });
+          merged.status = "completed";
+        } else {
+          merged.status = latest.status;
+        }
+        return merged;
+      });
       const projected = projectForResponse(updated, challenge);
       // Submit score to the leaderboard projection on completion.
       // Surface the per-guess feedback row that the client renders.

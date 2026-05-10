@@ -84,10 +84,26 @@ sequence (or coordinate across deployments).
 `data/word.json.lastScheduledFor = today` whenever it persists a word;
 manual writes don't set that field. The next reconcile sees:
 
-- `word.json.date === today` AND `lastScheduledFor !== today` → manual
-  override is fresh; **leave it alone** for the rest of the local day.
-- `word.json.date < today` (or any other state) → fair game; write the
-  scheduled or auto-rotated word.
+- `word.json.date === serverToday` AND `lastScheduledFor !== todayLocal`
+  → manual override is fresh; **leave it alone** for the rest of the
+  local day. ("serverToday" is the server's local date — `getLocalDateString(now)`,
+  not the schedule's timezone.)
+- `word.json.date === null` or omitted entirely → still treated as a
+  fresh manual override and left alone, expiring at the next
+  server-local midnight. The expiry boundary is computed from the
+  server's own clock, NOT from `updatedAt` or the schedule's timezone,
+  so an operator POSTing without `date` shouldn't be surprised that the
+  override expires sooner than expected if the server's TZ differs from
+  the schedule's. Recommend setting `date: serverToday` in manual
+  writes for explicit clarity.
+- `word.json.date < serverToday` (or any other state) → fair game; write
+  the scheduled or auto-rotated word.
+
+The scheduler is NOT timezone-aware in the override-freshness check —
+it always uses the server's own `getLocalDateString(now)`. The
+schedule's `timezone` only affects which row is picked from
+`scheduled_words`, not whether a manual override is still considered
+fresh.
 
 ## Timezone alignment
 

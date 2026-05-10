@@ -461,6 +461,80 @@ describe("validateArchive rejection cases", () => {
       code: "ARCHIVE_TOO_LARGE"
     });
   });
+
+  test("ACCEPTS archive missing backwards-compatible files (e.g. schedule.json)", async () => {
+    // Pre-scheduler archives don't declare data/schedule.json (or any of
+    // the other features added after the initial backup spec shipped).
+    // The MANIFEST_INCOMPLETE check must skip these "added later" files
+    // so old archives stay restorable; otherwise every prior backup
+    // becomes non-restorable the moment a new feature lands. This is
+    // the canary regression test for the backwards-compat allowlist.
+    const projectRoot = await tempProject();
+    const { archivePath } = await exportArchiveToFile(projectRoot);
+    const yauzl = require("yauzl");
+    const archiver = require("archiver");
+    const tamperedPath = `${archivePath}.bc`;
+    const entries = await new Promise((resolve, reject) => {
+      yauzl.open(archivePath, { lazyEntries: true, autoClose: false }, (err, zip) => {
+        if (err) return reject(err);
+        const out = [];
+        zip.on("entry", (entry) => {
+          zip.openReadStream(entry, (e, rs) => {
+            if (e) return reject(e);
+            const chunks = [];
+            rs.on("data", (c) => chunks.push(c));
+            rs.on("end", () => {
+              out.push({ name: entry.fileName, buf: Buffer.concat(chunks) });
+              zip.readEntry();
+            });
+            rs.on("error", reject);
+          });
+        });
+        zip.on("end", () => {
+          zip.close();
+          resolve(out);
+        });
+        zip.readEntry();
+      });
+    });
+    // Drop schedule.json + other backwards-compat files from the
+    // manifest AND from the archive itself. We keep the required-only
+    // set (leaderboard, languages, admin-jobs, app-config, classes,
+    // word) so the manifest-incomplete branch fires only for the
+    // backwards-compat files. After our fix that branch should pass.
+    const archive = archiver("zip");
+    const out = fs.createWriteStream(tamperedPath);
+    archive.pipe(out);
+    const BACKWARDS_COMPAT = new Set([
+      "data/schedule.json",
+      "data/webhooks.json",
+      "data/webhook-deliveries.json",
+      "data/push-subscriptions.json",
+      "data/challenges.json",
+      "data/challenge-results.json"
+    ]);
+    for (const entry of entries) {
+      if (entry.name === "manifest.json") {
+        const manifest = JSON.parse(entry.buf.toString("utf8"));
+        manifest.files = manifest.files.filter((f) => !BACKWARDS_COMPAT.has(f.path));
+        archive.append(`${JSON.stringify(manifest, null, 2)}\n`, { name: "manifest.json" });
+      } else if (BACKWARDS_COMPAT.has(entry.name)) {
+        // skip — emulating an older archive that never had these
+      } else {
+        archive.append(entry.buf, { name: entry.name });
+      }
+    }
+    await archive.finalize();
+    await new Promise((resolve) => out.on("close", resolve));
+
+    const result = await validateArchive(tamperedPath, { projectRoot });
+    expect(result.manifest.manifestVersion).toBeDefined();
+    // Sanity: manifest doesn't declare any of the backwards-compat files.
+    const declared = new Set(result.manifest.files.map((f) => f.path));
+    for (const compatPath of BACKWARDS_COMPAT) {
+      expect(declared.has(compatPath)).toBe(false);
+    }
+  });
 });
 
 describe("validateArchive security guards", () => {
