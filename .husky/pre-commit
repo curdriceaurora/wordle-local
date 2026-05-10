@@ -4,33 +4,40 @@ set -eu
 npm run guardrails:nits
 
 # Lint only the staged markdown files, against the *staged* content
-# (not whatever happens to be in the working tree). Two concerns this
-# block addresses, both flagged by reviewers on PR #107:
+# (not whatever happens to be in the working tree). Three reviewer
+# concerns this block addresses (PR #107 rounds 3-4):
 #
-#  1. Path safety. Filenames containing spaces, newlines, or a leading
-#     `-` would be split or interpreted as flags by an unquoted shell
-#     expansion or a newline-delimited xargs. Use null-delimited paths
-#     end-to-end (`git diff -z`, `grep -z`, `xargs -0`) so any UTF-8
-#     filename round-trips intact.
+#  1. Path safety. Filenames with spaces or leading `-` would be
+#     split or interpreted as flags by an unquoted shell expansion.
+#     We build a properly-quoted argument list with `set --`, and
+#     pass `--` to markdownlint so a leading-dash filename isn't
+#     parsed as an option.
+#  2. Staged ≠ worktree. A partially-staged commit (some hunks
+#     staged, others not) was linting changes that weren't being
+#     committed and missing ones that were. Stash unstaged +
+#     untracked work for the lint window so the worktree mirrors
+#     the index.
+#  3. Cross-platform. The earlier draft used `grep -z`, `xargs -0`,
+#     and `xargs -r` — all GNU-specific and unavailable on macOS's
+#     default BSD userland. The pure-`sh` `set --` loop below is
+#     portable.
 #
-#  2. Staged ≠ worktree. Without stashing, markdownlint reads the
-#     working-tree version of each path. A partially-staged commit
-#     (some hunks staged, others not) could lint changes that aren't
-#     being committed and miss ones that are. Stash unstaged + untracked
-#     work for the lint window so the worktree mirrors the index, then
-#     pop it back.
+# Caveat: filenames containing literal newlines aren't handled (we
+# read paths line-by-line). Documenting rather than coding around
+# it because no path in this repo is permitted to contain a newline
+# (would break too many other tools first).
 #
-# Skip silently when no markdown is staged.
+# `--diff-filter=ACMR` includes renames (R) so a renamed-and-modified
+# .md still gets linted; `D` (deletes) is correctly excluded.
 
-STAGED_MD_COUNT=$(git diff --cached --name-only -z --diff-filter=ACM | tr '\0' '\n' | grep -cE '\.md$' || true)
-if [ "$STAGED_MD_COUNT" -eq 0 ]; then
+STAGED_MD="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.md$' || true)"
+if [ -z "$STAGED_MD" ]; then
   exit 0
 fi
 
-# Detect anything worth stashing: unstaged tracked changes OR untracked
-# files. We need both — `git stash --include-untracked` covers the
-# latter. If neither is present, skip the stash dance entirely (saves
-# ~100ms on the common case of `git commit -a`).
+# Detect anything worth stashing: unstaged tracked changes OR
+# untracked files. If neither is present, the worktree already
+# matches the index — skip the stash dance entirely.
 NEEDS_STASH=""
 if ! git diff --quiet; then
   NEEDS_STASH=1
@@ -43,11 +50,17 @@ if [ -n "$NEEDS_STASH" ]; then
   git stash push --keep-index --include-untracked --quiet --message "pre-commit-md-lint"
 fi
 
+# Build a properly-quoted argument list. `set --` resets positional
+# params; the `while read` loop appends each non-empty line.
+set --
+while IFS= read -r path; do
+  [ -n "$path" ] && set -- "$@" "$path"
+done <<HEREDOC
+$STAGED_MD
+HEREDOC
+
 LINT_STATUS=0
-git diff --cached --name-only -z --diff-filter=ACM \
-  | grep -zE '\.md$' \
-  | xargs -0 -r npx --no-install markdownlint-cli2 \
-  || LINT_STATUS=$?
+npx --no-install markdownlint-cli2 -- "$@" || LINT_STATUS=$?
 
 if [ -n "$NEEDS_STASH" ]; then
   # Restore the operator's working state. If pop conflicts (rare —
