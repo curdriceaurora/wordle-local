@@ -50,15 +50,15 @@ Open `http://localhost:3000`.
 
 ### 3. (Optional) Set a daily word
 
-If you want everyone using your install to play the same word at `/daily`:
+To make everyone using your install play the same word at `/daily`:
+
+> **Docker / `--env-file` users**, read this first: those paths inherit `REQUIRE_ADMIN_KEY=true` from `.env.example`, so the curl below will 401 unless you add `-H 'x-admin-key: YOUR_ADMIN_KEY'` (use `change-me` if you haven't edited `.env`). See [Locking it down](#locking-it-down) for the full picture. The default `npm start` runs open and the curl works as-is.
 
 ```bash
 curl -X POST http://localhost:3000/api/word \
   -H 'Content-Type: application/json' \
   -d '{"word":"CRANE","lang":"en"}'
 ```
-
-If you locked the server down — including the Docker path above, which loads `.env` and so honors the `REQUIRE_ADMIN_KEY=true` default in `.env.example` — add `-H 'x-admin-key: YOUR_ADMIN_KEY'` to the request. Details: [Locking it down](#locking-it-down).
 
 Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
 
@@ -101,7 +101,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 
 By default, `npm start` runs **open** — `node server.js` doesn't load `.env`, `ADMIN_KEY` is empty, and the admin gate falls through. Fine for a local game on `localhost`; not fine if you're exposing the server beyond your machine.
 
-Set the key **before** starting the server. `server.js` reads `ADMIN_KEY` and `REQUIRE_ADMIN_KEY` once at boot, and both `docker compose`'s `env_file` and Node's `--env-file` flag are evaluated at process startup — editing `.env` after launch leaves the running process using whatever values were in place when it started (notably the `change-me` placeholder from `.env.example`). If you need to rotate the key on a running server, edit `.env` then restart.
+Set the key **before** starting the server. `server.js` reads `ADMIN_KEY` and `REQUIRE_ADMIN_KEY` once at boot, and both `docker compose`'s `env_file` and Node's `--env-file` flag are evaluated at process startup — editing `.env` after launch leaves the running process using whatever values were in place when it started (notably the `change-me` placeholder from `.env.example`). To rotate on a running server: edit `.env`, then **restart for `--env-file`** (`Ctrl+C` and re-run the `node` command), or **recreate for Docker Compose** (`docker compose up --build` after `down`, or `docker compose up --build --force-recreate` — `docker restart` alone keeps the existing env vars because Compose bakes them into the container at creation time).
 
 ```bash
 cp .env.example .env
@@ -240,7 +240,7 @@ Daily word endpoints remain available:
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
 - Daily link says no puzzle set: set one via `POST /api/word` (Quick Start step 3). If you locked the server down, pass `x-admin-key` — see [Locking it down](#locking-it-down).
 - Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
-- `/challenges` link is missing from the header: no challenges are configured. The admin Challenges tab can create one.
+- `/challenges` link is missing from the header: either no challenges are configured (the admin Challenges tab can create one), **or** challenge mode is disabled at the deploy level (`CHALLENGE_MODE_ENABLED=false` in the environment, which makes `/api/challenges` return `CHALLENGE_MODE_DISABLED` and the client hides the link).
 - Notifications toggle is hidden: page is loaded over plain HTTP, or the browser lacks `PushManager` / Service Worker. Use HTTPS (or `localhost`) and a modern browser.
 - Notifications toggle is disabled with "Notifications blocked": browser permission was denied. Open browser site permissions, allow notifications, then reload.
 - Webhook deliveries are stuck `queued`: confirm `WEBHOOKS_ENABLED=true` and that no other admin operation is holding the data lock; recovery on boot also requeues stale `running` rows.
