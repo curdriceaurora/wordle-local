@@ -2,60 +2,110 @@
 
 Local, privacy-first Wordle you can run anywhere.
 
-For families, classrooms, and friend groups who want a simple, self-hosted Wordle.
+For families, classrooms, and friend groups who want a simple, self-hosted Wordle — with daily words, classroom rosters, timed challenges, opt-in notifications, and UI in English or Spanish.
 
 ## How To Use
 1. Open the site in your browser.
-2. Create a puzzle.
+2. Create a puzzle, play the daily word, or join a timed challenge.
 3. Share the link.
 4. Play it together.
 
-Want a daily puzzle? Visit `/daily` after you’ve set one (see below).
+Want a daily puzzle? Visit `/daily` after you've set one (see below).
+Want timed multi-puzzle runs? Visit `/challenges` after the admin enables one.
 
-## Quickstart (Local)
-Download this repo (or clone it), then run:
+## Quick Start
+
+A two-minute walkthrough from `git clone` to playing your first puzzle. **No admin setup required** — everything below works against an out-of-the-box install.
+
+### 1. Install and run
+
+Node 18+ (local):
 
 ```bash
 npm install
 cp .env.example .env
 npm start
 ```
-Open `http://localhost:3000`.
 
-## Quickstart (Docker)
-If you don’t use Docker, skip this section.
+…or Docker:
 
-```bash
-docker build -t local-hosted-wordle .
-docker run --rm -p 3000:3000 --env-file .env local-hosted-wordle
-```
-Or with Compose:
 ```bash
 docker compose up --build
 ```
 
-## Advanced Settings (Optional)
-If you want admin controls or are hosting behind a VPN/proxy, see `advanced-settings.md`.
+Open `http://localhost:3000`.
 
-## Create & Share
-- Create a puzzle on the Create screen.
-- Share links are encoded for convenience, not security.
+### 2. Create and share a puzzle
+
+1. On the home page, type a word into **Word** (3–12 letters, A–Z), or click **Random word**.
+2. Optional: tweak **Length** or **Guesses**. The form auto-syncs `Length` to your word.
+3. Click **Start puzzle**. The play screen shows a **Share link** at the bottom.
+4. Copy the link and send it. Anyone who opens it plays the same word — no login required.
+
+> Share links encode the word for convenience, not security. Don't share links to puzzles you don't want decoded.
+
+### 3. (Optional) Set a daily word
+
+If you want everyone on the host to play the same word at `/daily`:
+
+```bash
+curl -X POST http://localhost:3000/api/word \
+  -H 'Content-Type: application/json' \
+  -d '{"word":"CRANE","lang":"en"}'
+```
+
+Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
+
+### 4. (Optional) Switch the UI language
+
+The header has a language switcher (English, Spanish). Selection persists in the browser.
+
+### What next?
+
+- **More player features** — timed challenges, notifications, classroom rosters: see [Highlights](#highlights).
+- **Operator controls** — provider imports, scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
+- **Hosting beyond defaults** — env vars, proxies, Tailscale: see [`advanced-settings.md`](advanced-settings.md).
+
+## Highlights
+- **Custom puzzles**: create-and-share links, no login.
+- **Daily word** with optional admin-managed schedule + auto-rotate from the active answer pool.
+- **Timed challenges** — solve N puzzles inside a server-authoritative time budget; per-challenge leaderboard.
+- **Classroom mode** — admin manages classes, rosters, and CSV reports (`docs/classroom-mode.md`).
+- **Opt-in browser push notifications** when the daily puzzle is ready (`docs/notifications.md`).
+- **Outbound webhooks** with HMAC-signed deliveries, retry queue, and recovery on boot (`docs/webhooks.md`).
+- **Backup / restore** — versioned, schema-checked archives applied atomically (`docs/backup-restore.md`).
+- **Usage analytics** — admin dashboard with offline charting (`docs/admin-analytics.md`).
+- **UI internationalization** — English + Spanish at strict per-key parity, switchable from the header (`docs/i18n.md`).
+
+## Other Goodies (Optional)
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 - Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
+- Hosting behind a proxy or running with admin features? See [`advanced-settings.md`](advanced-settings.md).
 
 ## Admin Console
-- Visit `/admin` for the provider admin shell.
+- Visit `/admin` for the operator console.
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
-- Provider workflows are built in:
-  - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback
-  - async import queue with persisted job history under `data/admin-jobs.json`
-  - check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`)
-  - enable/disable imported variants without CLI usage
-- Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
 - Admin platform architecture contracts (schemas, config precedence, queue semantics): `docs/admin-platform-architecture-contract.md`.
-- Runtime settings tab edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
-- Data tab: download a versioned, schema-checked backup archive and restore it atomically. Operator runbook: `docs/backup-restore.md`.
-- Schedule tab: queue words against specific dates or turn on auto-rotate from the active answer pool; the runtime owns `data/word.json` from then on. Operator runbook: `docs/scheduler.md`.
+
+### Provider workflows
+- import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback.
+- async import queue with persisted job history under `data/admin-jobs.json`.
+- check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`).
+- enable/disable imported variants without CLI usage.
+- Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
+
+### Tabs
+- **Providers** — provider/dictionary lifecycle (above).
+- **Import Queue** — live status of async import jobs.
+- **Runtime Settings** — edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
+- **Profiles** — leaderboard profile management.
+- **Classes** — classroom rosters, bulk-add by names/CSV, participation reports (`docs/classroom-mode.md`).
+- **Data** — download a versioned, schema-checked backup archive and restore it atomically (`docs/backup-restore.md`).
+- **Analytics** — usage dashboard (active days, attempts distribution, language mix, hour-of-day) with offline-friendly charting (`docs/admin-analytics.md`).
+- **Schedule** — queue words against specific dates or turn on auto-rotate from the active answer pool; the runtime owns `data/word.json` from then on (`docs/scheduler.md`).
+- **Webhooks** — manage outbound subscriptions with per-event filters; view recent deliveries with status/attempts/latency. Deliveries are HMAC-signed, retried with exponential backoff, and recovered on boot (`docs/webhooks.md`).
+- **Notifications** — VAPID status, subscriber count, manual broadcast (with dry-run preview) for the daily puzzle (`docs/notifications.md`).
+- **Challenges** — define timed challenges (puzzle count, word length, time budget, max guesses, replay policy, scoring) and inspect per-challenge leaderboards (`docs/challenge-mode.md`).
 
 ## Daily Word (API)
 Daily word endpoints remain available:
@@ -99,6 +149,28 @@ Daily word endpoints remain available:
 - Rollout and cutover notes: `docs/server-leaderboard-rollout.md`
 - Data contract details: `docs/leaderboard-data-contract.md`
 
+## Timed Challenges
+- Visit `/challenges` to see the active list (the link is hidden until at least one challenge is configured).
+- Each challenge defines a fixed puzzle count, word length, time budget, max guesses per puzzle, and a replay policy (`unlimited`, `best`, or `first-only`).
+- The timer is **server-authoritative** — switching tabs, sleeping the device, or reloading does not pause the budget. The server settles a session if it expires before the player finishes.
+- Server-side per-letter feedback is computed on each guess; the client only renders, never decides.
+- Per-challenge leaderboards rank by score → fewer elapsed seconds → earlier finish.
+- Profile name is stored on this device (no login); used on the leaderboard.
+- Operator-facing details + replay policy mechanics: `docs/challenge-mode.md`.
+
+## Daily Puzzle Notifications
+- Optional opt-in browser push for the daily puzzle. Toggle in the header settings strip — the toggle is hidden if your browser doesn't support `PushManager` / Service Worker, or if the page is loaded over plain HTTP (notifications need HTTPS or `localhost`).
+- The daily fire is server-scheduled at the operator's configured local time (default `00:00`).
+- Subscriptions are pruned on `404`/`410` from the push service so dead endpoints don't accumulate.
+- VAPID keypair lives in `data/vapid-keys.json` (auto-generated on first boot, persisted thereafter).
+- Operator runbook: `docs/notifications.md`.
+
+## UI Languages
+- The header has a language switcher (English, Spanish). Selection persists per device.
+- Both the player and admin shells are translated; `npm run i18n:check` enforces strict per-key parity between locales in CI.
+- HTTP error JSON is also localized for the small set of routes wired through `lib/server-i18n.js` (`Accept-Language` aware).
+- Adding a new locale: drop a JSON file under `public/locales/` and update the small list of allowlists documented in `docs/i18n.md`.
+
 ## Security Notes
 - Rate limiting is enabled by default.
 - `TRUST_PROXY=true` is recommended behind proxies or Tailscale (`TRUST_PROXY_HOPS` defaults to `1`).
@@ -108,17 +180,21 @@ Daily word endpoints remain available:
 ## Troubleshooting
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
 - Daily link says no puzzle set: set one via `POST /api/word`.
-- Share link doesn’t work: make sure the link wasn’t truncated and is from the Create screen.
+- Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
+- `/challenges` link is missing from the header: no challenges are configured. The admin Challenges tab can create one.
+- Notifications toggle is hidden: page is loaded over plain HTTP, or the browser lacks `PushManager` / Service Worker. Use HTTPS (or `localhost`) and a modern browser.
+- Notifications toggle is disabled with "Notifications blocked": browser permission was denied. Open browser site permissions, allow notifications, then reload.
+- Webhook deliveries are stuck `queued`: confirm `WEBHOOKS_ENABLED=true` and that no other admin operation is holding the data lock; recovery on boot also requeues stale `running` rows.
+- UI keeps reverting to English: the language switcher writes to `localStorage`. Clearing browser storage clears the preference too.
 
-## Roadmap (Exploratory)
-We are evaluating exploratory tracks that are intentionally outside the current core scope:
-- Admin Platform expansion (Admin UI, dictionary lifecycle management, and selected runtime settings controls): https://github.com/curdriceaurora/wordle-local/issues/6
-- LibreOffice English variant sourcing (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via Admin import flows, with Hunspell-based guess handling and curated answer policy: https://github.com/curdriceaurora/wordle-local/issues/17
+## Roadmap
 
-This second track is planned after foundational Admin Platform work in #6.
+The two original exploratory tracks shipped:
 
-Whether it ships next will depend on adoption signals and community feedback.
-Current priority remains a stable, simple local-hosted gameplay experience.
+- **Admin Platform expansion** ([#6](https://github.com/curdriceaurora/wordle-local/issues/6), closed) — Admin UI, runtime settings, classes, scheduler, analytics, backup/restore, webhooks, notifications, challenges.
+- **LibreOffice English variants** ([#17](https://github.com/curdriceaurora/wordle-local/issues/17), closed) — `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA` via admin import flows, Hunspell-based guess handling, curated answer policy.
+
+Current priorities remain stability, low operational overhead, and a simple local-hosted gameplay experience. Contributions for additional UI locales (drop a JSON file under `public/locales/` per `docs/i18n.md`) and additional language variants are welcome.
 
 ## License
 CC0-1.0 public domain dedication. See `LICENSE`.
