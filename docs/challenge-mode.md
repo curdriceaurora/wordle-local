@@ -8,17 +8,22 @@ cheating; scoring is deterministic and replayable.
 
 1. Player navigates to **Challenges** in the header (or the
    `/challenges` URL).
+
 2. Picks a profile name (stored in `localStorage`) and clicks **Start**
    on a challenge.
+
 3. The server builds the puzzle set (all words chosen server-side, never
    sent to the client until each puzzle is solved or runs out of
    guesses) and returns a `sessionId` plus the first puzzle's *length*.
+
 4. Player guesses one puzzle at a time. Each guess returns
    per-letter feedback and, on solve/exhaust, advances to the next
    puzzle.
+
 5. Session ends when all puzzles are solved/exhausted, when the time
    budget runs out (server-authoritative), or when the player clicks
    **Quit**.
+
 6. Score = `sum(perPuzzleScore for solved puzzles) + max(0, timeBudgetSeconds - elapsedSeconds) * speedBonusFactor`,
    floored to integer.
 
@@ -30,6 +35,7 @@ The admin **Challenges** tab supports:
   recorded against a challenge, scoring/timing/replay parameters are
   frozen — the operator must soft-delete and create a new challenge.
   This keeps the leaderboard from comparing different formulas.
+
 - **Soft-delete** preserves historical leaderboard data.
 - **Per-challenge leaderboard** view.
 
@@ -48,6 +54,7 @@ The admin **Challenges** tab supports:
 
 ```text
 score = sum(perPuzzleScore for each solved puzzle)
+
       + max(0, timeBudgetSeconds - elapsedSeconds) * speedBonusFactor
 ```
 
@@ -61,8 +68,10 @@ score = sum(perPuzzleScore for each solved puzzle)
 - Words for unsolved puzzles are NEVER in the network response. The
   player gets `length` (so the keyboard knows how many tiles to draw)
   but no answer text.
+
 - Timeouts settle on the server's `Date.now()` against the persisted
   `startedAt`; tab-backgrounding on the client can't pause the budget.
+
 - Wrong-length guesses are rejected without consuming a try.
 - Non-dictionary guesses are rejected (when the guess dictionary for
   the language is loaded). The guess dictionary is the broader

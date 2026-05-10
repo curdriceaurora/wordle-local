@@ -11,6 +11,7 @@ runs in two places:
 
 1. **Boot**: a single reconcile pass before the HTTP server starts taking
    traffic, so the first `GET /api/word` and `/daily` see the right word.
+
 2. **Tick**: `setInterval` (default 60s, configurable via
    `SCHEDULER_CHECK_INTERVAL_MS`) re-runs reconcile so a long-running
    process crosses local midnight without operator intervention.
@@ -22,7 +23,7 @@ and the resulting `data/word.json` is byte-equal (modulo `updatedAt`).
 
 ## Data flow
 
-```
+```text
                   +----------------------+
                   |  data/schedule.json  |  (operator edits via Schedule tab)
                   +----------+-----------+
@@ -66,9 +67,11 @@ returns one of:
 
 - `noop` — schedule has no entry for today, auto-rotate is off, or
   word.json already matches.
+
 - `skip-manual-override` — word.json's `date` matches today but
   `lastScheduledFor !== today`, meaning a manual write happened after our
   last scheduler write.
+
 - `write-scheduled` — there's an entry for today; write it.
 - `auto-rotate` — no entry for today, auto-rotate is on; pick a word
   deterministically from the active language's answer pool and write it.
@@ -94,6 +97,7 @@ When the reconciler runs, it sees one of:
 - `lastScheduledFor` absent (manual override path) AND the override is
   fresh (see "fresh enough to honour" rules below) → **leave it alone**
   for the rest of the local day.
+
 - `lastScheduledFor` absent AND the override is stale → fair game.
 - `lastScheduledFor` present (scheduler-owned write) → fair game; the
   reconciler may overwrite with the day's scheduled or auto-rotated
@@ -103,6 +107,7 @@ A manual override is "fresh enough to honour" if either:
 
 1. `word.json.date === serverToday` (the operator pinned today
    explicitly), OR
+
 2. `word.json.date === null` or omitted entirely AND the override's
    effective day, computed from `updatedAt`'s server-local date, is
    still `serverToday`. Without this fallback, a null-date override
@@ -128,6 +133,7 @@ Two zones interact:
   the reconciler and the scheduled-word date keys. Defaults to
   `SCHEDULE_TIMEZONE_DEFAULT` env var on first boot, falling back to
   `process.env.TZ` then `UTC`.
+
 - The **server's local timezone** — used by `getLocalDateString()` when
   the game persists the daily-key for a play.
 
@@ -199,6 +205,7 @@ separate code change, not a config knob in v1).
 - A docker host that resumes from sleep at 00:05 will delay the
   reconcile by up to one tick interval (default 60s). Acceptable for a
   family-scale instance; raise the polling cadence if you need tighter.
+
 - DST forward/backward in IANA zones is handled by `Intl.DateTimeFormat`
   — the unit tests in `tests/scheduler-tick.test.js` cover both
   transitions in `America/New_York`.
@@ -207,21 +214,26 @@ separate code change, not a config knob in v1).
 
 1. Bump the schema's `version` constant and add the field with
    `additionalProperties: false`.
+
 2. Update `normalizeSchedule()` in `lib/schedule-store.js` so old files
    migrate forward (or hard-fail with `VERSION_UNSUPPORTED` so the
    operator can repair).
+
 3. Add a regression fixture in `tests/schedule-store.test.js` that pins
    the new field's values against a known input.
+
 4. Document the field above and update the env-var table if applicable.
 
 ## Known limitations (v1)
 
 - Recurring rules (RRULE / weekly templates) are not supported — each
   entry is one date.
+
 - No CSV / iCal import. Use the REST API in scripts if you need bulk.
 - Auto-rotate is single-language: it picks from the language already
   named in `word.json` (or the registry default `en`). A multi-language
   daily would require a separate per-language toggle, deferred to a
   later issue.
+
 - The Schedule tab is English-only, matching the rest of the admin
   surface.

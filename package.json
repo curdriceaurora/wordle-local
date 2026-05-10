@@ -16,7 +16,8 @@
     "schema:check": "node scripts/validate-schemas.js",
     "guardrails:nits": "node scripts/nit-guardrails.js",
     "i18n:check": "node scripts/i18n-coverage.js",
-    "check": "npm run lint && npm run schema:check && npm run i18n:check && npm run guardrails:nits && npm test -- --runInBand",
+    "markdown:check": "markdownlint-cli2 \"**/*.md\" \"!**/node_modules/**\" \"!**/.husky/**\" \"!**/.auto-claude/**\" \"!**/.git/**\"",
+    "check": "npm run lint && npm run schema:check && npm run i18n:check && npm run markdown:check && npm run guardrails:nits && npm test -- --runInBand",
     "pr:nits": "node scripts/pr-nits-report.js",
     "pr:watch-status": "node scripts/pr-watch-status.js",
     "test:provider:ui": "PLAYWRIGHT_BROWSERS=chromium playwright test tests/ui/admin-shell.spec.js",
@@ -52,6 +53,7 @@
     "istanbul-lib-report": "^3.0.1",
     "istanbul-reports": "^3.1.7",
     "jest": "^29.7.0",
+    "markdownlint-cli2": "^0.14.0",
     "supertest": "^6.3.4",
     "v8-to-istanbul": "^9.2.0",
     "wordnet-db": "^3.1.14"

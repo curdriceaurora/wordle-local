@@ -1,9 +1,11 @@
 # GitHub Copilot Instructions for `local-hosted-wordle`
 
 ## Overview
+
 This is a local, privacy-first Wordle clone designed to run anywhere. The philosophy is minimal dependencies, simple deployment, and offline capability where possible.
 
 ## Tech Stack & Architecture
+
 - **Backend**: Node.js, Express.js.
   - **Modules**: CommonJS (`require`/`module.exports`). Do not use ES modules on the backend.
   - **Persistence**: File-based storage (e.g., `data/word.json`) or in-memory. **Do not** introduce external databases like Postgres or MongoDB.
@@ -17,6 +19,7 @@ This is a local, privacy-first Wordle clone designed to run anywhere. The philos
   - Code coverage uses `istanbul` and `v8-to-istanbul`.
 
 ## General Guidelines
+
 - **Offline & Privacy First**: Features should not rely on external APIs at runtime. For example, dictionary meanings are loaded from local files instead of querying an external service.
 - **Security & Performance**:
   - Always consider rate limiting, input validation, and sanitization before processing client input.
@@ -25,6 +28,7 @@ This is a local, privacy-first Wordle clone designed to run anywhere. The philos
 - **Testing Standard**: When modifying UI or API behavior, write tests (Jest or Playwright) to validate the integration and accessibility.
 
 ## Code Style
+
 - Use descriptive, `camelCase` variable naming in JavaScript.
 - Maintain consistent indentation and formatting.
-- Stick strictly to the CommonJS standard on the backend. Do not introduce ES6 `import`/`export` keywords in Node scripts unless the `package.json` setup is updated project-wide. 
+- Stick strictly to the CommonJS standard on the backend. Do not introduce ES6 `import`/`export` keywords in Node scripts unless the `package.json` setup is updated project-wide.

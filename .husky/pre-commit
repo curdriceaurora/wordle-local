@@ -2,3 +2,122 @@
 set -eu
 
 npm run guardrails:nits
+
+# Lint only the staged markdown files, against the *staged* content
+# (not whatever happens to be in the working tree). Approach:
+#
+#   For each staged .md path, extract the staged blob from git's
+#   object database to a temp file (`git show :path`), then run
+#   markdownlint against the temp files. The worktree is never
+#   touched — no stash, no conflict risk on partial-staged commits.
+#
+# Concerns this addresses (PR #107 review thread history):
+#
+#  1. Path safety. Filenames with spaces or leading `-` would be
+#     split or interpreted as flags by an unquoted shell expansion.
+#     Build a properly-quoted argument list with `set --`, and pass
+#     `--` to markdownlint so a leading-dash filename isn't parsed
+#     as an option.
+#  2. Staged ≠ worktree. A partial-staged commit (some hunks
+#     staged, others not) was previously linting changes that
+#     weren't being committed and missing ones that were. The
+#     temp-file approach reads from the index directly.
+#  3. No stash-pop conflicts. The earlier stash-based version
+#     could conflict on `git stash pop` after lint, leaving the
+#     operator with conflict markers and a kept stash even though
+#     markdownlint hadn't modified anything. Avoiding stash
+#     entirely sidesteps this.
+#  4. Cross-platform. No GNU-only flags (grep -z, xargs -0, -r);
+#     `mktemp -d` uses an explicit template so BSD/macOS mktemp
+#     accepts it. Pure `sh` works on macOS BSD userland.
+#  5. Config consistency. Both the linted files AND the
+#     `.markdownlint.json` config are extracted from the index, and
+#     the config is passed to markdownlint via `--config` so its
+#     directory-walking config discovery (which keys off cwd, not
+#     the linted file's tree) doesn't pick up the worktree config
+#     and override the staged one.
+#
+# Caveat: error messages from markdownlint will reference the temp
+# paths rather than the original repo paths. Acceptable trade-off:
+# the operator reads the message and knows the linted file was the
+# staged version.
+#
+# `--diff-filter=ACMR` includes renames (R) so a renamed-and-
+# modified .md still gets linted; `D` (deletes) excluded.
+
+STAGED_MD="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.md$' || true)"
+if [ -z "$STAGED_MD" ]; then
+  exit 0
+fi
+
+# Temp dir mirrored to the repo's structure. We pass the staged
+# config to markdownlint via `--config` (see below) — directory-
+# walk-based config discovery isn't reliable when the lint is
+# invoked from a different cwd than the linted files. Use an
+# explicit template so `mktemp -d` is portable across GNU coreutils
+# and BSD/macOS userland (BSD mktemp without a template fails).
+# Cleaned on exit.
+TMPDIR_LINT="$(mktemp -d "${TMPDIR:-/tmp}/wordle-md-lint.XXXXXXXXXX")"
+# shellcheck disable=SC2064
+trap "rm -rf '$TMPDIR_LINT'" EXIT
+
+# Always materialize a config at a known path and pass it to
+# markdownlint via `--config`. We can't rely on the CLI's
+# directory-walk discovery here: it keys off the cwd (the repo
+# root), not the linted file's tree. So if we *don't* pass --config,
+# the CLI silently falls back to the worktree `.markdownlint.json`
+# even when we deliberately wanted to use a staged version (or no
+# config at all). Setting CONFIG_PATH unconditionally and passing
+# `--config "$CONFIG_PATH"` gives the lint a single, predictable
+# rule source.
+#
+# Cases:
+#   a) Config staged for deletion (still in worktree but the commit
+#      removes it). Write an empty `{}` config so the lint runs with
+#      defaults, mirroring what the post-commit `npm run markdown:check`
+#      will see.
+#   b) Config in the index (`git show :path` succeeds) — use the
+#      staged content, including partial-staged edits.
+#   c) Config untracked but present in the worktree — use the
+#      worktree copy. Legitimate "operator hasn't committed the
+#      config yet" path.
+#   d) Config missing everywhere — write an empty `{}` so the lint
+#      uses markdownlint defaults; same effective behavior as case (a).
+CONFIG_PATH="$TMPDIR_LINT/.markdownlint.json"
+STAGED_FOR_DELETION=""
+if git diff --cached --diff-filter=D --name-only | grep -qFx ".markdownlint.json"; then
+  STAGED_FOR_DELETION=1
+fi
+
+if [ -n "$STAGED_FOR_DELETION" ]; then
+  echo '{}' > "$CONFIG_PATH"   # case (a)
+elif git show ":.markdownlint.json" > "$CONFIG_PATH" 2>/dev/null; then
+  :                            # case (b)
+elif [ -f .markdownlint.json ]; then
+  cp .markdownlint.json "$CONFIG_PATH"  # case (c)
+else
+  echo '{}' > "$CONFIG_PATH"   # case (d)
+fi
+
+set --
+while IFS= read -r path; do
+  if [ -n "$path" ]; then
+    target="$TMPDIR_LINT/$path"
+    mkdir -p "$(dirname "$target")"
+    git show ":$path" > "$target"
+    # Pass each path with a leading `:` so markdownlint-cli2 treats
+    # it as a literal file path rather than a glob pattern. Without
+    # this, a staged filename containing glob metacharacters (e.g.
+    # `docs/[draft].md`, `notes/{a,b}.md`) would be parsed as a
+    # character class / brace expansion and either match the wrong
+    # files or skip the staged file entirely.
+    set -- "$@" ":$target"
+  fi
+done <<HEREDOC
+$STAGED_MD
+HEREDOC
+
+LINT_STATUS=0
+npx --no-install markdownlint-cli2 --config "$CONFIG_PATH" -- "$@" || LINT_STATUS=$?
+
+exit "$LINT_STATUS"

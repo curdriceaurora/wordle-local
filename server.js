@@ -438,6 +438,7 @@ let hasWarnedAboutDefinitionIndex = false;
 // handler that passed the gate, hit an `await` (e.g. getSnapshot),
 // then resumed during a restore could call mutate() and overwrite the
 // just-restored file with cached pre-restore state.
+// Locks: see `lib/locks.md` for the full lock graph and usage rules.
 const dataMutationLockRef = {
   _value: false,
   _releaseResolve: null,
@@ -498,6 +499,7 @@ async function waitForDataMutationLock() {
 // finished — busy-looping on already-resolved awaits hangs the event
 // loop and stalls the upload itself. We pick the right barrier per
 // iteration so the wait is real every time.
+// Locks: see lib/locks.md (counter, NOT mutex).
 async function claimDirectDataWriteSlot() {
   while (true) {
     if (dataMutationLockRef.value) {
@@ -528,6 +530,7 @@ async function claimDirectDataWriteSlot() {
 // is exclusive: every word.json write path acquires it before its
 // decide-then-save sequence so manual override vs scheduler is
 // strictly serialized.
+// Locks: see lib/locks.md.
 let wordWriteSerial = Promise.resolve();
 async function withWordWriteLock(fn) {
   const previous = wordWriteSerial;
@@ -1442,6 +1445,7 @@ const challengeResultsStore = new ChallengeResultsStore({
 // queues, so neither queue alone can serialize them. This Promise-chain
 // mutex ties admin update + user start together so the immutable-fields
 // check is observed under the same lock the mutation runs under.
+// Locks: see lib/locks.md.
 let challengeAdminUserMutex = Promise.resolve();
 function withChallengeAdminUserMutex(fn) {
   const next = challengeAdminUserMutex.then(fn, fn);
@@ -1625,6 +1629,8 @@ function stopSchedulerInterval() {
 }
 let registeredLanguageCatalog = new Map();
 let availableLanguages = new Map();
+// Locks: see lib/locks.md (provider-import busy refs, observed by
+// backup/restore busy-check).
 const providerImportQueueActiveRef = { value: false };
 const providerImportSyncActiveRef = { value: false };
 // Set by the async provider-import endpoint while it's staging the
@@ -1645,11 +1651,13 @@ const providerImportEnqueueActiveRef = { value: false };
 // reverted job. The restore busy-check observes this counter to
 // keep the import "busy" for as long as any emits are still
 // in-flight, closing the gap.
+// Locks: see lib/locks.md.
 const webhookEmitInFlightRef = { count: 0 };
 // Promise-barrier for restoreInProgressRef so direct writers can
 // `await` for the restore to release without busy-spinning on a
 // resolved data-lock barrier (the data lock isn't held during the
 // restore's upload phase). Mirrors the dataMutationLockRef shape.
+// Locks: see lib/locks.md.
 const restoreInProgressRef = (() => {
   const ref = {
     _value: false,
@@ -1688,6 +1696,7 @@ const restoreInProgressRef = (() => {
 // waitForDataMutationLock() then synchronously check restore flags
 // and increment the counter (no awaits between the check and
 // increment).
+// Locks: see lib/locks.md (counter for direct writers).
 const directDataWriteActiveRef = { value: 0 };
 // dataMutationLockRef, waitForDataMutationLock, restoreInProgressRef,
 // providerImportEnqueueActiveRef, directDataWriteActiveRef, and

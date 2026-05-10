@@ -18,6 +18,7 @@ existing profile when the trimmed/lowercased name matches.
 - Atomic writes via temp-file + rename, mirroring `lib/leaderboard-store.js`.
 - Recovery on missing/malformed JSON: warn and reset to empty state, just like
   the leaderboard store.
+
 - Default cap: 200 classes per host, 1000 members per class.
 
 ## Admin endpoints (admin-key gated)
@@ -80,6 +81,7 @@ without prompting.
   members and the class itself. Archived classes don't appear in the default
   list (`GET /api/admin/classes`) — toggle "Show archived" / pass
   `?includeArchived=true` to see them.
+
 - **Delete** (`DELETE ...`) requires `confirmed: true`. `deleteProfiles=true`
   triggers the carve-out: only profiles that are NOT a member of any other
   *non-archived* class get removed from the leaderboard. Profiles still
@@ -93,6 +95,7 @@ rosters). Configure via:
 
 - Env: `LEADERBOARD_MAX_PROFILES` (locks the cap when set, must be a positive
   integer in `[1, 1000]`).
+
 - Persisted override: `overrides.limits.leaderboardMaxProfiles` in
   `data/app-config.json` — see
   `docs/admin-platform-architecture-contract.md`.

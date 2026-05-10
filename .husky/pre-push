@@ -16,6 +16,12 @@ elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
 fi
 
 if [ -n "$CHANGED_FILES" ]; then
+  # `$CHANGED_FILES` is only used as input to `printf | grep` (quoted)
+  # and `[ -z ]` (length check) — never expanded as command arguments —
+  # so the unquoted-expansion class of bugs that pre-commit had to fix
+  # doesn't apply here. Worst case for an embedded-newline filename is
+  # a missed markdown-only detection, which falls through to running
+  # the full check (the safer fallback).
   NON_MD_FILES="$(printf '%s\n' "$CHANGED_FILES" | grep -Ev '^[[:space:]]*$|.*\.md$' || true)"
   if [ -z "$NON_MD_FILES" ]; then
     echo "pre-push: markdown-only changes detected; skipping npm run check."

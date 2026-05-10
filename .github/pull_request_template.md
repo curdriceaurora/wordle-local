@@ -1,17 +1,21 @@
 ## Summary
+
 - Issue: #<issue-number>
 - Scope: <one-sentence objective>
 - Epic: #<epic-number>
 
 ## In Scope
+
 - <item>
 - <item>
 
 ## Out of Scope
+
 - <item>
 - <item>
 
 ## Risk Review
+
 - Primary risks:
   - <risk>
   - <risk>
@@ -20,6 +24,7 @@
   - <mitigation>
 
 ## Review-Nit Preflight (Required)
+
 - [ ] Docs and schema/API constraints are consistent (or explicitly documented where enforcement differs).
 - [ ] Endpoint docs use exact contracts (status code + payload shape), not shorthand wording.
 - [ ] New JSON schema `$id` values follow existing project domain/namespace conventions.
@@ -38,6 +43,7 @@
 - [ ] `docs/review-preflight.md` checklist reviewed before requesting review.
 
 ## Validation
+
 - [ ] `npm test`
 - [ ] `npm run test:ui` (if UI touched)
 - [ ] `npm run test:all` (if cross-surface behavior changed)
@@ -45,11 +51,13 @@
   - <what changed in tests>
 
 ## Review Focus
+
 1. <high-risk area>
 2. <policy/edge-case>
 3. <compatibility concern>
 
 ## Copilot Review Loop
+
 - [ ] Native Copilot auto-review with **Review new pushes** is enabled for this repository/PR flow.
 - [ ] Fallback workflow `copilot-review.yml` is available and uses head-SHA dedupe (no duplicate trigger comments for same SHA).
 - [ ] Manual Copilot refresh was not used unless intentionally requesting an additional premium review.
@@ -59,4 +67,5 @@
 - [ ] Every actionable nit has a resolution commit and thread reply, or an explicit decline rationale.
 
 ## Post-Merge Learning Update (Required)
+
 - [ ] After merge, update `docs/review-preflight.md` -> **Merged PR Learnings Log** with any review nits and the preventive rule added.
