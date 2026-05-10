@@ -62,22 +62,34 @@ TMPDIR_LINT="$(mktemp -d "${TMPDIR:-/tmp}/wordle-md-lint.XXXXXXXXXX")"
 trap "rm -rf '$TMPDIR_LINT'" EXIT
 
 # Read the staged version of `.markdownlint.json` (not the worktree
-# version) and write it to the temp tree root. If the operator has
-# unstaged or partial-staged edits to the config, those must NOT
-# affect a lint of staged content — otherwise a partial commit that
-# stages stricter rules plus markdown could pass locally and then
-# fail `npm run markdown:check` / CI after commit, or unstaged
-# edits could block a clean staged commit. Reading from the index
-# (`git show :path`) keeps both the linted files and the lint
-# config from the same snapshot.
+# version) and write it to the temp tree root. The lint must
+# evaluate one consistent staged snapshot for both the content and
+# the rules.
 #
-# Fall back to the worktree if the file isn't in the index (e.g.
-# the operator deleted `.markdownlint.json` from staging or never
-# tracked it). Silently skip if neither path resolves — markdownlint
-# walks parent dirs and falls back to its own defaults.
-if git show ":.markdownlint.json" > "$TMPDIR_LINT/.markdownlint.json" 2>/dev/null; then
+# Cases:
+#   a) File staged for deletion (still in worktree but the commit
+#      removes it). DO NOT use the worktree config — the commit
+#      will land without it. Skip the copy entirely.
+#   b) File present in the index (`git show :path` succeeds) — use
+#      the staged content, including any partial-staged edits.
+#   c) File untracked but present in the worktree — use the
+#      worktree copy. This is the legitimate fallback for
+#      operators who haven't yet committed the config.
+#   d) File missing everywhere — no copy, markdownlint falls back
+#      to its built-in defaults.
+STAGED_FOR_DELETION=""
+if git diff --cached --diff-filter=D --name-only | grep -qFx ".markdownlint.json"; then
+  STAGED_FOR_DELETION=1
+fi
+
+if [ -n "$STAGED_FOR_DELETION" ]; then
+  # Case (a). Intentionally no config copy.
+  :
+elif git show ":.markdownlint.json" > "$TMPDIR_LINT/.markdownlint.json" 2>/dev/null; then
+  # Case (b).
   :
 elif [ -f .markdownlint.json ]; then
+  # Case (c).
   cp .markdownlint.json "$TMPDIR_LINT/.markdownlint.json"
 fi
 
