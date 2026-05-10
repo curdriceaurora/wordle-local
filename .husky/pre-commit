@@ -2,3 +2,12 @@
 set -eu
 
 npm run guardrails:nits
+
+# Lint only the staged markdown files. We don't want to fail commits that
+# touch unrelated parts of the repo when an unstaged .md file in the tree
+# happens to violate a rule. markdownlint-cli2 expects file globs; pass the
+# staged paths explicitly. Skip silently if no markdown is staged.
+STAGED_MD="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.md$' || true)"
+if [ -n "$STAGED_MD" ]; then
+  npx --no-install markdownlint-cli2 $STAGED_MD
+fi

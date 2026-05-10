@@ -26,14 +26,17 @@ tab reads.
 1. **Activity over time** — line chart with two series (`dailyActive`,
    `dailyGames`). Shares an x-axis (date) with two y-axes so DAU and game
    counts don't squash each other when the scales diverge.
+
 2. **Attempts distribution** — bar chart with one bucket per attempt
    count from `1` to `10` (matching the server's `MAX_GUESSES`), plus
    an `11+` overflow bucket for any wins beyond that, plus `DNF` for
    non-wins (`won === false`) regardless of attempt count. Histogram
    bar values always sum to `gamesInWindow` — no result is silently
    dropped.
+
 3. **Language mix** — horizontal bar chart, count of games per `lang` code.
    Sorted by count (desc), then alphabetical.
+
 4. **Time-of-day** — 24-bucket histogram of result `updatedAt`, bucketed
    in `ANALYTICS_TIMEZONE`. Use this to see when families typically play.
 
@@ -43,8 +46,10 @@ data — accessible to screen readers and copy-paste-friendly.
 ## Time-window control
 
 Three options, segmented control: `7d`, `30d`, `all`. Default `7d`.
+
 - `7d` and `30d` count *days inclusive of today* (so `7d` covers today
   back to today − 6).
+
 - `all` starts at the earliest result/profile date in the snapshot.
 
 The control is a `role="radiogroup"` with arrow-key navigation and proper
@@ -52,12 +57,13 @@ The control is a `role="radiogroup"` with arrow-key navigation and proper
 
 ## Endpoint
 
-```
+```text
 GET /api/admin/analytics?window=7d|30d|all
 ```
 
 - Admin-gated via the standard `requireAdminAccess` middleware (same
   `x-admin-key` header as every other `/api/admin/*` route).
+
 - Default `window=7d` when omitted.
 - Returns 400 with `{ code: "INVALID_WINDOW" }` on unknown values.
 - Response: `{ window, generatedAt, summary, series, distributions }`
@@ -110,12 +116,15 @@ and is recorded in `THIRD_PARTY_NOTICES.md`.
 1. Compute it in `lib/analytics-aggregator.js`. Add a field to either
    `summary`, `series.*`, or `distributions.*` so consumers can rely on
    the shape.
+
 2. Add a unit test fixture in `tests/analytics-aggregator.test.js` that
    pins the new field's values for a known snapshot — the file already
    has empty / sparse / dense / leap-day / TZ-boundary fixtures to copy.
+
 3. Render the new field in `public/admin/app.js` (`renderAnalyticsPayload`).
    Add a card to the markup in `public/admin/index.html` and update the
    data-table fallback if appropriate.
+
 4. Update this doc with the new row and definition.
 
 ## Known limitations
@@ -125,9 +134,11 @@ and is recorded in `THIRD_PARTY_NOTICES.md`.
   of results each) this is sub-100ms; the integration test pins p99 < 200
   ms on a synthetic 1000-profile / 30-day fixture. Larger deployments
   should consider raising `ANALYTICS_CACHE_TTL_MS` first.
+
 - The endpoint reads a single `leaderboardStore.getSnapshot()` per call
   — there's no profile-level drilldown here. The Stats tab covers
   per-profile views.
+
 - Hour-of-day bucketing falls back to UTC if `ANALYTICS_TIMEZONE` is
   unrecognised. Validate locally with `node -e "new
   Intl.DateTimeFormat('en', { timeZone: '<zone>' })"` if a value is

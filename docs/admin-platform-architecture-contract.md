@@ -3,21 +3,26 @@
 This document is the decision record for issue #7.
 
 ## Why This Exists
+
 The Admin Platform scope has drifted across Epic #6 and Epic #17. Without a locked contract, later work (`#9`, `#13`) will keep re-deciding file formats, config precedence, and queue behavior. This record freezes those choices so deferred work can restart without redesigning fundamentals.
 
 ## Scope
+
 In scope for this decision record:
+
 - Data contract definitions for `languages.json`, `admin-jobs.json`, and `app-config.json`.
 - Runtime config precedence rules.
 - Queue lifecycle semantics and restart behavior.
 - Backward compatibility and migration constraints.
 
 Out of scope:
+
 - Implementing queue execution (`#9`).
 - Implementing admin settings UI (`#13`).
 - Runtime behavior changes in gameplay APIs.
 
 ## System Boundaries
+
 - Runtime gameplay remains server-owned (`/api/puzzle`, `/api/guess`, `/daily`).
 - Admin writes are explicit and authenticated via `x-admin-key` on `/api/admin/*`.
 - Persisted state is file-backed and local-node only.
@@ -34,6 +39,7 @@ Out of scope:
 | Backup archives (`*.zip`) | Versioned, schema-checked snapshot of the in-scope data files | Active | `data/backup-manifest.schema.json` |
 
 Examples are provided for tooling validation:
+
 - `data/admin-jobs.example.json`
 - `data/app-config.example.json`
 - `data/backup-manifest.example.json`
@@ -42,27 +48,35 @@ Backup/restore semantics: see [`docs/backup-restore.md`](backup-restore.md). The
 restore handler shares the single-flight admin mutex with provider import.
 
 ## Runtime Config Precedence (Locked)
+
 Order of precedence is deterministic:
+
 1. **Hard environment controls (highest priority)**
-- Security-critical and deployment-scoped values from environment variables always win.
-- Examples: `ADMIN_KEY`, `REQUIRE_ADMIN_KEY`, `TRUST_PROXY`, rate-limit envs.
+
+   - Security-critical and deployment-scoped values from environment variables always win.
+   - Examples: `ADMIN_KEY`, `REQUIRE_ADMIN_KEY`, `TRUST_PROXY`, rate-limit envs.
 
 2. **Persisted override layer (`data/app-config.json`)**
-- Applies only to whitelisted, runtime-safe keys.
-- Any unknown key or invalid value is rejected (schema + server-side allowlist).
+
+   - Applies only to whitelisted, runtime-safe keys.
+   - Any unknown key or invalid value is rejected (schema + server-side allowlist).
 
 3. **Code defaults (lowest priority)**
-- Used when neither env nor valid persisted override is present.
+
+   - Used when neither env nor valid persisted override is present.
 
 Why: this keeps local admin UX flexible without letting UI writes silently weaken deployment safety controls.
 
 ## Queue Lifecycle Semantics (Locked for #9)
+
 Queue contract applies when `#9` is implemented.
 
 Job states:
+
 - `queued` -> `running` -> `succeeded | failed | canceled`
 
 Operational rules:
+
 - Single writer model for `data/admin-jobs.json` with atomic file replacement.
 - `running` jobs found at process startup are recovered to `queued` with incremented attempt metadata (no silent drop).
 - `succeeded` jobs are immutable except retention pruning.
@@ -71,6 +85,7 @@ Operational rules:
 Why: this prevents orphaned in-flight jobs after restarts and preserves operator-visible failure history.
 
 ## Backward Compatibility + Migration Constraints
+
 - Baked `en` must always exist in language registry defaults.
 - Registry recovery must be fail-safe: missing/corrupt `data/languages.json` regenerates baked baseline.
 - Schema version fields are mandatory and monotonic (`version: 1` now).
@@ -78,6 +93,7 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
 - Future migrations must be explicit, one-way, and logged in release notes.
 
 ## Pitfalls To Avoid
+
 - Treating persisted config as equal priority with env variables (can unintentionally weaken security posture).
 - Allowing queue/job payloads to store raw upload content (store references/checksums only).
 - Accepting absolute or traversing relative paths in any persisted artifact path field.
@@ -86,6 +102,7 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
 ## Concrete Examples
 
 `data/admin-jobs.example.json`:
+
 ```json
 {
   "version": 1,
@@ -95,6 +112,7 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
 ```
 
 `data/app-config.example.json`:
+
 ```json
 {
   "version": 1,
@@ -131,5 +149,6 @@ Only the keys whitelisted by `data/app-config.schema.json` and `lib/app-config-s
 Whitelisted keys must round-trip the schema (`data/app-config.schema.json`) and the `normalizeLimitsOverrides` validator (`lib/app-config-store.js`). For the leaderboard caps, an env value only locks the corresponding override key when it parses to an integer that falls inside the documented bounds — out-of-range or non-integer env values warn at startup, fall back to defaults, and leave admin overrides editable so operators can correct the lock.
 
 ## Re-entry Criteria For Deferred Work
+
 - `#9` queue work resumes only if import concurrency/reliability requirements exceed single-import mutex behavior.
 - `#13` settings UI resumes only after concrete operator demand for runtime overrides beyond env-file workflows.

@@ -10,11 +10,14 @@ local node using a VAPID keypair generated at first boot.
 2. Player toggles **Get notified when daily puzzle is ready** in the
    header settings strip. The browser's permission prompt appears
    only on this user gesture — never automatically.
+
 3. Browser issues a `PushManager.subscribe()` against the
    server-supplied VAPID public key.
+
 4. Browser sends the subscription record (endpoint, p256dh, auth) to
    `POST /api/notifications/subscribe`. Server returns an opaque
    `endpointHash`.
+
 5. At the configured local time each day, the server's
    `DailyNotificationScheduler` broadcasts a payload to every
    registered subscription.
@@ -25,6 +28,7 @@ The admin Notifications tab surfaces:
 
 - **Subscription count** — how many devices are registered (raw
   endpoints are never echoed).
+
 - **Last broadcast** / **Last daily fire** timestamps.
 - **Broadcast** form: title (≤ 80 chars), body (≤ 200 chars),
   site-relative URL. Click **Preview** for a `dryRun` that returns the
@@ -63,10 +67,12 @@ need HTTPS or localhost." in this case.
 - The scheduler computes the next absolute fire-time from wall clock
   (`Date.now()`) on every re-arm — never additive `+24h` — so DST
   transitions and clock skew can't drift the schedule.
+
 - On boot, if the configured fire time has already passed today AND no
   fire happened in the window, the scheduler fires late if it's
   within `gracePeriodMinutes` (default 60). Beyond that, the missed
   fire is skipped and the schedule re-arms for tomorrow.
+
 - The scheduler honors the runtime `notifications.enabled` flag:
   toggling it off in the admin UI suspends fires without restart;
   toggling on resumes within ~60 s.
@@ -118,6 +124,7 @@ runtime.
 - `push` — parses the JSON payload (`{title, body, url, tag}`) and
   calls `self.registration.showNotification`. Falls back to a generic
   daily-puzzle copy on empty payloads.
+
 - `notificationclick` — focuses an existing tab at the URL if open,
   else opens a new window. The `tag` collapses repeat notifications so
   a daily fire that arrives before a previous one was dismissed
@@ -144,12 +151,15 @@ runtime.
 
 - Unit: `tests/push-subscription-store.test.js` — atomic write,
   dedupe-by-endpoint, prune-on-410, `pruneStale` cutoff.
+
 - Unit: `tests/notification-service.test.js` — `buildPayload` clamps,
   `classifyResponse` decision table, sendOne mocking, broadcast
   aggregate counts.
+
 - Unit: `tests/daily-notification-scheduler.test.js` — `computeNextFireAt`
   across DST, `decideBootAction` grace window, scheduler integration
   with mocked store + service.
+
 - Integration: `tests/notification-routes.test.js` — subscribe, unsubscribe,
   vapid-public-key, admin subscriptions/broadcast, VAPID-private-key
   leak check across `/api/meta` + `/api/admin/notifications/*`.

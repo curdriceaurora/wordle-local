@@ -438,6 +438,7 @@ let hasWarnedAboutDefinitionIndex = false;
 // handler that passed the gate, hit an `await` (e.g. getSnapshot),
 // then resumed during a restore could call mutate() and overwrite the
 // just-restored file with cached pre-restore state.
+// Locks: see `lib/locks.md` for the full lock graph and usage rules.
 const dataMutationLockRef = {
   _value: false,
   _releaseResolve: null,

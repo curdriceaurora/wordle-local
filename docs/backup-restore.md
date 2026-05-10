@@ -33,6 +33,7 @@ but never restored):
 
 - `data/providers/**` — provider artifacts (per-language, per-commit).
   Can be tens of MiB per language. See *Sizing* below.
+
 - `data/dictionaries/**` — raw dictionary files.
 
 **Explicitly excluded**:
@@ -50,13 +51,16 @@ Required fields:
 
 - `manifestVersion` — currently locked at `1`. Mismatched manifest
   versions are rejected with `MANIFEST_VERSION_UNSUPPORTED`.
+
 - `appVersion` — from the server's `package.json` at export time.
 - `createdAt` — ISO-8601 UTC.
 - `nodeId` — taken from `data/app-config.json` `nodeId` (defaults to
   `"unknown-node"` if unset).
+
 - `files[]` — every entry has `path`, `bytes`, `sha256`. Files that
   have a paired schema also carry a `schema: { schemaPath, sha256 }`
   digest used for schema-drift detection on restore.
+
 - `optionalSets[]` — `"providers"` and/or `"dictionaries"` if those
   sets were included.
 
@@ -78,23 +82,29 @@ apply UI flow never collides with itself.
 
 1. Validate the uploaded archive against
    `data/backup-manifest.schema.json`.
+
 2. Reject if `manifestVersion !== 1`, if any entry's recomputed sha256
    differs from the manifest, or if any entry exceeds the per-entry
    size cap (default 64 MiB) or pushes the total past
    `BACKUP_MAX_BYTES`.
+
 3. Schema-drift guard: for each manifest entry that carries a
    `schema:` digest, recompute the digest of the matching schema file
    on disk. Reject with `SCHEMA_DRIFT` if they differ — the archive
    was produced under an incompatible schema and needs offline
    migration before restoring.
+
 4. Extract every restorable file (in-scope + included optional sets)
    into `data/.restore-staging-<ts>-<rand>/`.
+
 5. Validate each staged in-scope file against its schema.
 6. For each file, snapshot the live copy into
    `data/.restore-rollback-<ts>-<rand>/` and rename the staged file
    into place.
+
 7. On any error in step 6, reverse the renames from the rollback dir;
    the live `data/` is left byte-identical to its pre-restore state.
+
 8. On success, remove both the staging and rollback directories.
 9. Reload in-memory caches (`leaderboardStore`, `adminJobsStore`,
    `classesStore`, `appConfigStore`, `languageRegistryStore`, language
@@ -116,17 +126,21 @@ Restore returns:
   successful apply. `warnings` only carries archive/apply-time
   warnings (e.g. `ROLLBACK_PARTIAL`); a successful apply normally
   has an empty `warnings` array.
+
 - HTTP **400** for pre-apply validation failures (manifest invalid,
   manifest version unsupported, schema drift, malformed zip, sha256
   mismatch, path traversal). The body has
   `rolledBackOnError: false` because no on-disk mutation happened.
+
 - HTTP **400** with `rolledBackOnError: true` for failures that
   occurred after at least one file had been swapped — the rewind
   ran and the live tree is byte-equal to its pre-restore state.
   `warnings` may include `ROLLBACK_PARTIAL` notes when a rewind step
   itself failed (rare; operator action required).
+
 - HTTP **409** when another admin operation (provider import or a
   concurrent restore) holds the single-flight mutex.
+
 - HTTP **413** when the upload exceeds `BACKUP_MAX_BYTES`.
 - HTTP **503** with `code: DATA_LOCK_HELD` for *other* mutating
   `/api/*` requests (jobs, runtime-config, profiles, classes,
@@ -200,9 +214,11 @@ archive offline:
 2. Extract the archive.
 3. Apply your project's schema-migration tool (or hand-edit) to bring
    each `data/<store>.json` up to the current schema.
+
 4. Recompute the manifest's `files[].sha256` and the schema digests
    (or rebuild the archive via the export endpoint after applying the
    migrated state in a controlled environment).
+
 5. Re-zip with the updated `manifest.json` at the root.
 6. Run `node scripts/restore-from-disk.js <new-archive>` or upload it
    via the admin Data tab.
@@ -228,8 +244,10 @@ in-scope paths and reject symlinks/non-regular files with
 
 - Copy or hard-link the configured paths to `<projectRoot>/data/`
   before each backup so both sides see the same regular file, or
+
 - Set `BACKUP_PROJECT_ROOT` to the directory whose `data/` subtree
   contains the configured files (test-style isolation), or
+
 - Skip backup/restore entirely for that store and reconcile it
   manually.
 

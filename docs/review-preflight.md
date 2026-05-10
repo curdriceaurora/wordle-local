@@ -1,9 +1,11 @@
 # PR Review Preflight
 
 ## Why
+
 This project now treats review-nit reduction as a first-class quality goal. The checklist below is required before requesting review on each PR.
 
 ## Mandatory Preflight Checklist
+
 1. Contract parity: docs, schema, and endpoint behavior describe the same constraints.
 2. Enforcement clarity: if schema cannot enforce a rule, docs explicitly say implementation enforces it.
 3. Deterministic wording: no ambiguous terms such as "latest" or "newest" without exact tie-break/ordering rules.
@@ -55,15 +57,18 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 49. Copilot trigger dedupe: automated `/copilot review` triggering must be head-SHA deduplicated so repeated workflow runs do not consume duplicate premium requests.
 
 ## Automation Coverage Map
+
 - Automated + Manual: 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49
 - Manual only: 3 (deterministic wording and ambiguity review still requires human check)
 
 ## Review Comment Handling Standard
+
 1. Triage every comment as `must-fix`, `follow-up issue`, or `decline with rationale`.
 2. Reply with commit hash + validation command when code/docs changed.
 3. Do not leave unresolved threads when merging.
 
 ## Copilot Review Loop
+
 1. Enable native GitHub Copilot automatic review with **Review new pushes** in repository settings.
 2. `/.github/workflows/copilot-review.yml` provides fallback auto-trigger on PR updates and dedupes by head SHA marker (`<!-- copilot-auto-review sha:<sha> -->`).
 3. `/.github/workflows/pr-watch.yml` updates a sticky PR status comment (marker: `<!-- pr-watch-status -->`) with CI state and unresolved threads.
@@ -80,32 +85,40 @@ This project now treats review-nit reduction as a first-class quality goal. The 
 10. Merge target is `0` unresolved actionable nits.
 
 ## Local Gate Requirement
+
 Run `npm run check` before requesting review. ESLint + Ajv schema checks + `guardrails:nits` are required and must pass locally.
 
 ## PR Readiness Monitor
+
 Use the readiness monitor to enforce merge gates consistently across PRs.
 
 One-shot evaluation (exit `0` on pass, `1` on wait/fail):
+
 - `npm run pr:ready-check -- --pr <number>`
 
 Continuous watch mode (polls until pass or timeout; exit `0` pass, `2` timeout):
+
 - `npm run pr:ready-watch -- --pr <number>`
 
 Repository CI gate:
+
 - Workflow: `.github/workflows/pr-ready.yml`
 - Required branch-protection check name: `pr-ready`
 
 Default readiness gates:
+
 1. Head commit check rollup is `SUCCESS`.
 2. No unresolved actionable review threads (ignores `github-advanced-security` system threads by default).
 3. Latest CodeRabbit comment is not rate-limit related.
 
 Useful overrides:
+
 - Strict unresolved policy: `--strict-threads`
 - Custom ignored authors: `--ignore-authors github-advanced-security,some-bot`
 - Poll interval / timeout: `--interval 20 --timeout 60`
 
 ## Merged PR Learnings Log
+
 Update this table after every successful PR merge.
 If a PR had no substantive review nits, add a row with `Nit observed = none` and `Preventive rule added = no change`.
 
@@ -114,4 +127,4 @@ If a PR had no substantive review nits, add a row with `Nit observed = none` and
 | 2026-02-22 | #66 | Copilot | Provider status payload mixed `error` with non-error states; admin UI hid provider diagnostics. | Added rules 43, 44, 45 and enforced via `scripts/nit-guardrails.js` + CI provider UI gate. |
 | 2026-03-26 | #80 | Post-merge follow-up | PWA service worker rollout introduced admin UI test nondeterminism; PR #82 applied deterministic test isolation. | Added Playwright `serviceWorkers: "block"` coverage for admin-shell route-mocked specs and documented Copilot loop/sticky-status enforcement in preflight workflow. |
 | 2026-03-26 | #82 | Copilot | Nit observed = none. | Preventive rule added = no change. |
-| _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
