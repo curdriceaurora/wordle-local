@@ -92,8 +92,8 @@ describe("challenge-results-store: single-in-flight invariant under concurrency"
           puzzles: basePuzzles()
         }),
       invariants: [
-        async ({ store }, { results }) => {
-          // Exactly one of the 20 results must report resumed=false
+        async ({ store }, { results, parallelism }) => {
+          // Exactly one of N results must report resumed=false
           // (the winner). All others must report resumed=true.
           const winners = results.filter((r) => r.resumed === false);
           const resumers = results.filter((r) => r.resumed === true);
@@ -103,9 +103,10 @@ describe("challenge-results-store: single-in-flight invariant under concurrency"
                 `(single-in-flight invariant broken: race created multiple sessions)`
             );
           }
-          if (resumers.length !== 19) {
+          const expectedResumers = parallelism - 1;
+          if (resumers.length !== expectedResumers) {
             throw new Error(
-              `expected 19 resumers; got ${resumers.length}`
+              `expected ${expectedResumers} resumers; got ${resumers.length}`
             );
           }
           // All resumers must point at the same session id as the winner.
@@ -159,26 +160,26 @@ describe("challenge-results-store: single-in-flight invariant under concurrency"
           puzzles: basePuzzles()
         }),
       invariants: [
-        async ({ store }, { results }) => {
-          // All 20 should be winners (resumed=false).
+        async ({ store }, { results, parallelism }) => {
+          // All N should be winners (resumed=false).
           const winners = results.filter((r) => r.resumed === false);
-          if (winners.length !== 20) {
+          if (winners.length !== parallelism) {
             throw new Error(
-              `expected 20 winners (all distinct keys); got ${winners.length}`
+              `expected ${parallelism} winners (all distinct keys); got ${winners.length}`
             );
           }
-          // 20 unique session IDs.
+          // N unique session IDs.
           const ids = new Set(results.map((r) => r.session.id));
-          if (ids.size !== 20) {
+          if (ids.size !== parallelism) {
             throw new Error(
-              `expected 20 unique session IDs; got ${ids.size}`
+              `expected ${parallelism} unique session IDs; got ${ids.size}`
             );
           }
-          // Final store: 20 sessions.
+          // Final store: N sessions.
           const snap = await store.getSnapshot();
-          if (snap.sessions.length !== 20) {
+          if (snap.sessions.length !== parallelism) {
             throw new Error(
-              `expected 20 sessions in store; got ${snap.sessions.length}`
+              `expected ${parallelism} sessions in store; got ${snap.sessions.length}`
             );
           }
         }
@@ -202,10 +203,18 @@ describe("challenge-results-store: transactionalUpdate no-drop-guess", () => {
     // hit INVALID_PUZZLE on the 13th append for reasons unrelated
     // to the concurrency invariant. 10 parallel appends is still
     // a heavy contention test for the commit queue.
+    //
+    // `parallelismMax: 10` is the OPT-OUT for the env-driven stress
+    // mode (CONCURRENCY_PARALLELISM=200). Without it, the env bump
+    // would push fan-out past the schema cap and the test would
+    // fail with INVALID_PUZZLE — masking the concurrency invariant
+    // this test is meant to pin. See the harness's `parallelismMax`
+    // option docs (Codex review on PR #109).
     const PARALLEL_APPENDS = 10;
     await runConcurrencyScenario({
       name: "challenge-results-store: parallel transactionalUpdate guess-append",
       parallelism: PARALLEL_APPENDS,
+      parallelismMax: PARALLEL_APPENDS,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ChallengeResultsStore({ filePath, now: frozenNow() });
@@ -293,10 +302,10 @@ describe("challenge-results-store: transactionalUpdate no-drop-guess", () => {
       acceptableErrors: ["INVALID_REQUEST"],
       expectedSuccesses: 0,
       invariants: [
-        async ({ store, sessionId }, { errors }) => {
-          if (errors.length !== 20) {
+        async ({ store, sessionId }, { errors, parallelism }) => {
+          if (errors.length !== parallelism) {
             throw new Error(
-              `expected 20 errors; got ${errors.length}`
+              `expected ${parallelism} errors; got ${errors.length}`
             );
           }
           // Session must still exist with original profileId.

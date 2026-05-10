@@ -208,11 +208,11 @@ describe("backup-store: parallel read paths are race-free", () => {
       operation: async ({ projectRoot: root }) =>
         buildManifest({ projectRoot: root, includeProviders: false, includeDictionaries: false }),
       invariants: [
-        async (_ctx, { results }) => {
+        async (_ctx, { results, parallelism }) => {
           const fingerprints = new Set(results.map(manifestFingerprint));
           if (fingerprints.size !== 1) {
             throw new Error(
-              `expected all 20 manifests to have identical fingerprint; got ${fingerprints.size} distinct values`
+              `expected all ${parallelism} manifests to have identical fingerprint; got ${fingerprints.size} distinct values`
             );
           }
         }
@@ -234,15 +234,15 @@ describe("backup-store: parallel read paths are race-free", () => {
       operation: async ({ archivePath: ap, projectRoot: pr }) =>
         validateArchive(ap, { projectRoot: pr }),
       invariants: [
-        async (_ctx, { results }) => {
+        async (_ctx, { results, parallelism }) => {
           // Each validateArchive returns { manifest, ... }. The
-          // manifest fingerprint must be identical across all 20.
+          // manifest fingerprint must be identical across all callers.
           const fingerprints = new Set(
             results.map((r) => manifestFingerprint(r.manifest))
           );
           if (fingerprints.size !== 1) {
             throw new Error(
-              `expected all 20 validations to produce the same manifest fingerprint; got ${fingerprints.size} distinct values`
+              `expected all ${parallelism} validations to produce the same manifest fingerprint; got ${fingerprints.size} distinct values`
             );
           }
         }
@@ -261,11 +261,11 @@ describe("backup-store: parallel read paths are race-free", () => {
       setup: () => ({ filePath }),
       operation: async ({ filePath: fp }) => sha256OfFile(fp),
       invariants: [
-        async (_ctx, { results }) => {
+        async (_ctx, { results, parallelism }) => {
           const unique = new Set(results);
           if (unique.size !== 1) {
             throw new Error(
-              `expected one unique digest across 20 readers; got ${unique.size}`
+              `expected one unique digest across ${parallelism} readers; got ${unique.size}`
             );
           }
           if (!unique.has(expectedDigest)) {

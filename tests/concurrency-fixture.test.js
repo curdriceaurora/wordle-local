@@ -148,6 +148,35 @@ describe("concurrency-fixture: happy-path behavior", () => {
     expect(invariantSeenParallelism).toBe(20);
   });
 
+  test("env CONCURRENCY_PARALLELISM is clamped to parallelismMax when set", async () => {
+    // Codex flagged on PR #109: env stress mode would push some
+    // tests past correctness-derived caps (e.g., schema enforces
+    // guesses.length ≤ 12 in challenge-results-store). The
+    // parallelismMax option lets a test cap the env override.
+    const prev = process.env.CONCURRENCY_PARALLELISM;
+    process.env.CONCURRENCY_PARALLELISM = "200";
+    try {
+      let seen = null;
+      await runConcurrencyScenario({
+        name: "max-clamp",
+        parallelism: 10,
+        parallelismMax: 10,
+        setup: () => ({}),
+        operation: async () => "ok",
+        invariants: [
+          async (_ctx, { parallelism }) => {
+            seen = parallelism;
+          }
+        ]
+      });
+      // env asked for 200 but parallelismMax clamps to 10.
+      expect(seen).toBe(10);
+    } finally {
+      if (prev === undefined) delete process.env.CONCURRENCY_PARALLELISM;
+      else process.env.CONCURRENCY_PARALLELISM = prev;
+    }
+  });
+
   test("env CONCURRENCY_PARALLELISM overrides per-spec value", async () => {
     const prev = process.env.CONCURRENCY_PARALLELISM;
     process.env.CONCURRENCY_PARALLELISM = "3";

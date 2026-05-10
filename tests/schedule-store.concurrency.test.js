@@ -79,9 +79,18 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
     // entry to that local array, and whichever rename lands last
     // overwrites the others — typically only 1–3 entries survive
     // out of N. With the queue, all N land.
+    //
+    // parallelismMax: 26 because entryForIndex(i) cycles A..Z words
+    // (i % 26) — at i=26 we'd push duplicate (date, lang, word)
+    // triples that the schedule schema rejects as duplicates within
+    // the same date. The date side caps at 31 (May has 31 days),
+    // but 26 is the tighter cap. This is a correctness ceiling, not
+    // a contention dial; env CONCURRENCY_PARALLELISM stress mode
+    // can't push it higher without breaking the test premise.
     await runConcurrencyScenario({
       name: "schedule-store: parallel addEntry (distinct keys)",
       parallelism: 20,
+      parallelismMax: 26,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ScheduleStore({ filePath, now: frozenNow() });
@@ -90,17 +99,20 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
       },
       operation: async ({ store }, i) => store.addEntry(entryForIndex(i)),
       invariants: [
-        async ({ store }) => {
+        async ({ store }, { parallelism }) => {
           const snap = await store.getSnapshot();
-          if (snap.scheduled_words.length !== 20) {
+          if (snap.scheduled_words.length !== parallelism) {
             throw new Error(
-              `expected 20 entries in final snapshot; got ${snap.scheduled_words.length} ` +
+              `expected ${parallelism} entries in final snapshot; got ${snap.scheduled_words.length} ` +
                 `(lost-write race — commitQueue is not serializing)`
             );
           }
           // Every parallel index must be represented exactly once.
           const dates = snap.scheduled_words.map((r) => r.date).sort();
-          const expected = Array.from({ length: 20 }, (_, i) => entryForIndex(i).date).sort();
+          const expected = Array.from(
+            { length: parallelism },
+            (_, i) => entryForIndex(i).date
+          ).sort();
           if (JSON.stringify(dates) !== JSON.stringify(expected)) {
             throw new Error(
               `dates mismatch:\n  got     ${JSON.stringify(dates)}\n  expected ${JSON.stringify(expected)}`
@@ -116,6 +128,7 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
     await runConcurrencyScenario({
       name: "schedule-store: mixed addEntry + setConfig",
       parallelism: 20,
+      parallelismMax: 26, // same A..Z cycle constraint as the prior test
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ScheduleStore({ filePath, now: frozenNow() });
@@ -137,12 +150,14 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
         });
       },
       invariants: [
-        async ({ store }) => {
+        async ({ store }, { parallelism }) => {
           const snap = await store.getSnapshot();
-          // Each addEntry uses an even-i; that's 10 entries (i = 0,2,4,...,18).
-          if (snap.scheduled_words.length !== 10) {
+          // addEntry runs on even-i (parallelism/2 ± 1 for odd
+          // parallelism); use Math.ceil to capture i=0 inclusive.
+          const expectedAdds = Math.ceil(parallelism / 2);
+          if (snap.scheduled_words.length !== expectedAdds) {
             throw new Error(
-              `expected 10 addEntry rows to persist; got ${snap.scheduled_words.length}`
+              `expected ${expectedAdds} addEntry rows to persist; got ${snap.scheduled_words.length}`
             );
           }
           // Final auto_rotate_seed must be one of the odd-i values.
@@ -187,11 +202,12 @@ describe("schedule-store: duplicate-detection under concurrency", () => {
       acceptableErrors: ["DUPLICATE_ENTRY"],
       expectedSuccesses: 1,
       invariants: [
-        async ({ store }, { errors }) => {
-          // 19 callers must have lost the race with DUPLICATE_ENTRY.
-          if (errors.length !== 19) {
+        async ({ store }, { errors, parallelism }) => {
+          // All but one caller must have lost the race with DUPLICATE_ENTRY.
+          const expectedLosers = parallelism - 1;
+          if (errors.length !== expectedLosers) {
             throw new Error(
-              `expected 19 losers with DUPLICATE_ENTRY; got ${errors.length}`
+              `expected ${expectedLosers} losers with DUPLICATE_ENTRY; got ${errors.length}`
             );
           }
           // Final state must contain exactly one row for that key.
@@ -243,9 +259,11 @@ describe("schedule-store: updateEntry convergence", () => {
               `expected exactly 1 row; got ${matches.length} (commit chain corrupted state)`
             );
           }
-          // The winner's word must be one of the candidates (A*5 .. T*5).
+          // The winner's word must be one of the A-Z candidates we wrote.
+          // (Operation cycles i % 26 → A..Z; under env stress > 26 the
+          // mapping wraps and any A-Z 5-letter word becomes valid.)
           const winner = matches[0].word;
-          if (!/^[A-T]{5}$/.test(winner)) {
+          if (!/^[A-Z]{5}$/.test(winner)) {
             throw new Error(
               `winning word ${JSON.stringify(winner)} is not one of the parallel-update candidates`
             );

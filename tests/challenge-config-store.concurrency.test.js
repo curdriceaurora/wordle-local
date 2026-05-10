@@ -83,19 +83,19 @@ describe("challenge-config-store: parallel create lands every challenge", () => 
           name: `Speed ${i}`
         }),
       invariants: [
-        async ({ store }, { results }) => {
-          // 20 unique IDs returned.
+        async ({ store }, { results, parallelism }) => {
+          // N unique IDs returned.
           const ids = new Set(results.map((r) => r.id));
-          if (ids.size !== 20) {
+          if (ids.size !== parallelism) {
             throw new Error(
-              `expected 20 unique challenge IDs from 20 creates; got ${ids.size}`
+              `expected ${parallelism} unique challenge IDs from ${parallelism} creates; got ${ids.size}`
             );
           }
-          // 20 challenges in the store snapshot, each id present once.
+          // N challenges in the store snapshot, each id present once.
           const snap = await store.load();
-          if (snap.challenges.length !== 20) {
+          if (snap.challenges.length !== parallelism) {
             throw new Error(
-              `expected 20 persisted challenges; got ${snap.challenges.length} ` +
+              `expected ${parallelism} persisted challenges; got ${snap.challenges.length} ` +
                 `(lost-write race: commitQueue is not serializing)`
             );
           }
@@ -183,9 +183,9 @@ describe("challenge-config-store: parallel update converges with last-writer-win
       acceptableErrors: ["CONFIG_LOCKED"],
       expectedSuccesses: 0,
       invariants: [
-        async ({ store, challengeId }, { errors }) => {
-          if (errors.length !== 20) {
-            throw new Error(`expected 20 CONFIG_LOCKED errors; got ${errors.length}`);
+        async ({ store, challengeId }, { errors, parallelism }) => {
+          if (errors.length !== parallelism) {
+            throw new Error(`expected ${parallelism} CONFIG_LOCKED errors; got ${errors.length}`);
           }
           const snap = await store.load();
           const found = snap.challenges.find((c) => c.id === challengeId);
@@ -309,16 +309,20 @@ describe("challenge-config-store: admin-vs-user TOCTOU contract", () => {
         };
       },
       invariants: [
-        async ({ configStore, resultsStore, challengeId }, { results }) => {
-          // 10 updates + 10 createSessions, all successful at the
-          // store layer (no cross-store mutex).
+        async ({ configStore, resultsStore, challengeId }, { results, parallelism }) => {
+          // Half updates + half createSessions, all successful at the
+          // store layer (no cross-store mutex). Use ceil/floor so the
+          // split works for any parallelism, including odd values
+          // under env stress mode.
+          const expectedUpdates = Math.ceil(parallelism / 2);
+          const expectedSessions = Math.floor(parallelism / 2);
           const updates = results.filter((r) => r.kind === "update");
           const sessions = results.filter((r) => r.kind === "createSession");
-          if (updates.length !== 10) {
-            throw new Error(`expected 10 update results; got ${updates.length}`);
+          if (updates.length !== expectedUpdates) {
+            throw new Error(`expected ${expectedUpdates} update results; got ${updates.length}`);
           }
-          if (sessions.length !== 10) {
-            throw new Error(`expected 10 createSession results; got ${sessions.length}`);
+          if (sessions.length !== expectedSessions) {
+            throw new Error(`expected ${expectedSessions} createSession results; got ${sessions.length}`);
           }
           // Config snapshot: challenge still has ONE row; name matches
           // one of the parallel update candidates.
@@ -334,12 +338,12 @@ describe("challenge-config-store: admin-vs-user TOCTOU contract", () => {
               `final challenge name ${JSON.stringify(cMatches[0].name)} not one of the candidates`
             );
           }
-          // Results snapshot: 10 sessions for that challengeId.
+          // Results snapshot: N/2 sessions for that challengeId.
           const rSnap = await resultsStore.load();
           const rMatches = rSnap.sessions.filter((s) => s.challengeId === challengeId);
-          if (rMatches.length !== 10) {
+          if (rMatches.length !== expectedSessions) {
             throw new Error(
-              `expected 10 sessions for the challenge; got ${rMatches.length} ` +
+              `expected ${expectedSessions} sessions for the challenge; got ${rMatches.length} ` +
                 `(results commitQueue is not serializing)`
             );
           }

@@ -50,7 +50,19 @@
 //
 //   name            — human label; surfaces in failure messages.
 //   parallelism     — fan-out count (default 20). Override via env
-//                     CONCURRENCY_PARALLELISM. Stress mode: 200.
+//                     CONCURRENCY_PARALLELISM. Stress mode: 200. When
+//                     a test has a correctness-derived ceiling (e.g.,
+//                     a schema cap on the underlying op), use
+//                     `parallelismMax` to declare it.
+//   parallelismMax  — optional hard upper bound on effective parallelism.
+//                     If set, CONCURRENCY_PARALLELISM is CLAMPED to
+//                     min(env, parallelismMax). Use this when an
+//                     env-driven stress bump above N would violate a
+//                     correctness invariant of the underlying API
+//                     (e.g., challenge-results-store appends >12
+//                     guesses → INVALID_PUZZLE, unrelated to the
+//                     concurrency invariant under test). Default:
+//                     Infinity (env override unconstrained).
 //   repeat          — full setup→run→teardown cycles (default 1). Override
 //                     via env CONCURRENCY_REPEAT. Used for anti-flake
 //                     validation (100×) before a fixture user lands.
@@ -71,9 +83,11 @@
 //   invariants      — array of async (ctx, summary) => void. Throwers fail
 //                     the scenario. `summary` = { results, errors,
 //                     parallelism, iter, repeat }.
-//   teardown(ctx)   — cleanup. ALWAYS called, even on assertion failure.
-//                     Teardown errors are surfaced only if the run itself
-//                     succeeded (otherwise the run-error wins).
+//   teardown(ctx)   — cleanup. Called whenever setup() returned a ctx
+//                     — even if operation/invariants throw. NOT called
+//                     if setup() itself rejected (no ctx to hand back).
+//                     Teardown errors are surfaced only if the run
+//                     itself succeeded (otherwise the run-error wins).
 //
 // EXECUTION MODEL
 //   - Operations launch via `Promise.allSettled` — a single rejection
@@ -163,12 +177,21 @@ async function runConcurrencyScenario(spec) {
     throw new Error(`[concurrency-fixture] ${name}: operation() is required`);
   }
 
-  const parallelism = envInt(
-    "CONCURRENCY_PARALLELISM",
-    typeof spec.parallelism === "number" && spec.parallelism > 0
-      ? spec.parallelism
-      : PARALLELISM_DEFAULT
-  );
+  const specParallelism = typeof spec.parallelism === "number" && spec.parallelism > 0
+    ? spec.parallelism
+    : PARALLELISM_DEFAULT;
+  const parallelismMax = typeof spec.parallelismMax === "number" && spec.parallelismMax > 0
+    ? spec.parallelismMax
+    : Infinity;
+  // env CONCURRENCY_PARALLELISM bumps the default upward for stress
+  // mode. Clamp to spec.parallelismMax so a test with a correctness-
+  // derived ceiling (e.g., the schema-cap on per-puzzle guesses) can
+  // opt out of the stress bump without disabling the env override
+  // entirely. Codex flagged this on PR #109: without the clamp,
+  // CONCURRENCY_PARALLELISM=200 would surface schema-cap errors that
+  // have nothing to do with the concurrency invariant under test.
+  const envParallelism = envInt("CONCURRENCY_PARALLELISM", specParallelism);
+  const parallelism = Math.min(envParallelism, parallelismMax);
   const repeat = envInt(
     "CONCURRENCY_REPEAT",
     typeof spec.repeat === "number" && spec.repeat > 0 ? spec.repeat : REPEAT_DEFAULT

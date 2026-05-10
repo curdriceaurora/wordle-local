@@ -104,9 +104,11 @@ describe("notification-service: parallel broadcast against shared subscribers", 
       operation: async ({ svc }) =>
         svc.broadcast({ title: "T", body: "B", url: "/" }),
       invariants: [
-        async ({ subStore, fakeWebPush }) => {
-          // Per-iter expected calls = PARALLEL_BROADCASTS × SUBSCRIBER_COUNT.
-          const expectedCalls = PARALLEL_BROADCASTS * SUBSCRIBER_COUNT;
+        async ({ subStore, fakeWebPush }, { parallelism }) => {
+          // Per-iter expected calls = parallelism × SUBSCRIBER_COUNT.
+          // Use the effective parallelism so an env CONCURRENCY_PARALLELISM
+          // bump still produces a self-consistent expectation.
+          const expectedCalls = parallelism * SUBSCRIBER_COUNT;
           const got = fakeWebPush.sendNotification.mock.calls.length;
           if (got !== expectedCalls) {
             throw new Error(
@@ -169,18 +171,21 @@ describe("notification-service: broadcast racing upsert", () => {
         };
       },
       invariants: [
-        async ({ subStore }, { results }) => {
+        async ({ subStore }, { results, parallelism }) => {
           const upserts = results.filter((r) => r.kind === "upsert");
           const broadcasts = results.filter((r) => r.kind === "broadcast");
           if (broadcasts.length !== 1) {
             throw new Error(`expected 1 broadcast result; got ${broadcasts.length}`);
           }
-          if (upserts.length !== 19) {
-            throw new Error(`expected 19 upsert results; got ${upserts.length}`);
+          // Operation reserves i=0 as the broadcast; everyone else
+          // upserts. So expected upserts = parallelism - 1.
+          const expectedUpserts = parallelism - 1;
+          if (upserts.length !== expectedUpserts) {
+            throw new Error(`expected ${expectedUpserts} upsert results; got ${upserts.length}`);
           }
-          // Store should now have SEED_COUNT + 19 = 24 unique subs.
+          // Store should now have SEED_COUNT + expectedUpserts subs.
           const final = await subStore.list();
-          const expectedTotal = SEED_COUNT + 19;
+          const expectedTotal = SEED_COUNT + expectedUpserts;
           if (final.length !== expectedTotal) {
             throw new Error(
               `expected ${expectedTotal} subscribers; got ${final.length} ` +

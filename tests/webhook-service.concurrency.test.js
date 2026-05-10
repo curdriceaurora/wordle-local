@@ -23,8 +23,12 @@
 //   - We inject a stub fetchImpl so executeOnce never hits the network.
 //     The stub returns 200 with a small body and tracks per-delivery
 //     call counts.
-//   - We disable allowPrivateNetworks at construction to avoid the
-//     IP-allowlist check on local URLs; tests use 127.0.0.1.
+//   - We enable allowPrivateNetworks at construction so the
+//     IP-allowlist check accepts 127.0.0.1 (the test sink URL).
+//     Without it, assertOutboundUrlAllowed would reject the local
+//     host and every executeOnce would fail with a non-retriable
+//     WebhookSendError before the test could exercise the
+//     scheduleDelivery duplicate-guard.
 //   - claimDirectDataWriteSlot is a no-op (no backup integration
 //     needed in tests).
 
@@ -137,15 +141,15 @@ describe("webhook-service: parallel emit lands every delivery row", () => {
       },
       operation: async ({ svc }, i) => svc.emit("test.event", { i }),
       invariants: [
-        async ({ deliveries }, { results }) => {
+        async ({ deliveries }, { results, parallelism }) => {
           // Each emit() returns an array of created delivery rows
           // (one per enabled subscription that matched). With 1 sub,
-          // we expect exactly 1 row per emit call → 20 rows total.
+          // we expect exactly 1 row per emit call → N rows total.
           const enqueuedIds = results.flatMap((rows) => rows.map((r) => r.id));
           const unique = new Set(enqueuedIds);
-          if (unique.size !== 20) {
+          if (unique.size !== parallelism) {
             throw new Error(
-              `expected 20 unique delivery rows from 20 emits; got ${unique.size}`
+              `expected ${parallelism} unique delivery rows from ${parallelism} emits; got ${unique.size}`
             );
           }
           // Now verify every enqueued id is actually present in
