@@ -3,11 +3,57 @@ set -eu
 
 npm run guardrails:nits
 
-# Lint only the staged markdown files. We don't want to fail commits that
-# touch unrelated parts of the repo when an unstaged .md file in the tree
-# happens to violate a rule. markdownlint-cli2 expects file globs; pass the
-# staged paths explicitly. Skip silently if no markdown is staged.
-STAGED_MD="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.md$' || true)"
-if [ -n "$STAGED_MD" ]; then
-  npx --no-install markdownlint-cli2 $STAGED_MD
+# Lint only the staged markdown files, against the *staged* content
+# (not whatever happens to be in the working tree). Two concerns this
+# block addresses, both flagged by reviewers on PR #107:
+#
+#  1. Path safety. Filenames containing spaces, newlines, or a leading
+#     `-` would be split or interpreted as flags by an unquoted shell
+#     expansion or a newline-delimited xargs. Use null-delimited paths
+#     end-to-end (`git diff -z`, `grep -z`, `xargs -0`) so any UTF-8
+#     filename round-trips intact.
+#
+#  2. Staged ≠ worktree. Without stashing, markdownlint reads the
+#     working-tree version of each path. A partially-staged commit
+#     (some hunks staged, others not) could lint changes that aren't
+#     being committed and miss ones that are. Stash unstaged + untracked
+#     work for the lint window so the worktree mirrors the index, then
+#     pop it back.
+#
+# Skip silently when no markdown is staged.
+
+STAGED_MD_COUNT=$(git diff --cached --name-only -z --diff-filter=ACM | tr '\0' '\n' | grep -cE '\.md$' || true)
+if [ "$STAGED_MD_COUNT" -eq 0 ]; then
+  exit 0
 fi
+
+# Detect anything worth stashing: unstaged tracked changes OR untracked
+# files. We need both — `git stash --include-untracked` covers the
+# latter. If neither is present, skip the stash dance entirely (saves
+# ~100ms on the common case of `git commit -a`).
+NEEDS_STASH=""
+if ! git diff --quiet; then
+  NEEDS_STASH=1
+fi
+if [ -z "$NEEDS_STASH" ] && [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  NEEDS_STASH=1
+fi
+
+if [ -n "$NEEDS_STASH" ]; then
+  git stash push --keep-index --include-untracked --quiet --message "pre-commit-md-lint"
+fi
+
+LINT_STATUS=0
+git diff --cached --name-only -z --diff-filter=ACM \
+  | grep -zE '\.md$' \
+  | xargs -0 -r npx --no-install markdownlint-cli2 \
+  || LINT_STATUS=$?
+
+if [ -n "$NEEDS_STASH" ]; then
+  # Restore the operator's working state. If pop conflicts (rare —
+  # markdownlint doesn't modify files), we surface the conflict
+  # rather than swallow it: the operator needs to know.
+  git stash pop --quiet
+fi
+
+exit "$LINT_STATUS"

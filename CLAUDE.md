@@ -157,9 +157,15 @@ the most important.
 ## Workflow notes
 
 - The repo has Husky pre-commit + pre-push hooks. Pre-commit runs
-  `nit-guardrails` and markdownlint on staged files. Pre-push runs
+  `nit-guardrails` and (for staged `.md` files) markdownlint on the
+  *staged* content — it stashes unstaged work for the lint window so
+  partial commits lint exactly what's being committed. Pre-push runs
   the full `npm run check` for non-markdown-only diffs.
 - For docs-only PRs, pre-push correctly skips `npm run check` and
-  runs markdownlint instead. Don't override the skip.
+  exits without running any other gate at push time. The pre-commit
+  markdownlint already ran on each staged commit, so this skip is
+  safe — but it does mean `npm run check` never re-validates the
+  combined diff. Don't add docs-only changes that would only show
+  up as broken when seen as a whole.
 - The `tasks/todo.md` file tracks multi-PR initiatives. Update it
   as PRs land.
