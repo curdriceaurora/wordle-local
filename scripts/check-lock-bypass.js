@@ -104,9 +104,20 @@ const CALLER_CLAIM_STORES = new Map([
   // Schedule store: route layer (admin schedule routes) wraps
   // mutators in withSlot(); reconciler runs under the data lock.
   ["lib/schedule-store.js", new Set(["#commit", "#loadInternal"])],
-  // Admin-jobs store: write paths run under the import-queue
-  // active ref (observed by backup busy-check) or under withSlot
-  // at the route layer.
+  // Admin-jobs store: `#persist` (write path) runs under the
+  // import-queue active ref or withSlot at the route layer.
+  // `load()` is a known gap: it writes a default-or-normalized
+  // state via `writeJsonAtomicSync` even though it's reachable
+  // from read routes (`GET /api/admin/jobs` calls `getSnapshot()`
+  // → `load()`). The /api middleware blocks request handlers
+  // during the data lock, so a request-driven load can't actually
+  // race a backup in practice — but a non-request caller (boot
+  // or scheduler) could. Long-term fix: inject
+  // claimDirectDataWriteSlot into the constructor and wrap the
+  // write paths in `load()` (and drop the unconditional rewrite
+  // on every successful parse, line 212). Tracked separately.
+  // Exemption documented rather than removed because the risk is
+  // theoretical with current callers.
   ["lib/admin-jobs-store.js", new Set(["#persist", "load"])],
   // App-config store: replaceOverridesSync runs under withSlot in
   // routes/admin.js; loadSync runs at boot before any concurrency.
