@@ -160,23 +160,18 @@ function createChallengesRouter(deps) {
       return res.status(400).json({ error: "profileId is required.", code: "INVALID_REQUEST" });
     }
     try {
-      const challenge = await challengeConfigStore.findById(req.params.id);
-      if (!challenge || challenge.deleted) {
-        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
-      }
-      // Window check.
       const now = new Date();
-      if (challenge.startTime && Date.parse(challenge.startTime) > now.getTime()) {
-        return res.status(409).json({ error: "Challenge has not started yet.", code: "CHALLENGE_NOT_OPEN" });
-      }
-      if (challenge.endTime && Date.parse(challenge.endTime) <= now.getTime()) {
-        return res.status(409).json({ error: "Challenge has ended.", code: "CHALLENGE_CLOSED" });
-      }
-      if (!isLanguageAvailable(challenge.lang)) {
-        return res.status(503).json({
-          error: `Language ${challenge.lang} is not currently available.`,
-          code: "LANG_UNAVAILABLE"
-        });
+      // Pre-mutex existence check is just for fast-failing 404s. The
+      // authoritative read happens INSIDE the mutex below — without
+      // the inner re-read, a concurrent admin edit that wins the
+      // mutex first could change immutable fields (wordLength,
+      // puzzleCount, timeBudgetSeconds) while we still hold a stale
+      // snapshot, then we'd persist the first session under the OLD
+      // config while subsequent reads see the NEW config — guaranteed
+      // mismatch.
+      const initialChallenge = await challengeConfigStore.findById(req.params.id);
+      if (!initialChallenge || initialChallenge.deleted) {
+        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
       }
       // The find-or-create critical section runs under the cross-route
       // mutex shared with PUT /api/admin/challenges/:id. Without that
@@ -185,10 +180,35 @@ function createChallengesRouter(deps) {
       // update commits with hasResults=false and lets through an
       // immutable-fields edit that the store's contract forbids once
       // any session exists. Wrapping createSession (and the in-flight
-      // / replay-policy checks that gate it) in the same mutex closes
-      // that TOCTOU. Returns either a resume payload or a created one;
-      // the wrapper unwraps the discriminated result for us.
+      // / replay-policy / config-read checks that gate it) in the
+      // same mutex closes that TOCTOU. Returns a discriminated
+      // kind:"resumed"/"replay-blocked"/"lang-unavailable"/"window"/
+      // "not-found"/"created" so the response shaping stays out of
+      // the lock.
       const result = await withChallengeAdminUserMutex(async () => {
+        // Re-read the challenge from the authoritative store now that
+        // we hold the mutex. If admin's PUT won the lock first, this
+        // sees the NEW config; the session about to be created uses
+        // the same config that future reads will see. If user wins,
+        // admin's hasResults check on its turn observes the just-
+        // committed session and rejects forbidden edits.
+        const challenge = await challengeConfigStore.findById(req.params.id);
+        if (!challenge || challenge.deleted) {
+          return { kind: "not-found" };
+        }
+        // Window + lang checks against the post-mutex config.
+        if (challenge.startTime && Date.parse(challenge.startTime) > now.getTime()) {
+          return { kind: "window", code: "CHALLENGE_NOT_OPEN", message: "Challenge has not started yet." };
+        }
+        if (challenge.endTime && Date.parse(challenge.endTime) <= now.getTime()) {
+          return { kind: "window", code: "CHALLENGE_CLOSED", message: "Challenge has ended." };
+        }
+        if (!isLanguageAvailable(challenge.lang)) {
+          return {
+            kind: "lang-unavailable",
+            message: `Language ${challenge.lang} is not currently available.`
+          };
+        }
         // Resume an in-flight session if one exists for this
         // (challenge, profile). Settle on timeout first so the resume
         // path doesn't hand back a stale "in-progress" snapshot for a
@@ -197,7 +217,7 @@ function createChallengesRouter(deps) {
         if (session) {
           session = await settleIfTimedOut(session, challenge, now);
           if (session.status === "in-progress" || session.status === "pending") {
-            return { kind: "resumed", session };
+            return { kind: "resumed", session, challenge };
           }
           // Otherwise fall through and create a new session per replay policy.
         }
@@ -229,19 +249,23 @@ function createChallengesRouter(deps) {
         // serial. The outer mutex serializes against admin's update,
         // not against itself: createSession's own #commit lock handles
         // user-vs-user concurrency.
-        return {
-          kind: "created",
-          ...await challengeResultsStore.createSession({
-            challengeId: challenge.id,
-            profileId: profile.profileId,
-            profileName: profile.profileName,
-            startedAt: now.toISOString(),
-            puzzles
-          })
-        };
+        const createResult = await challengeResultsStore.createSession({
+          challengeId: challenge.id,
+          profileId: profile.profileId,
+          profileName: profile.profileName,
+          startedAt: now.toISOString(),
+          puzzles
+        });
+        return { kind: "created", session: createResult.session, resumed: createResult.resumed, challenge };
       });
+      if (result.kind === "not-found") {
+        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
+      }
+      if (result.kind === "window") {
+        return res.status(409).json({ error: result.message, code: result.code });
+      }
       if (result.kind === "resumed") {
-        const projected = projectForResponse(result.session, challenge, now);
+        const projected = projectForResponse(result.session, result.challenge, now);
         return res.status(200).json({ ok: true, session: projected, resumed: true });
       }
       if (result.kind === "replay-blocked") {
@@ -253,8 +277,11 @@ function createChallengesRouter(deps) {
       if (result.kind === "lang-unavailable") {
         return res.status(503).json({ error: result.message, code: "LANG_UNAVAILABLE" });
       }
-      // result.kind === "created" — has session + resumed flag.
-      const projected = projectForResponse(result.session, challenge, now);
+      // result.kind === "created" — has session, resumed flag, and
+      // the challenge config that was current under the mutex (used
+      // here so the projection sees the same fields the session was
+      // built with).
+      const projected = projectForResponse(result.session, result.challenge, now);
       return res.status(result.resumed ? 200 : 201).json({
         ok: true,
         session: projected,
