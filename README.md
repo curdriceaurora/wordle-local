@@ -64,28 +64,28 @@ The header has a language switcher (English, Spanish). Selection persists in the
 
 - **More player features** — timed challenges, notifications, classroom rosters: see [Highlights](#highlights).
 - **Operator controls** — provider imports, scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
-- **Hosting beyond defaults** — env vars, proxies, Tailscale: see [`advanced-settings.md`](advanced-settings.md).
+- **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](advanced-settings.md).
 
 ## Highlights
 - **Custom puzzles**: create-and-share links, no login.
 - **Daily word** with optional admin-managed schedule + auto-rotate from the active answer pool.
 - **Timed challenges** — solve N puzzles inside a server-authoritative time budget; per-challenge leaderboard.
-- **Classroom mode** — admin manages classes, rosters, and CSV reports (`docs/classroom-mode.md`).
-- **Opt-in browser push notifications** when the daily puzzle is ready (`docs/notifications.md`).
-- **Outbound webhooks** with HMAC-signed deliveries, retry queue, and recovery on boot (`docs/webhooks.md`).
-- **Backup / restore** — versioned, schema-checked archives applied atomically (`docs/backup-restore.md`).
-- **Usage analytics** — admin dashboard with offline charting (`docs/admin-analytics.md`).
-- **UI internationalization** — English + Spanish at strict per-key parity, switchable from the header (`docs/i18n.md`).
+- **Classroom mode** — admin manages classes, rosters, and CSV reports ([docs/classroom-mode.md](docs/classroom-mode.md)).
+- **Opt-in browser push notifications** when the daily puzzle is ready ([docs/notifications.md](docs/notifications.md)).
+- **Outbound webhooks** with HMAC-signed deliveries, retry queue, and recovery on boot ([docs/webhooks.md](docs/webhooks.md)).
+- **Backup / restore** — versioned, schema-checked archives applied atomically ([docs/backup-restore.md](docs/backup-restore.md)).
+- **Usage analytics** — admin dashboard with offline charting ([docs/admin-analytics.md](docs/admin-analytics.md)).
+- **UI internationalization** — English + Spanish at strict per-key parity, switchable from the header ([docs/i18n.md](docs/i18n.md)).
 
 ## Other Goodies (Optional)
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 - Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
-- Hosting behind a proxy or running with admin features? See [`advanced-settings.md`](advanced-settings.md).
+- Hosting behind a proxy or running with admin features? See [advanced-settings.md](advanced-settings.md).
 
 ## Admin Console
 - Visit `/admin` for the operator console.
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
-- Admin platform architecture contracts (schemas, config precedence, queue semantics): `docs/admin-platform-architecture-contract.md`.
+- Admin platform architecture contracts (schemas, config precedence, queue semantics): [docs/admin-platform-architecture-contract.md](docs/admin-platform-architecture-contract.md).
 
 ### Provider workflows
 - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback.
@@ -99,13 +99,13 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **Import Queue** — live status of async import jobs.
 - **Runtime Settings** — edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
 - **Profiles** — leaderboard profile management.
-- **Classes** — classroom rosters, bulk-add by names/CSV, participation reports (`docs/classroom-mode.md`).
-- **Data** — download a versioned, schema-checked backup archive and restore it atomically (`docs/backup-restore.md`).
-- **Analytics** — usage dashboard (active days, attempts distribution, language mix, hour-of-day) with offline-friendly charting (`docs/admin-analytics.md`).
-- **Schedule** — queue words against specific dates or turn on auto-rotate from the active answer pool; the runtime owns `data/word.json` from then on (`docs/scheduler.md`).
-- **Webhooks** — manage outbound subscriptions with per-event filters; view recent deliveries with status/attempts/latency. Deliveries are HMAC-signed, retried with exponential backoff, and recovered on boot (`docs/webhooks.md`).
-- **Notifications** — VAPID status, subscriber count, manual broadcast (with dry-run preview) for the daily puzzle (`docs/notifications.md`).
-- **Challenges** — define timed challenges (puzzle count, word length, time budget, max guesses, replay policy, scoring) and inspect per-challenge leaderboards (`docs/challenge-mode.md`).
+- **Classes** — classroom rosters, bulk-add by names/CSV, participation reports ([docs/classroom-mode.md](docs/classroom-mode.md)).
+- **Data** — download a versioned, schema-checked backup archive and restore it atomically ([docs/backup-restore.md](docs/backup-restore.md)).
+- **Analytics** — usage dashboard (active days, attempts distribution, language mix, hour-of-day) with offline-friendly charting ([docs/admin-analytics.md](docs/admin-analytics.md)).
+- **Schedule** — queue words against specific dates or turn on auto-rotate from the active answer pool; the runtime owns `data/word.json` from then on ([docs/scheduler.md](docs/scheduler.md)).
+- **Webhooks** — manage outbound subscriptions with per-event filters; view recent deliveries with status/attempts/latency. Deliveries are HMAC-signed, retried with exponential backoff, and recovered on boot ([docs/webhooks.md](docs/webhooks.md)).
+- **Notifications** — VAPID status, subscriber count, manual broadcast (with dry-run preview) for the daily puzzle ([docs/notifications.md](docs/notifications.md)).
+- **Challenges** — define timed challenges (puzzle count, word length, time budget, max guesses, replay policy, scoring) and inspect per-challenge leaderboards ([docs/challenge-mode.md](docs/challenge-mode.md)).
 
 ## Daily Word (API)
 Daily word endpoints remain available:
@@ -114,7 +114,7 @@ Daily word endpoints remain available:
 - `POST /api/word` — set daily word
   - Body: `{ "word": "CRANE", "lang": "en", "date": "YYYY-MM-DD" }`
   - If `date` is provided, it is interpreted in server local time.
-- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. To stop the scheduler from acting on `word.json`, delete `data/schedule.json` — the store recreates an empty default file but the reconciler then no-ops every tick (there's no separate "off" mode in v1). See `docs/scheduler.md` for the full contract.
+- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. To stop the scheduler from acting on `word.json`, delete `data/schedule.json` — the store recreates an empty default file but the reconciler then no-ops every tick (there's no separate "off" mode in v1). See [docs/scheduler.md](docs/scheduler.md) for the full contract.
 
 ## Languages & Dictionaries
 - English dictionary is baked in (`en`).
@@ -127,7 +127,7 @@ Daily word endpoints remain available:
 - Meanings are loaded from local files only; no external dictionary API calls are made at runtime.
 - To refresh local meanings from WordNet data (and rebuild indexed lookup artifacts): `npm run definitions:build`.
 - To rebuild only indexed lookup artifacts from the existing definitions file: `npm run definitions:index`.
-- For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see `advanced-settings.md`).
+- For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see [advanced-settings.md](advanced-settings.md)).
 
 ## Daily Link
 - Visit `/daily` to play the configured daily word.
@@ -146,8 +146,8 @@ Daily word endpoints remain available:
 - Streaks are tracked per profile based on consecutive winning daily entries.
 - No local import from historical browser `localStorage` stats is performed.
 - Pitfall: clearing browser storage no longer deletes server stats, but it can clear local UI state such as the active profile selection on that device.
-- Rollout and cutover notes: `docs/server-leaderboard-rollout.md`
-- Data contract details: `docs/leaderboard-data-contract.md`
+- Rollout and cutover notes: [docs/server-leaderboard-rollout.md](docs/server-leaderboard-rollout.md)
+- Data contract details: [docs/leaderboard-data-contract.md](docs/leaderboard-data-contract.md)
 
 ## Timed Challenges
 - Visit `/challenges` to see the active list (the link is hidden until at least one challenge is configured).
@@ -156,26 +156,26 @@ Daily word endpoints remain available:
 - Server-side per-letter feedback is computed on each guess; the client only renders, never decides.
 - Per-challenge leaderboards rank by score → fewer elapsed seconds → earlier finish.
 - Profile name is stored on this device (no login); used on the leaderboard.
-- Operator-facing details + replay policy mechanics: `docs/challenge-mode.md`.
+- Operator-facing details + replay policy mechanics: [docs/challenge-mode.md](docs/challenge-mode.md).
 
 ## Daily Puzzle Notifications
 - Optional opt-in browser push for the daily puzzle. Toggle in the header settings strip — the toggle is hidden if your browser doesn't support `PushManager` / Service Worker, or if the page is loaded over plain HTTP (notifications need HTTPS or `localhost`).
 - The daily fire is server-scheduled at the operator's configured local time (default `00:00`).
 - Subscriptions are pruned on `404`/`410` from the push service so dead endpoints don't accumulate.
 - VAPID keypair lives in `data/vapid-keys.json` (auto-generated on first boot, persisted thereafter).
-- Operator runbook: `docs/notifications.md`.
+- Operator runbook: [docs/notifications.md](docs/notifications.md).
 
 ## UI Languages
 - The header has a language switcher (English, Spanish). Selection persists per device.
 - Both the player and admin shells are translated; `npm run i18n:check` enforces strict per-key parity between locales in CI.
 - HTTP error JSON is also localized for the small set of routes wired through `lib/server-i18n.js` (`Accept-Language` aware).
-- Adding a new locale: drop a JSON file under `public/locales/` and update the small list of allowlists documented in `docs/i18n.md`.
+- Adding a new locale: drop a JSON file under `public/locales/` and update the small list of allowlists documented in [docs/i18n.md](docs/i18n.md).
 
 ## Security Notes
 - Rate limiting is enabled by default.
 - `TRUST_PROXY=true` is recommended behind proxies or Tailscale (`TRUST_PROXY_HOPS` defaults to `1`).
 - Container runs as a non-root user and includes `/api/health`.
-- For provider/admin releases, use `docs/admin-security-checklist.md` in addition to release gates.
+- For provider/admin releases, use [docs/admin-security-checklist.md](docs/admin-security-checklist.md) in addition to release gates.
 
 ## Troubleshooting
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
@@ -194,7 +194,7 @@ The two original exploratory tracks shipped:
 - **Admin Platform expansion** ([#6](https://github.com/curdriceaurora/wordle-local/issues/6), closed) — Admin UI, runtime settings, classes, scheduler, analytics, backup/restore, webhooks, notifications, challenges.
 - **LibreOffice English variants** ([#17](https://github.com/curdriceaurora/wordle-local/issues/17), closed) — `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA` via admin import flows, Hunspell-based guess handling, curated answer policy.
 
-Current priorities remain stability, low operational overhead, and a simple local-hosted gameplay experience. Contributions for additional UI locales (drop a JSON file under `public/locales/` per `docs/i18n.md`) and additional language variants are welcome.
+Current priorities remain stability, low operational overhead, and a simple local-hosted gameplay experience. Contributions for additional UI locales (drop a JSON file under `public/locales/` per [docs/i18n.md](docs/i18n.md)) and additional language variants are welcome.
 
 ## License
 CC0-1.0 public domain dedication. See `LICENSE`.
@@ -202,8 +202,8 @@ Third-party assets (notably the English dictionary) are licensed separately. See
 
 ## Contributing
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
-Release maintainers should also use `docs/release-checklist.md`.
-Provider/admin release changes should additionally follow `docs/provider-rollout-checklist.md`.
+Release maintainers should also use [docs/release-checklist.md](docs/release-checklist.md).
+Provider/admin release changes should additionally follow [docs/provider-rollout-checklist.md](docs/provider-rollout-checklist.md).
 
 ## Disclaimer
 This project is provided “as is”, without warranty of any kind. See `DISCLAIMER.md`.
