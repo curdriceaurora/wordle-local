@@ -61,36 +61,42 @@ TMPDIR_LINT="$(mktemp -d "${TMPDIR:-/tmp}/wordle-md-lint.XXXXXXXXXX")"
 # shellcheck disable=SC2064
 trap "rm -rf '$TMPDIR_LINT'" EXIT
 
-# Read the staged version of `.markdownlint.json` (not the worktree
-# version) and write it to the temp tree root. The lint must
-# evaluate one consistent staged snapshot for both the content and
-# the rules.
+# Always materialize a config at a known path and pass it to
+# markdownlint via `--config`. We can't rely on the CLI's
+# directory-walk discovery here: it keys off the cwd (the repo
+# root), not the linted file's tree. So if we *don't* pass --config,
+# the CLI silently falls back to the worktree `.markdownlint.json`
+# even when we deliberately wanted to use a staged version (or no
+# config at all). Setting CONFIG_PATH unconditionally and passing
+# `--config "$CONFIG_PATH"` gives the lint a single, predictable
+# rule source.
 #
 # Cases:
-#   a) File staged for deletion (still in worktree but the commit
-#      removes it). DO NOT use the worktree config — the commit
-#      will land without it. Skip the copy entirely.
-#   b) File present in the index (`git show :path` succeeds) — use
-#      the staged content, including any partial-staged edits.
-#   c) File untracked but present in the worktree — use the
-#      worktree copy. This is the legitimate fallback for
-#      operators who haven't yet committed the config.
-#   d) File missing everywhere — no copy, markdownlint falls back
-#      to its built-in defaults.
+#   a) Config staged for deletion (still in worktree but the commit
+#      removes it). Write an empty `{}` config so the lint runs with
+#      defaults, mirroring what the post-commit `npm run markdown:check`
+#      will see.
+#   b) Config in the index (`git show :path` succeeds) — use the
+#      staged content, including partial-staged edits.
+#   c) Config untracked but present in the worktree — use the
+#      worktree copy. Legitimate "operator hasn't committed the
+#      config yet" path.
+#   d) Config missing everywhere — write an empty `{}` so the lint
+#      uses markdownlint defaults; same effective behavior as case (a).
+CONFIG_PATH="$TMPDIR_LINT/.markdownlint.json"
 STAGED_FOR_DELETION=""
 if git diff --cached --diff-filter=D --name-only | grep -qFx ".markdownlint.json"; then
   STAGED_FOR_DELETION=1
 fi
 
 if [ -n "$STAGED_FOR_DELETION" ]; then
-  # Case (a). Intentionally no config copy.
-  :
-elif git show ":.markdownlint.json" > "$TMPDIR_LINT/.markdownlint.json" 2>/dev/null; then
-  # Case (b).
-  :
+  echo '{}' > "$CONFIG_PATH"   # case (a)
+elif git show ":.markdownlint.json" > "$CONFIG_PATH" 2>/dev/null; then
+  :                            # case (b)
 elif [ -f .markdownlint.json ]; then
-  # Case (c).
-  cp .markdownlint.json "$TMPDIR_LINT/.markdownlint.json"
+  cp .markdownlint.json "$CONFIG_PATH"  # case (c)
+else
+  echo '{}' > "$CONFIG_PATH"   # case (d)
 fi
 
 set --
@@ -106,16 +112,6 @@ $STAGED_MD
 HEREDOC
 
 LINT_STATUS=0
-# Pass the staged config explicitly. markdownlint-cli2's directory-
-# walking config discovery uses the cwd's tree, not the linted
-# file's tree — so even though we put `.markdownlint.json` in the
-# temp tree, a lint invoked from the repo root would skip it and
-# read the worktree config instead. `--config` short-circuits the
-# walk and pins the rule set to the staged snapshot.
-if [ -f "$TMPDIR_LINT/.markdownlint.json" ]; then
-  npx --no-install markdownlint-cli2 --config "$TMPDIR_LINT/.markdownlint.json" -- "$@" || LINT_STATUS=$?
-else
-  npx --no-install markdownlint-cli2 -- "$@" || LINT_STATUS=$?
-fi
+npx --no-install markdownlint-cli2 --config "$CONFIG_PATH" -- "$@" || LINT_STATUS=$?
 
 exit "$LINT_STATUS"

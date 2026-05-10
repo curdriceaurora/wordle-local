@@ -157,10 +157,12 @@ the most important.
 ## Workflow notes
 
 - The repo has Husky pre-commit + pre-push hooks. Pre-commit runs
-  `nit-guardrails` and (for staged `.md` files) markdownlint on the
-  *staged* content — it stashes unstaged work for the lint window so
-  partial commits lint exactly what's being committed. Pre-push runs
-  the full `npm run check` for non-markdown-only diffs.
+  `npm run guardrails:nits` and (for staged `.md` files) markdownlint
+  on the *staged* content — it extracts each staged blob via
+  `git show :path` into a temp tree (without touching the worktree)
+  and passes the staged `.markdownlint.json` to the lint via
+  `--config`. Pre-push runs the full `npm run check` for
+  non-markdown-only diffs.
 - For docs-only PRs, pre-push correctly skips `npm run check` and
   exits without running any other gate at push time. The pre-commit
   markdownlint already ran on each staged commit, so this skip is
