@@ -21,12 +21,14 @@
 // Heuristic per call site:
 //
 //   1. Walk up the enclosing function/method chain.
-//   2. If the closest named function is in `SAFE_FUNCTION_NAMES`,
-//      the call is allowed (these names are documented patterns
-//      from `lib/locks.md`).
+//   2. If any enclosing function name has a (file, name) entry in
+//      `SAFE_PER_FILE`, the call is allowed (these are documented
+//      store patterns from `lib/locks.md`; scoped per-file so a
+//      generic name like `commit`/`load` only earns the exemption
+//      inside the listed store files, not repo-wide).
 //   3. If any enclosing function body itself calls
-//      `claimDirectDataWriteSlot(...)`, the call is allowed
-//      (slot is explicitly claimed in scope).
+//      `await claimDirectDataWriteSlot(...)`, the call is allowed
+//      (slot is explicitly held in scope).
 //   4. If the file is in `ALLOWLIST_FILES`, the call is allowed
 //      (the file owns a different domain — provider artifacts,
 //      etc. — with its own coordination mechanism).
@@ -175,10 +177,20 @@ function visit(node, ctx, parentType) {
   // Open a function-like scope. We push BEFORE recursing into
   // children so calls inside the body see the enclosing chain.
   let pushed = false;
-  let methodName = null;
 
+  // For class members (MethodDefinition for normal methods,
+  // PropertyDefinition for class-field arrow methods like
+  // `bar = () => {}`), stash the resolved key name on ctx so the
+  // function-like child node (`.value`) can pick it up. Save and
+  // restore the previous value so a method whose body contains
+  // ANOTHER class definition doesn't leak the outer name into the
+  // inner methods.
+  let savedPendingMethodName;
+  let restorePending = false;
   if (node.type === "MethodDefinition" || node.type === "PropertyDefinition") {
-    methodName = methodKeyName(node.key);
+    savedPendingMethodName = ctx._pendingMethodName;
+    ctx._pendingMethodName = methodKeyName(node.key);
+    restorePending = true;
   }
 
   if (
@@ -186,16 +198,17 @@ function visit(node, ctx, parentType) {
     || node.type === "FunctionExpression"
     || node.type === "ArrowFunctionExpression"
   ) {
-    const resolvedName = nameOf(node, ctx._pendingMethodName);
+    // Consume the pending method name (if set by an enclosing
+    // MethodDefinition / PropertyDefinition). Clearing it here
+    // makes nested anonymous functions inside the method body fall
+    // back to "<anonymous>" instead of being incorrectly named the
+    // outer method — which would otherwise let a nested closure
+    // accidentally match a SAFE_PER_FILE allowlist entry.
+    const inheritedName = ctx._pendingMethodName;
+    ctx._pendingMethodName = null;
+    const resolvedName = nameOf(node, inheritedName);
     ctx.fnStack.push({ name: resolvedName, node });
     pushed = true;
-  }
-
-  // For MethodDefinition we'll resolve the name when visiting the
-  // .value (a FunctionExpression). Stash it on ctx so the
-  // FunctionExpression branch can pick it up.
-  if (node.type === "MethodDefinition") {
-    ctx._pendingMethodName = methodName;
   }
 
   // Detect the call site of interest.
@@ -264,8 +277,8 @@ function visit(node, ctx, parentType) {
     }
   }
 
-  if (node.type === "MethodDefinition") {
-    ctx._pendingMethodName = null;
+  if (restorePending) {
+    ctx._pendingMethodName = savedPendingMethodName;
   }
   if (pushed) {
     ctx.fnStack.pop();
