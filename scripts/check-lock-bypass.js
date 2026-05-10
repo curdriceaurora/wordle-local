@@ -162,6 +162,51 @@ function methodKeyName(keyNode) {
   return null;
 }
 
+// AST node types that introduce a conditional execution path
+// between their position and an outer scope. A
+// `claimDirectDataWriteSlot()` whose path back to the enclosing
+// function passes through any of these is NOT unconditional
+// within that function — code reaching the slot claim is gated
+// on the conditional, so subsequent writes in the function body
+// can't be assumed to be slot-protected.
+const CONDITIONAL_NODE_TYPES = new Set([
+  "IfStatement",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "SwitchStatement",
+  "SwitchCase",
+  "TryStatement",
+  "CatchClause",
+  "ConditionalExpression", // ternary
+  "LogicalExpression",      // &&, ||, ??
+]);
+
+// AST node types that introduce a new function scope (boundary
+// for the dominance walk).
+const FUNCTION_NODE_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+
+// Walk ctx.nodeStack from innermost (the call site) outward and
+// determine whether the slot claim's path to its enclosing function
+// is unconditional. Returns true ONLY if every ancestor between
+// the call and the function body is non-conditional. Once a
+// FunctionDeclaration/Expression/ArrowFunctionExpression is
+// encountered, the walk stops at that scope boundary.
+function isClaimUnconditional(nodeStack) {
+  for (let i = nodeStack.length - 1; i >= 0; i -= 1) {
+    const n = nodeStack[i];
+    if (CONDITIONAL_NODE_TYPES.has(n.type)) return false;
+    if (FUNCTION_NODE_TYPES.has(n.type)) return true;
+  }
+  return false;
+}
+
 // Recursive AST visitor. Tracks a stack of enclosing function-like
 // nodes (with their resolved names) and a parallel stack of body
 // strings (for the "any enclosing fn body claims the slot" check).
@@ -173,6 +218,7 @@ function methodKeyName(keyNode) {
 // runs as if the slot weren't claimed.
 function visit(node, ctx, parentType) {
   if (!node || typeof node !== "object" || !node.type) return;
+  ctx.nodeStack.push(node);
 
   // Open a function-like scope. We push BEFORE recursing into
   // children so calls inside the body see the enclosing chain.
@@ -241,15 +287,26 @@ function visit(node, ctx, parentType) {
       });
     }
     if (calleeName === SLOT_CLAIM_NAME) {
-      // Only treat the claim as effective if it's awaited.
-      // `claimDirectDataWriteSlot()` returns a Promise; the slot
-      // isn't actually held until the await resolves. An expression
-      // like `const release = claimDirectDataWriteSlot();` (no
-      // await) returns a pending Promise and the next line runs
-      // as if the slot weren't claimed — exactly the bypass codex
-      // P2 named on PR #108 round 5.
+      // Only treat the claim as effective if it satisfies BOTH:
+      //   * It's awaited. `claimDirectDataWriteSlot()` returns a
+      //     Promise; the slot isn't actually held until the await
+      //     resolves. An expression like
+      //     `const release = claimDirectDataWriteSlot();` (no
+      //     await) returns a pending Promise and the next line
+      //     runs as if the slot weren't claimed.
+      //   * It's UNCONDITIONAL within the enclosing function.
+      //     A guarded claim like
+      //     `if (needsSlot) await claimDirectDataWriteSlot();`
+      //     only runs on paths where `needsSlot` is true; later
+      //     writes in the same function aren't actually
+      //     protected on the other branch. The unconditional
+      //     check walks the AST node-stack from the claim site
+      //     back to the enclosing function and rejects if any
+      //     conditional construct (if/for/try/switch/?:/&&/||)
+      //     sits between them.
       const isAwaited = parentType === "AwaitExpression";
-      if (isAwaited) {
+      const isUnconditional = isClaimUnconditional(ctx.nodeStack);
+      if (isAwaited && isUnconditional) {
         // Mark only the INNERMOST enclosing function as having an
         // explicit claim. Marking ancestors would incorrectly
         // accept an unrelated `writeJsonAtomic(...)` in an outer
@@ -283,6 +340,7 @@ function visit(node, ctx, parentType) {
   if (pushed) {
     ctx.fnStack.pop();
   }
+  ctx.nodeStack.pop();
 }
 
 // ---------- Per-file check ----------
@@ -302,7 +360,7 @@ function checkFile(filePath) {
     return errors;
   }
 
-  const ctx = { fnStack: [], calls: [], _pendingMethodName: null };
+  const ctx = { fnStack: [], nodeStack: [], calls: [], _pendingMethodName: null };
   visit(ast, ctx);
 
   const safeNamesForThisFile = SAFE_PER_FILE.get(rel) || new Set();
