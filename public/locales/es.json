@@ -126,6 +126,8 @@
   },
   "admin": {
     "title": "Administración",
+    "adminKeyLabel": "Clave de administración",
+    "workspaceTitle": "Espacio de proveedores",
     "unlock": "Desbloquear",
     "unlockHint": "Introduce la clave de administración para gestionar proveedores, ajustes de ejecución y estadísticas.",
     "lockSession": "Bloquear sesión",
@@ -162,5 +164,10 @@
     "error": "Error",
     "back": "Atrás",
     "ok": "Aceptar"
+  },
+  "serverError": {
+    "challengeNotFound": "Reto no encontrado.",
+    "sessionNotFound": "Sesión no encontrada.",
+    "challengeModeDisabled": "El modo de reto está deshabilitado (CHALLENGE_MODE_ENABLED=false)."
   }
 }

@@ -1554,7 +1554,14 @@ init();
 // nodes. The `<html lang>` attribute is set pre-paint by the inline
 // bootstrap in index.html; this block does the actual fetch + DOM
 // translation pass and wires the dropdown.
-(async function bootstrapI18n() {
+//
+// Exposes `window.i18nReady` as a promise that resolves once messages
+// are loaded so async/dynamic UI code (e.g. challenge list rendering
+// that injects buttons via i18n.t() at construction time) can await
+// it before producing strings — otherwise t() returns the literal key
+// before fetch completes and the resulting buttons can't be repaired
+// by a later updateDOM() pass.
+window.i18nReady = (async function bootstrapI18n() {
   if (typeof window === "undefined" || !window.i18n) return;
   try {
     await window.i18n.init();
@@ -1562,6 +1569,11 @@ init();
     // init swallows network errors and falls back to English; nothing
     // to do here beyond letting the page render with literal keys.
   }
+})();
+
+(async function wireLanguageSwitcher() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  await window.i18nReady;
   const langSelect = document.getElementById("uiLangSelect");
   if (!langSelect) return;
   langSelect.value = window.i18n.getCurrentLocale();
@@ -1570,6 +1582,12 @@ init();
     try {
       await window.i18n.loadLocale(next);
       window.i18n.updateDOM();
+      // Re-render dynamic challenge list so the buttons created via
+      // i18n.t() pick up the new locale. The list panel is the only
+      // place in this file that injects translated text into newly-
+      // created DOM nodes (vs. data-i18n-bound markup, which
+      // updateDOM() handles automatically).
+      if (typeof renderChallengeList === "function") renderChallengeList();
     } catch (_err) {
       // Roll the dropdown back to the active locale on failure so the
       // UI matches what's actually loaded.
@@ -2329,7 +2347,15 @@ async function showChallengeLeaderboard(challengeId) {
 // Route the player to the challenge list when /challenges is in the URL,
 // or surface the nav link otherwise. This intentionally keeps the
 // existing hash-routing model and just hides/shows panels.
-function initChallengesUI() {
+async function initChallengesUI() {
+  // Wait for i18n messages to load before fetching/rendering — the
+  // challenge cards' Start/Leaderboard buttons are built with
+  // window.i18n.t() inline, so rendering before init() resolves
+  // would leave literal `challenge.startBtn` strings on screen with
+  // no data-i18n binding for updateDOM() to repair.
+  if (window.i18nReady) {
+    try { await window.i18nReady; } catch (_e) { /* fall through with English fallback */ }
+  }
   loadChallengeList().then(() => {
     renderChallengeList();
     if (location.pathname === '/challenges') {

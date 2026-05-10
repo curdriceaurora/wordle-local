@@ -126,6 +126,8 @@
   },
   "admin": {
     "title": "Admin",
+    "adminKeyLabel": "Admin key",
+    "workspaceTitle": "Provider Workspace",
     "unlock": "Unlock",
     "unlockHint": "Enter the admin key to manage providers, runtime settings, and stats.",
     "lockSession": "Lock session",
@@ -162,5 +164,10 @@
     "error": "Error",
     "back": "Back",
     "ok": "OK"
+  },
+  "serverError": {
+    "challengeNotFound": "Challenge not found.",
+    "sessionNotFound": "Session not found.",
+    "challengeModeDisabled": "Challenge mode is disabled (CHALLENGE_MODE_ENABLED=false)."
   }
 }

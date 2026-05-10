@@ -34,6 +34,13 @@ describe("parseAcceptLanguage", () => {
     expect(parseAcceptLanguage("en;q=0.5,es;q=2")).toBe("es");
   });
 
+  test("malformed q (e.g. q=.) is ignored — no NaN poisoning the comparator", () => {
+    // Without the Number.isFinite guard, parseFloat("." ) returns NaN
+    // and the sort comparator becomes unstable. The default q=1
+    // should be retained for any non-finite parse result.
+    expect(parseAcceptLanguage("en;q=0.5,es;q=.")).toBe("es");
+  });
+
   test("bounded against pathological input (>10 entries)", () => {
     const huge = Array(50).fill("xx").join(",") + ",es";
     // Only first 10 entries parsed; "xx" repeated → no supported lang.

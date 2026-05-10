@@ -4072,11 +4072,19 @@ if (challengesAdminNavBtn) {
 }
 
 // ── Admin i18n bootstrap + language switcher ──────────────────────────
-(async function bootstrapAdminI18n() {
+// Same shape as the player shell. `window.i18nReady` is exposed for
+// any future admin code that needs to await the first message load
+// before rendering runtime-generated copy.
+window.i18nReady = (async function bootstrapAdminI18n() {
   if (typeof window === "undefined" || !window.i18n) return;
   try {
     await window.i18n.init();
   } catch (_err) { /* fail open */ }
+})();
+
+(async function wireAdminLanguageSwitcher() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  await window.i18nReady;
   const langSelect = document.getElementById("adminUiLangSelect");
   if (!langSelect) return;
   langSelect.value = window.i18n.getCurrentLocale();
@@ -4085,6 +4093,12 @@ if (challengesAdminNavBtn) {
     try {
       await window.i18n.loadLocale(next);
       window.i18n.updateDOM();
+      // The admin shell builds plenty of runtime tables/forms whose
+      // textContent is hardcoded English at the moment. Migration of
+      // those is incremental — `data-i18n` markup re-renders here,
+      // but dynamic-rendered admin copy reverts to English on
+      // re-render until each tab is migrated. Documented in
+      // docs/i18n.md as "remaining work".
     } catch (_err) {
       langSelect.value = window.i18n.getCurrentLocale();
     }

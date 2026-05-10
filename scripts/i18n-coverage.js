@@ -31,7 +31,20 @@ const SCAN_FILES = [
 const PLURAL_SUFFIXES = ["_zero", "_one", "_two", "_few", "_many", "_other"];
 
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (err) {
+    console.error(`[i18n:check] could not read ${filePath}: ${err.message}`);
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error(`[i18n:check] ${filePath} is not valid JSON: ${err.message}`);
+    process.exit(1);
+  }
+  return undefined;
 }
 
 function collectKeys(obj, prefix = "") {
@@ -168,6 +181,7 @@ function main() {
     "error.",
     "share.",
     "stats.",
+    "serverError.",
     "play.solved",
     "play.guess",
     "challenge.timer"

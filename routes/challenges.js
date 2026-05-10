@@ -2,6 +2,7 @@
 
 const express = require("express");
 const challengeEngine = require("../lib/challenge-engine");
+const { translateForRequest } = require("../lib/server-i18n");
 
 /**
  * Player-facing timed-challenge endpoints.
@@ -61,10 +62,10 @@ function createChallengesRouter(deps) {
     return res.status(503).json({ error: "Challenge request failed.", code: "INTERNAL" });
   }
 
-  function ensureEnabled(res) {
+  function ensureEnabled(req, res) {
     if (!challengeModeEnabled) {
       res.status(404).json({
-        error: "Challenge mode is disabled (CHALLENGE_MODE_ENABLED=false).",
+        error: translateForRequest(req, "serverError.challengeModeDisabled"),
         code: "CHALLENGE_MODE_DISABLED"
       });
       return false;
@@ -129,7 +130,7 @@ function createChallengesRouter(deps) {
   }
 
   router.get("/api/challenges", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     try {
       const all = await challengeConfigStore.listActive();
       const visible = all.map((c) => ({
@@ -151,7 +152,7 @@ function createChallengesRouter(deps) {
   });
 
   router.post("/api/challenges/:id/start", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     const profile = resolveProfile(req.body);
     if (!profile) {
       return res.status(400).json({ error: "profileId is required.", code: "INVALID_REQUEST" });
@@ -159,7 +160,7 @@ function createChallengesRouter(deps) {
     try {
       const challenge = await challengeConfigStore.findById(req.params.id);
       if (!challenge || challenge.deleted) {
-        return res.status(404).json({ error: "Challenge not found.", code: "CHALLENGE_NOT_FOUND" });
+        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
       }
       // Window check.
       const now = new Date();
@@ -232,14 +233,14 @@ function createChallengesRouter(deps) {
     }
     const session = await challengeResultsStore.findById(req.params.sessionId);
     if (!session || session.challengeId !== challenge.id) {
-      res.status(404).json({ error: "Session not found.", code: "SESSION_NOT_FOUND" });
+      res.status(404).json({ error: translateForRequest(req, "serverError.sessionNotFound"), code: "SESSION_NOT_FOUND" });
       return null;
     }
     return { challenge, session };
   }
 
   router.get("/api/challenges/:id/sessions/:sessionId", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     try {
       const ctx = await loadSessionAndChallenge(req, res);
       if (!ctx) return;
@@ -252,7 +253,7 @@ function createChallengesRouter(deps) {
   });
 
   router.post("/api/challenges/:id/sessions/:sessionId/guess", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     try {
       const ctx = await loadSessionAndChallenge(req, res);
       if (!ctx) return;
@@ -358,11 +359,11 @@ function createChallengesRouter(deps) {
   });
 
   router.get("/api/challenges/:id/leaderboard", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     try {
       const challenge = await challengeConfigStore.findById(req.params.id);
       if (!challenge || challenge.deleted) {
-        return res.status(404).json({ error: "Challenge not found.", code: "CHALLENGE_NOT_FOUND" });
+        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
       }
       const sessions = await challengeResultsStore.findCompletedForChallenge(challenge.id);
       const rows = challengeEngine.buildLeaderboard({ challenge, sessions });
@@ -386,7 +387,7 @@ function createChallengesRouter(deps) {
   });
 
   router.post("/api/challenges/:id/sessions/:sessionId/finish", async (req, res) => {
-    if (!ensureEnabled(res)) return;
+    if (!ensureEnabled(req, res)) return;
     try {
       const ctx = await loadSessionAndChallenge(req, res);
       if (!ctx) return;
