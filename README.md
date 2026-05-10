@@ -128,13 +128,17 @@ curl -X POST http://localhost:3000/api/word \
   -d '{"word":"CRANE","lang":"en"}'
 ```
 
-### Provider workflows
+### Provider workflows (dictionary imports)
 
-- import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback.
-- async import queue with persisted job history under `data/admin-jobs.json`.
-- check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`).
-- enable/disable imported variants without CLI usage.
-- Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
+A *provider* is a source of dictionary data — Hunspell-format word/affix files that the runtime turns into the guess and answer dictionaries used by the game. English (`en`) ships baked-in; the Providers tab lets an operator add or refresh additional language **variants** (currently `en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) without restarting the server or touching a CLI.
+
+What the Providers tab can do:
+
+- **Import / re-import** a language variant via either remote fetch (pinned commit + required SHA-256 checksums for the `.dic` and `.aff` files) or manual upload (drop a `.dic` + `.aff` pair into the form). Re-import is how you pick up upstream updates.
+- **Async import queue** so a long-running import doesn't block the request; job history is persisted under `data/admin-jobs.json` so an operator can audit recent imports across server restarts.
+- **Check for upstream updates on demand** — the tab pings each variant's pinned source and reports `up-to-date`, `update-available`, `unknown`, or `error` per variant.
+- **Enable / disable imported variants** — disabled variants disappear from the player UI's language picker without losing the imported data on disk.
+- **Family filter mode** — choose `denylist-only` (default — block known-bad words) or `allowlist-required` (only words on the allowlist are eligible) to scope what counts as a valid guess.
 
 ### Tabs
 
