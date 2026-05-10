@@ -430,6 +430,29 @@ describe("concurrency-fixture: teardown semantics", () => {
       })
     ).rejects.toThrow(/primary/);
   });
+
+  test("teardown is NOT called when setup() rejects", async () => {
+    // Docstring promises teardown is skipped if setup() never returned
+    // a ctx. A regression that started calling teardown with undefined
+    // would only be caught at the downstream-suite layer (e.g., the
+    // notification-service tests' cleanupDir would receive `undefined`
+    // and rmdir from /tmp). Lock the contract here.
+    const teardownCalls = [];
+    await expect(
+      runConcurrencyScenario({
+        name: "setup-reject",
+        parallelism: 2,
+        setup: () => {
+          throw new Error("setup-boom");
+        },
+        operation: async () => 1,
+        teardown: (ctx) => {
+          teardownCalls.push(ctx);
+        }
+      })
+    ).rejects.toThrow(/setup-boom/);
+    expect(teardownCalls).toEqual([]);
+  });
 });
 
 describe("concurrency-fixture: integration smoke against a tiny in-memory store", () => {

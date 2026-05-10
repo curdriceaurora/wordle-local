@@ -115,7 +115,22 @@ describe("challenge-config-store: parallel create lands every challenge", () => 
 });
 
 describe("challenge-config-store: parallel update converges with last-writer-wins", () => {
-  test("N parallel update() of the same challenge: one consistent final state", async () => {
+  test("N parallel update() of the same challenge: final state is consistent (last-writer-wins)", async () => {
+    // Each call rewrites only `name`, so a broken-commitQueue
+    // implementation that lets every caller clone the same baseline
+    // (drop the previous writes) STILL leaves one row with a
+    // candidate name — meaning this test alone can't distinguish
+    // serialized commits from racy ones. Codex flagged this on
+    // PR #109 round 1.
+    //
+    // The strong commit-queue serialization proof for this store
+    // lives in the "N parallel create()" test above: lost writes
+    // are directly observable there because each create generates
+    // a UNIQUE id and a dropped commit drops an id.
+    //
+    // This test still earns its keep as a CONSISTENCY check under
+    // contention: exactly one row, valid candidate name, no schema
+    // violations.
     await runConcurrencyScenario({
       name: "challenge-config-store: parallel update",
       parallelism: 20,
@@ -159,11 +174,22 @@ describe("challenge-config-store: parallel update converges with last-writer-win
   }, 60000);
 
   test("N parallel update() with hasResults=true: all reject; store unchanged", async () => {
-    // CONFIG_LOCKED guard must be enforced atomically inside the
-    // commit closure, NOT by an upstream cache check that could
-    // miss a race. We verify by firing 20 parallel updates with
-    // hasResults=true and asserting every caller rejects with
-    // CONFIG_LOCKED + the store name is unchanged.
+    // This is the reject-CONTRACT test: when every caller passes
+    // `hasResults: true`, every parallel update must reject with
+    // CONFIG_LOCKED and the store state must not mutate.
+    //
+    // NOTE on what this test DOES NOT cover: CodeRabbit (PR #109
+    // round 1) correctly observed that all callers passing
+    // `hasResults: true` means the CONFIG_LOCKED guard is
+    // unconditionally engaged — the test never exercises the
+    // observation-racing-the-write TOCTOU described in
+    // `lib/locks.md`. To test that, the caller would need to
+    // compute `hasResults` from a fresh read of the results store
+    // BETWEEN commits, racing concurrent createSession calls. That
+    // belongs at the route layer (where the mutex
+    // `withChallengeAdminUserMutex` actually lives — see the
+    // TOCTOU-contract test below). Here we just pin the reject
+    // path is concurrency-safe.
     await runConcurrencyScenario({
       name: "challenge-config-store: parallel update (locked)",
       parallelism: 20,

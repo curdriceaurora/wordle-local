@@ -229,11 +229,25 @@ describe("schedule-store: duplicate-detection under concurrency", () => {
 });
 
 describe("schedule-store: updateEntry convergence", () => {
-  test("parallel updateEntry on the same row: every commit runs, final state is consistent", async () => {
-    // Seed one row, then fire N parallel updates against it. The
-    // commitQueue ensures each update sees the previous one's
-    // effect; the final `word` must match one of the N candidates
-    // (last-writer-wins is fine), and the row count must stay at 1.
+  test("parallel updateEntry on the same row: final state is consistent (last-writer-wins)", async () => {
+    // Seed one row, then fire N parallel updates against it. Each
+    // call replaces only `word`, so a lost-write race would still
+    // produce a one-row final state with one of the candidate
+    // words — meaning this test ALONE cannot distinguish a
+    // serialized commit chain from a broken one. Codex flagged
+    // this on PR #109 round 1.
+    //
+    // The actual proof of commit-queue serialization for
+    // schedule-store lives in the "addEntry × N parallel against
+    // distinct keys" test above: lost writes are directly
+    // observable there because each commit appends a UNIQUE row
+    // and a dropped commit drops a row.
+    //
+    // This test still earns its keep as a CONSISTENCY check: under
+    // arbitrary interleavings, the final state must be (a) exactly
+    // one row, (b) with a valid candidate word, (c) passing the
+    // store's own normalize. A buggy implementation that left two
+    // rows or a malformed word would fail here.
     await runConcurrencyScenario({
       name: "schedule-store: parallel updateEntry",
       parallelism: 20,

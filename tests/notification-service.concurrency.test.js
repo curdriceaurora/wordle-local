@@ -41,33 +41,47 @@ function tempDir() {
 }
 
 async function cleanupDir(dir) {
+  // Nil-safe so this can be called from a teardown that received a
+  // partial-or-undefined ctx (e.g., setup raced its own failure).
+  if (!dir) return;
   await fsp.rm(dir, { recursive: true, force: true });
 }
 
 async function buildService(extra = {}) {
+  // Create the temp dir up front so we can clean it on any subsequent
+  // failure path. Without this guard, a throw inside subStore.load()
+  // or new NotificationService(...) would leak the dir — CodeRabbit
+  // caught this on PR #109 round 1 (notification-service test was
+  // creating the dir BEFORE awaiting subStore.load()). We never
+  // exit this function with an orphaned dir.
   const dir = tempDir();
-  const subStore = new PushSubscriptionStore({
-    filePath: path.join(dir, "push.json")
-  });
-  await subStore.load();
-  const fakeKeys = {
-    publicKey: "B".repeat(87),
-    privateKey: "p".repeat(43),
-    subject: "mailto:test@example.com"
-  };
-  const fakeWebPush = extra.webPush || {
-    setVapidDetails: () => {},
-    sendNotification: async () => ({ statusCode: 200 })
-  };
-  const svc = new NotificationService({
-    subscriptionStore: subStore,
-    enabled: true,
-    webPush: fakeWebPush,
-    getPushKeys: () => fakeKeys,
-    logger: { warn: () => {}, error: () => {}, log: () => {} },
-    ...extra
-  });
-  return { svc, subStore, fakeWebPush, dir };
+  try {
+    const subStore = new PushSubscriptionStore({
+      filePath: path.join(dir, "push.json")
+    });
+    await subStore.load();
+    const fakeKeys = {
+      publicKey: "B".repeat(87),
+      privateKey: "p".repeat(43),
+      subject: "mailto:test@example.com"
+    };
+    const fakeWebPush = extra.webPush || {
+      setVapidDetails: () => {},
+      sendNotification: async () => ({ statusCode: 200 })
+    };
+    const svc = new NotificationService({
+      subscriptionStore: subStore,
+      enabled: true,
+      webPush: fakeWebPush,
+      getPushKeys: () => fakeKeys,
+      logger: { warn: () => {}, error: () => {}, log: () => {} },
+      ...extra
+    });
+    return { svc, subStore, fakeWebPush, dir };
+  } catch (err) {
+    await cleanupDir(dir).catch(() => {});
+    throw err;
+  }
 }
 
 async function seedSubscriptions(subStore, count) {

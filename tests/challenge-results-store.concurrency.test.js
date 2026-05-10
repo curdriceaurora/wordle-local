@@ -272,58 +272,71 @@ describe("challenge-results-store: transactionalUpdate no-drop-guess", () => {
     });
   }, 60000);
 
-  test("transactionalUpdate rejects mutator output that changes id/challengeId/profileId", async () => {
-    // Identity invariants matter — without enforcement, a buggy
-    // mutator could "migrate" a session under another user. We
-    // verify the rejection path is concurrency-safe: 20 parallel
-    // bad mutators all fail with INVALID_REQUEST and leave the
-    // session unchanged.
-    await runConcurrencyScenario({
-      name: "challenge-results-store: parallel transactionalUpdate identity-violation",
-      parallelism: 20,
-      setup: async () => {
-        const { dir, filePath } = tempFilePath();
-        const store = new ChallengeResultsStore({ filePath, now: frozenNow() });
-        await store.load();
-        const { session } = await store.createSession({
-          challengeId: makeChallengeId(),
-          profileId: makeProfileId(),
-          profileName: "Tester",
-          puzzles: basePuzzles()
-        });
-        return { store, sessionId: session.id, dir };
-      },
-      operation: async ({ store, sessionId }) =>
-        store.transactionalUpdate(sessionId, (s) => {
-          const next = JSON.parse(JSON.stringify(s));
-          next.profileId = "evil-profile";
-          return next;
-        }),
-      acceptableErrors: ["INVALID_REQUEST"],
-      expectedSuccesses: 0,
-      invariants: [
-        async ({ store, sessionId }, { errors, parallelism }) => {
-          if (errors.length !== parallelism) {
-            throw new Error(
-              `expected ${parallelism} errors; got ${errors.length}`
-            );
+  // Identity-violation rejection paths for each of the three immutable
+  // fields. Without this, a regression that allowed `id` or
+  // `challengeId` mutations would still pass the legacy single-field
+  // test — CodeRabbit caught this on PR #109 round 1.
+  describe.each([
+    ["id", "evil-id"],
+    ["challengeId", "evil-challenge"],
+    ["profileId", "evil-profile"]
+  ])("transactionalUpdate rejects mutator output that changes %s", (field, evilValue) => {
+    test("20 parallel violators all fail with INVALID_REQUEST; session unchanged", async () => {
+      await runConcurrencyScenario({
+        name: `challenge-results-store: parallel transactionalUpdate ${field}-violation`,
+        parallelism: 20,
+        setup: async () => {
+          const { dir, filePath } = tempFilePath();
+          const store = new ChallengeResultsStore({ filePath, now: frozenNow() });
+          await store.load();
+          const { session } = await store.createSession({
+            challengeId: makeChallengeId(),
+            profileId: makeProfileId(),
+            profileName: "Tester",
+            puzzles: basePuzzles()
+          });
+          return {
+            store,
+            sessionId: session.id,
+            originalSession: session,
+            dir
+          };
+        },
+        operation: async ({ store, sessionId }) =>
+          store.transactionalUpdate(sessionId, (s) => {
+            const next = JSON.parse(JSON.stringify(s));
+            next[field] = evilValue;
+            return next;
+          }),
+        acceptableErrors: ["INVALID_REQUEST"],
+        expectedSuccesses: 0,
+        invariants: [
+          async ({ store, sessionId, originalSession }, { errors, parallelism }) => {
+            if (errors.length !== parallelism) {
+              throw new Error(
+                `expected ${parallelism} errors; got ${errors.length}`
+              );
+            }
+            // Compare against the original session captured in
+            // setup — each immutable field must be untouched.
+            const session = await store.findById(sessionId);
+            if (!session) throw new Error("session vanished");
+            for (const immutable of ["id", "challengeId", "profileId"]) {
+              if (session[immutable] !== originalSession[immutable]) {
+                throw new Error(
+                  `session.${immutable} mutated: got ${session[immutable]}, expected ${originalSession[immutable]}`
+                );
+              }
+            }
+            if (session.status !== "in-progress") {
+              throw new Error(
+                `session.status changed: got ${session.status}`
+              );
+            }
           }
-          // Session must still exist with original profileId.
-          const session = await store.findById(sessionId);
-          if (!session) throw new Error("session vanished");
-          if (session.profileId !== makeProfileId()) {
-            throw new Error(
-              `session.profileId mutated: got ${session.profileId}, expected ${makeProfileId()}`
-            );
-          }
-          if (session.status !== "in-progress") {
-            throw new Error(
-              `session.status changed: got ${session.status}`
-            );
-          }
-        }
-      ],
-      teardown: async ({ dir }) => cleanupDir(dir)
-    });
-  }, 60000);
+        ],
+        teardown: async ({ dir }) => cleanupDir(dir)
+      });
+    }, 60000);
+  });
 });
