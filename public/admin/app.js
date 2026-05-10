@@ -4071,6 +4071,56 @@ if (challengesAdminNavBtn) {
   });
 }
 
+// ── Admin i18n bootstrap + language switcher ──────────────────────────
+// Same shape as the player shell. `window.i18nReady` is exposed for
+// any future admin code that needs to await the first message load
+// before rendering runtime-generated copy.
+window.i18nReady = (async function bootstrapAdminI18n() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  try {
+    await window.i18n.init();
+  } catch (_err) { /* fail open */ }
+})();
+
+(async function wireAdminLanguageSwitcher() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  await window.i18nReady;
+  const langSelect = document.getElementById("adminUiLangSelect");
+  if (!langSelect) return;
+  langSelect.value = window.i18n.getCurrentLocale();
+  langSelect.addEventListener("change", async () => {
+    const next = String(langSelect.value || "en");
+    try {
+      await window.i18n.loadLocale(next);
+      // updateDOM() runs inside loadLocale() now; static markup with
+      // data-i18n is already retranslated. Dynamic admin tables
+      // (provider rows, profile lists, etc.) build their cells with
+      // hardcoded English textContent that doesn't carry data-i18n,
+      // so we re-fire the active tab's loader to redraw those cells.
+      // Each loader is idempotent — calling it after a locale switch
+      // just rebuilds the table from the cached snapshot. Soft-allow
+      // any loader the active tab doesn't have (e.g. before unlock).
+      const reloaders = [
+        ["providers", typeof loadProviders === "function" ? loadProviders : null],
+        ["profiles", typeof loadProfiles === "function" ? loadProfiles : null],
+        ["classes", typeof loadClasses === "function" ? loadClasses : null],
+        ["analytics", typeof loadAnalytics === "function" ? loadAnalytics : null],
+        ["schedule", typeof loadSchedule === "function" ? loadSchedule : null],
+        ["webhooks", typeof loadWebhooks === "function" ? loadWebhooks : null],
+        ["notifications", typeof loadNotifications === "function" ? loadNotifications : null],
+        ["challenges", typeof loadChallengesAdmin === "function" ? loadChallengesAdmin : null]
+      ];
+      for (const [tab, fn] of reloaders) {
+        if (state?.unlocked && state?.activeTab === tab && fn) {
+          fn({ announce: false }).catch(() => {});
+        }
+      }
+    } catch (_err) {
+      langSelect.value = window.i18n.getCurrentLocale();
+    }
+  });
+})();
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

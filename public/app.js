@@ -196,13 +196,29 @@ function showErrorPanel(message) {
   createPanel.classList.add("hidden");
   playPanel.classList.add("hidden");
   errorPanel.classList.remove("hidden");
-  errorMessageEl.textContent = message || "That link doesn't work. Let's make a new puzzle.";
+  // The link-failure message is owned by JS (it's never in markup),
+  // so localize it here at render time. Callers pass `null` for the
+  // generic case so this function can pick the localized default.
+  // The only callers passing an explicit string forward a
+  // server-supplied `data.error` from /api/puzzle (initPlay's
+  // result.message). Today /api/puzzle still returns English error
+  // strings — it isn't wired through translateForRequest yet, so the
+  // forwarded text is English regardless of UI locale. That gap is
+  // tracked separately; when that route is migrated, no change is
+  // needed here because the forwarded string will already be
+  // localized at the source.
+  const fallbackMsg = "That link doesn't work. Let's make a new puzzle.";
+  errorMessageEl.textContent = message
+    || (window.i18n ? window.i18n.t("error.linkFailed") : fallbackMsg);
 
   let remaining = 10;
-  errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+  const fmtCountdown = (n) => (window.i18n
+    ? window.i18n.t("error.goingBack", { seconds: n })
+    : `Going back in ${n}s...`);
+  errorCountdownEl.textContent = fmtCountdown(remaining);
   errorTimer = setInterval(() => {
     remaining -= 1;
-    errorCountdownEl.textContent = `Going back in ${remaining}s...`;
+    errorCountdownEl.textContent = fmtCountdown(remaining);
     if (remaining <= 0) {
       clearInterval(errorTimer);
       window.location.href = "/";
@@ -898,11 +914,19 @@ async function submitGuess() {
     if (data.isCorrect) {
       locked = true;
       await upsertDailyResult(true, currentRow + 1, maxGuesses);
-      const suffix =
+      const meaning =
         typeof data.answerMeaning === "string" && data.answerMeaning.trim()
-          ? ` Meaning: ${data.answerMeaning.trim()}`
+          ? data.answerMeaning.trim()
           : "";
-      setMessage(`Solved in ${currentRow + 1}/${maxGuesses}!${suffix}`);
+      const baseMessage = window.i18n
+        ? window.i18n.t("play.solvedFormat", { tries: currentRow + 1, max: maxGuesses })
+        : `Solved in ${currentRow + 1}/${maxGuesses}!`;
+      const suffix = meaning
+        ? ` ${window.i18n
+          ? window.i18n.t("play.solvedMeaningPrefix", { meaning })
+          : `Meaning: ${meaning}`}`
+        : "";
+      setMessage(`${baseMessage}${suffix}`);
       return;
     }
 
@@ -1211,7 +1235,13 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     endPerfMeasure(initTimer, "failed");
-    return { ok: false, message: data.error || "That link doesn't work." };
+    // Return null (not an English literal) when the server didn't
+    // supply an error string — showErrorPanel(null) then picks the
+    // localized error.linkFailed default. /api/puzzle currently
+    // returns English error strings; if we ever wire that endpoint
+    // through translateForRequest (it's challenge-routes-only today),
+    // those will already be localized when forwarded as-is here.
+    return { ok: false, message: data.error || null };
   }
 
   cols = data.length;
@@ -1448,6 +1478,14 @@ strictToggle.addEventListener("change", () => {
  * If a URL-provided puzzle link fails validation, an error panel is shown with a generic link-failure message.
  */
 async function init() {
+  // Wait for i18n messages to land BEFORE we route. Without this, a
+  // malformed shared/daily link would invoke showErrorPanel() with
+  // hardcoded English copy because the locale fetch hadn't completed
+  // yet. window.i18nReady is set up immediately above this call so
+  // it's always defined by the time init() runs.
+  if (window.i18nReady) {
+    try { await window.i18nReady; } catch (_e) { /* fall back to English */ }
+  }
   await loadMeta();
   profileState = {
     profiles: [],
@@ -1495,25 +1533,25 @@ async function init() {
       : resolvedLang;
 
     if (!trimmedCode || !/^[a-zA-Z]+$/.test(trimmedCode)) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (!resolvedLang) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (hasLoadedLanguageMeta && !availableLang) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (isDailyFromLink && !parseDateString(resolvedDailyDate)) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
 
     const minLength = hasLoadedLanguageMeta ? getMinLengthForLang(availableLang) : minLen;
     if (trimmedCode.length < minLength || trimmedCode.length > maxLen) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
 
@@ -1521,7 +1559,7 @@ async function init() {
     if (guessesParam !== null) {
       const parsed = Number(guessesParam);
       if (!Number.isInteger(parsed) || parsed < minGuesses || parsed > maxGuessesAllowed) {
-        showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+        showErrorPanel(null);
         return;
       }
       guessesCount = parsed;
@@ -1537,14 +1575,75 @@ async function init() {
       dailyDate: resolvedDailyDate
     });
     if (!result.ok) {
-      showErrorPanel(result.message || "That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(result.message || null);
     }
   } else {
     initCreate();
   }
 }
 
+// ── i18n bootstrap + language switcher ────────────────────────────────
+// Loads locale messages and applies translations to all data-i18n
+// nodes. The `<html lang>` attribute is set pre-paint by the inline
+// bootstrap in index.html; this block does the actual fetch + DOM
+// translation pass and wires the dropdown.
+//
+// Exposes `window.i18nReady` as a promise that resolves once messages
+// are loaded so async/dynamic UI code (e.g. challenge list rendering
+// that injects buttons via i18n.t() at construction time) can await
+// it before producing strings — otherwise t() returns the literal key
+// before fetch completes and the resulting buttons can't be repaired
+// by a later updateDOM() pass.
+//
+// Started BEFORE init() so init's awaited routing path
+// (showErrorPanel, profile rendering, etc.) can rely on translations
+// being available.
+window.i18nReady = (async function bootstrapI18n() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  try {
+    await window.i18n.init();
+  } catch (_err) {
+    // init swallows network errors and falls back to English; nothing
+    // to do here beyond letting the page render with literal keys.
+  }
+})();
+
 init();
+
+(async function wireLanguageSwitcher() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  await window.i18nReady;
+  const langSelect = document.getElementById("uiLangSelect");
+  if (!langSelect) return;
+  langSelect.value = window.i18n.getCurrentLocale();
+  langSelect.addEventListener("change", async () => {
+    const next = String(langSelect.value || "en");
+    try {
+      // loadLocale() internally re-runs updateDOM(); no second call
+      // needed here (was a redundant full DOM traversal).
+      await window.i18n.loadLocale(next);
+      // Re-render any challenge panel that's currently visible — its
+      // text is built imperatively via i18n.t() into new DOM nodes,
+      // so updateDOM() (which only retranslates data-i18n-bound nodes)
+      // doesn't reach it. The list view is the most common case; the
+      // play board's strings come from data-i18n bindings in markup,
+      // so it doesn't need a manual re-render. Summary + leaderboard
+      // panels are imperatively rendered, so we re-fire their loaders.
+      if (typeof renderChallengeList === "function") renderChallengeList();
+      const summaryVisible = challengeSummaryPanelEl && !challengeSummaryPanelEl.classList.contains('hidden');
+      const leaderboardVisible = challengeLeaderboardPanelEl && !challengeLeaderboardPanelEl.classList.contains('hidden');
+      if (summaryVisible && challengeState.session && typeof enterChallengeSummary === "function") {
+        enterChallengeSummary();
+      } else if (leaderboardVisible && challengeState.lastLeaderboardChallengeId && typeof showChallengeLeaderboard === "function") {
+        showChallengeLeaderboard(challengeState.lastLeaderboardChallengeId);
+      }
+    } catch (_err) {
+      // Roll the dropdown back to the active locale on failure so the
+      // UI matches what's actually loaded.
+      langSelect.value = window.i18n.getCurrentLocale();
+    }
+  });
+})();
 
 // ── Daily puzzle push notifications ──────────────────────────────────
 // Self-contained block at the end so adding/removing the feature is a
@@ -1596,15 +1695,23 @@ async function refreshNotificationToggle() {
   if (!notificationToggleEl) return;
   if (!pushNotificationsSupported()) {
     notificationToggleEl.hidden = true;
-    setNotificationStatus(window.isSecureContext ? '' : 'Notifications need HTTPS or localhost.');
+    setNotificationStatus(
+      window.isSecureContext
+        ? ''
+        : (window.i18n ? window.i18n.t("header.notificationsNeedHttps") : "Notifications need HTTPS or localhost.")
+    );
     return;
   }
   notificationToggleEl.hidden = false;
   if (Notification.permission === 'denied') {
     notificationToggleEl.disabled = true;
     notificationToggleEl.setAttribute('aria-pressed', 'false');
-    setNotificationLabel('Notifications blocked');
-    setNotificationStatus('Open browser settings to allow notifications, then reload.');
+    setNotificationLabel(window.i18n
+      ? window.i18n.t("header.notificationsBlocked")
+      : "Notifications blocked");
+    setNotificationStatus(window.i18n
+      ? window.i18n.t("header.notificationsBlockedHint")
+      : "Open browser settings to allow notifications, then reload.");
     return;
   }
   notificationToggleEl.disabled = false;
@@ -1619,7 +1726,11 @@ async function refreshNotificationToggle() {
     // pushManager API not available — leave subscribed=false.
   }
   notificationToggleEl.setAttribute('aria-pressed', subscribed ? 'true' : 'false');
-  setNotificationLabel(subscribed ? 'Notifications: on' : 'Get notified when daily puzzle is ready');
+  setNotificationLabel(
+    subscribed
+      ? (window.i18n ? window.i18n.t("header.notificationsToggleOn") : "Notifications: on")
+      : (window.i18n ? window.i18n.t("header.notificationsToggleOff") : "Get notified when daily puzzle is ready")
+  );
   setNotificationStatus('');
 }
 
@@ -1814,9 +1925,33 @@ if (challengeProfileInputEl) {
   });
 }
 
+// Wrap fetch() so challenge endpoints — the only routes wired into
+// `translateForRequest()` server-side — see the UI-selected locale
+// even when the browser's own Accept-Language header points at a
+// different language. This lets a user on a Spanish browser switch
+// the UI switcher to English and have the server return English
+// error JSON, and vice versa. Other endpoints don't translate
+// responses today, so leaving their fetches untouched avoids extra
+// network surface area for no behavioral gain.
+function challengeFetch(input, init) {
+  const opts = init ? { ...init } : {};
+  const headers = new Headers(opts.headers || {});
+  const locale = (window.i18n && typeof window.i18n.getCurrentLocale === "function")
+    ? window.i18n.getCurrentLocale()
+    : "";
+  if (locale && !headers.has("Accept-Language")) {
+    // Send `<locale>,<base>;q=0.5` so the server still has a valid
+    // base fallback if it ever needs one. parseAcceptLanguage handles
+    // q-factor ranking; the high-priority entry wins.
+    headers.set("Accept-Language", `${locale},${locale.split("-")[0]};q=0.5`);
+  }
+  opts.headers = headers;
+  return fetch(input, opts);
+}
+
 async function loadChallengeList() {
   try {
-    const res = await fetch('/api/challenges');
+    const res = await challengeFetch('/api/challenges');
     if (!res.ok) {
       if (res.status === 404 && (await res.json().catch(() => ({}))).code === 'CHALLENGE_MODE_DISABLED') {
         if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
@@ -1850,24 +1985,37 @@ function renderChallengeList() {
     meta.className = 'note';
     // Build the meta segments conditionally so wordLength=null
     // doesn't render as an empty "·  ·" segment.
-    const metaSegments = [`${ch.puzzleCount} puzzles`];
-    if (ch.wordLength) metaSegments.push(`${ch.wordLength}-letter`);
-    metaSegments.push(`${ch.timeBudgetSeconds}s budget`);
-    metaSegments.push(`${ch.maxGuesses} guesses each`);
-    metaSegments.push(`replay: ${ch.replayPolicy}`);
+    const i18n = window.i18n;
+    const metaSegments = [
+      i18n ? i18n.t("challenge.metaPuzzles", { count: ch.puzzleCount }) : `${ch.puzzleCount} puzzles`,
+    ];
+    if (ch.wordLength) {
+      metaSegments.push(
+        i18n ? i18n.t("challenge.metaWordLength", { length: ch.wordLength }) : `${ch.wordLength}-letter`
+      );
+    }
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaTimeBudget", { seconds: ch.timeBudgetSeconds }) : `${ch.timeBudgetSeconds}s budget`
+    );
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaMaxGuesses", { count: ch.maxGuesses }) : `${ch.maxGuesses} guesses each`
+    );
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaReplay", { policy: ch.replayPolicy }) : `replay: ${ch.replayPolicy}`
+    );
     meta.textContent = metaSegments.join(' · ');
     card.appendChild(meta);
     const actions = document.createElement('div');
     actions.className = 'form-row';
     const startBtn = document.createElement('button');
     startBtn.type = 'button';
-    startBtn.textContent = 'Start';
+    startBtn.textContent = window.i18n ? window.i18n.t("challenge.startBtn") : "Start";
     startBtn.addEventListener('click', () => startChallenge(ch.id));
     actions.appendChild(startBtn);
     const lbBtn = document.createElement('button');
     lbBtn.type = 'button';
     lbBtn.className = 'ghost';
-    lbBtn.textContent = 'Leaderboard';
+    lbBtn.textContent = window.i18n ? window.i18n.t("challenge.leaderboardBtn") : "Leaderboard";
     lbBtn.addEventListener('click', () => showChallengeLeaderboard(ch.id));
     actions.appendChild(lbBtn);
     card.appendChild(actions);
@@ -1882,21 +2030,26 @@ async function startChallenge(challengeId) {
   }
   const finalName = challengeProfileInputEl?.value?.trim() || profile.name || 'Player';
   try {
-    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
+    const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profileId: profile.id, profileName: finalName })
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      alert(json.error || `Could not start (HTTP ${res.status})`);
+      const fallback = window.i18n
+        ? window.i18n.t("challenge.couldNotStart", { message: `HTTP ${res.status}` })
+        : `Could not start challenge: HTTP ${res.status}`;
+      alert(json.error || fallback);
       return;
     }
     challengeState.activeChallenge = challengeState.challenges.find((c) => c.id === challengeId);
     challengeState.session = json.session;
     enterChallengePlay();
   } catch (err) {
-    alert(`Could not start challenge: ${err.message}`);
+    alert(window.i18n
+      ? window.i18n.t("challenge.couldNotStart", { message: err.message })
+      : `Could not start challenge: ${err.message}`);
   }
 }
 
@@ -1959,7 +2112,7 @@ async function handleChallengeTimedOutClient() {
   // final score). Don't trust the client clock for the outcome.
   if (!challengeState.session) return;
   try {
-    const res = await fetch(
+    const res = await challengeFetch(
       `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}`
     );
     if (res.ok) {
@@ -1990,11 +2143,15 @@ function renderChallengeBoard() {
   // Surface puzzle-of-N progress and a running solved/score line so
   // the player knows where they are without scrolling.
   if (challengePlayMetaEl) {
-    challengePlayMetaEl.textContent = `Puzzle ${active.index + 1} of ${challenge.puzzleCount}`;
+    challengePlayMetaEl.textContent = window.i18n
+      ? window.i18n.t("challenge.puzzleProgress", { current: active.index + 1, total: challenge.puzzleCount })
+      : `Puzzle ${active.index + 1} of ${challenge.puzzleCount}`;
   }
   if (challengeScoreLineEl) {
     const solved = session.puzzles.filter((p) => p.solved).length;
-    challengeScoreLineEl.textContent = `${solved}/${challenge.puzzleCount} solved`;
+    challengeScoreLineEl.textContent = window.i18n
+      ? window.i18n.t("challenge.solvedRunning", { solved, total: challenge.puzzleCount })
+      : `${solved}/${challenge.puzzleCount} solved`;
   }
   const length = active.length || (challenge.wordLength || 5);
   const maxGuesses = challenge.maxGuesses;
@@ -2064,7 +2221,10 @@ function onChallengeKey(key) {
   const length = active.length || (challengeState.activeChallenge?.wordLength || 5);
   if (key === 'Enter') {
     if (challengeState.pendingGuess.length !== length) {
-      setChallengePlayStatus(`Guess must be ${length} letters.`, 'admin-status-missing');
+      setChallengePlayStatus(
+        window.i18n ? window.i18n.t("play.guessTooShort", { length }) : `Guess must be ${length} letters.`,
+        'admin-status-missing'
+      );
       return;
     }
     submitChallengeGuess();
@@ -2100,9 +2260,9 @@ document.addEventListener('keydown', (event) => {
 async function submitChallengeGuess() {
   const guess = challengeState.pendingGuess;
   challengeState.pendingGuess = '';
-  setChallengePlayStatus('Submitting…');
+  setChallengePlayStatus(window.i18n ? window.i18n.t("challenge.submitting") : 'Submitting…');
   try {
-    const res = await fetch(
+    const res = await challengeFetch(
       `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/guess`,
       {
         method: 'POST',
@@ -2112,7 +2272,10 @@ async function submitChallengeGuess() {
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setChallengePlayStatus(json.error || `Guess rejected (HTTP ${res.status})`, 'admin-status-missing');
+      const fallback = window.i18n
+        ? window.i18n.t("challenge.guessRejected", { status: res.status })
+        : `Guess rejected (HTTP ${res.status})`;
+      setChallengePlayStatus(json.error || fallback, 'admin-status-missing');
       return;
     }
     challengeState.session = json.session;
@@ -2126,7 +2289,12 @@ async function submitChallengeGuess() {
     }
     setChallengePlayStatus('');
   } catch (err) {
-    setChallengePlayStatus(`Could not submit guess: ${err.message}`, 'admin-status-missing');
+    setChallengePlayStatus(
+      window.i18n
+        ? window.i18n.t("challenge.guessSubmitFailed", { message: err.message })
+        : `Could not submit guess: ${err.message}`,
+      'admin-status-missing'
+    );
   }
 }
 
@@ -2140,13 +2308,39 @@ function enterChallengeSummary() {
     return;
   }
   const solved = s.puzzles.filter((p) => p.solved).length;
-  const status = s.status === 'completed' ? 'Completed!'
-    : s.status === 'timed-out' ? 'Time up!'
-    : s.status === 'abandoned' ? 'Quit'
-    : s.status;
+  let status;
+  if (s.status === 'completed') status = window.i18n ? window.i18n.t("challenge.summaryStatusCompleted") : 'Completed!';
+  else if (s.status === 'timed-out') status = window.i18n ? window.i18n.t("challenge.summaryStatusTimedOut") : 'Time up!';
+  else if (s.status === 'abandoned') status = window.i18n ? window.i18n.t("challenge.summaryStatusAbandoned") : 'Quit';
+  else status = window.i18n ? window.i18n.t("challenge.summaryStatusGeneric") : 'Done';
   challengeSummaryBodyEl.innerHTML = '';
+  // Build the head as separate text + strong nodes (no innerHTML
+  // interpolation — would otherwise be a small XSS surface for any
+  // future call site that passes user-controlled data, and the
+  // hardcoded English labels prevented locale switching from
+  // affecting the line at all).
   const head = document.createElement('p');
-  head.innerHTML = `<strong>${status}</strong> · Score: <strong>${s.score ?? 0}</strong> · Solved ${solved}/${c.puzzleCount} · Time: ${s.elapsedSeconds ?? 0}s`;
+  const scoreLabel = window.i18n ? window.i18n.t("challenge.summaryScoreLabel") : "Score";
+  const solvedLabel = window.i18n ? window.i18n.t("challenge.summarySolvedLabel") : "Solved";
+  const timeLabel = window.i18n ? window.i18n.t("challenge.summaryTimeLabel") : "Time";
+  const solvedFrac = window.i18n
+    ? window.i18n.t("challenge.summarySolvedFraction", { solved, total: c.puzzleCount })
+    : `${solved}/${c.puzzleCount}`;
+  const timeSec = window.i18n
+    ? window.i18n.t("challenge.summaryTimeSeconds", { seconds: s.elapsedSeconds ?? 0 })
+    : `${s.elapsedSeconds ?? 0}s`;
+  const scoreFormatted = window.i18n && typeof window.i18n.formatNumber === 'function'
+    ? window.i18n.formatNumber(s.score ?? 0)
+    : String(s.score ?? 0);
+  const statusStrong = document.createElement('strong');
+  statusStrong.textContent = status;
+  head.appendChild(statusStrong);
+  head.appendChild(document.createTextNode(` · ${scoreLabel}: `));
+  const scoreStrong = document.createElement('strong');
+  scoreStrong.textContent = scoreFormatted;
+  head.appendChild(scoreStrong);
+  head.appendChild(document.createTextNode(` · ${solvedLabel} ${solvedFrac}`));
+  head.appendChild(document.createTextNode(` · ${timeLabel}: ${timeSec}`));
   challengeSummaryBodyEl.appendChild(head);
   const list = document.createElement('ol');
   list.className = 'summary-list';
@@ -2154,7 +2348,10 @@ function enterChallengeSummary() {
     const li = document.createElement('li');
     const word = p.word || '???';
     const tries = p.guesses?.length || 0;
-    li.textContent = `${p.solved ? '✅' : '❌'} ${word} — ${tries} guess${tries === 1 ? '' : 'es'}`;
+    const guessLabel = window.i18n
+      ? window.i18n.t("challenge.summaryGuesses", { count: tries })
+      : (tries === 1 ? `${tries} guess` : `${tries} guesses`);
+    li.textContent = `${p.solved ? '✅' : '❌'} ${word} — ${guessLabel}`;
     list.appendChild(li);
   }
   challengeSummaryBodyEl.appendChild(list);
@@ -2187,9 +2384,9 @@ if (challengeViewLeaderboardBtnEl) {
 if (challengeQuitBtnEl) {
   challengeQuitBtnEl.addEventListener('click', async () => {
     if (!challengeState.session) return;
-    if (!confirm('Quit this challenge? Your progress so far will be saved as abandoned.')) return;
+    if (!confirm(window.i18n ? window.i18n.t("challenge.quitConfirm") : 'Quit this challenge? Your progress so far will be saved as abandoned.')) return;
     try {
-      const res = await fetch(
+      const res = await challengeFetch(
         `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/finish`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
       );
@@ -2200,7 +2397,12 @@ if (challengeQuitBtnEl) {
         enterChallengeSummary();
       }
     } catch (err) {
-      setChallengePlayStatus(`Quit failed: ${err.message}`, 'admin-status-missing');
+      setChallengePlayStatus(
+        window.i18n
+          ? window.i18n.t("challenge.quitFailed", { message: err.message })
+          : `Quit failed: ${err.message}`,
+        'admin-status-missing'
+      );
     }
   });
 }
@@ -2209,22 +2411,35 @@ async function showChallengeLeaderboard(challengeId) {
   showChallengePanelOnly('challengeLeaderboardPanel');
   if (!challengeLeaderboardTbodyEl) return;
   challengeLeaderboardTbodyEl.innerHTML = '';
-  if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Loading…';
+  if (challengeLeaderboardNameEl) {
+    challengeLeaderboardNameEl.textContent = window.i18n ? window.i18n.t("challenge.loading") : 'Loading…';
+  }
   try {
-    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
+    const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
     if (!res.ok) {
-      if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Leaderboard unavailable.';
+      if (challengeLeaderboardNameEl) {
+        challengeLeaderboardNameEl.textContent = window.i18n
+          ? window.i18n.t("challenge.leaderboardUnavailable")
+          : 'Leaderboard unavailable.';
+      }
       return;
     }
     const json = await res.json();
     if (challengeLeaderboardNameEl) {
-      challengeLeaderboardNameEl.textContent = `${json.challenge?.name || 'Challenge'} · ${json.challenge?.replayPolicy || ''} replay`;
+      const fallbackName = window.i18n
+        ? window.i18n.t("challenge.leaderboardFallbackName")
+        : "Challenge";
+      const headerName = json.challenge?.name || fallbackName;
+      const headerPolicy = json.challenge?.replayPolicy || "";
+      challengeLeaderboardNameEl.textContent = window.i18n
+        ? window.i18n.t("challenge.leaderboardHeader", { name: headerName, policy: headerPolicy })
+        : `${headerName} · ${headerPolicy} replay`;
     }
     if (!Array.isArray(json.rows) || json.rows.length === 0) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.colSpan = 5;
-      td.textContent = 'No completed sessions yet.';
+      td.textContent = window.i18n ? window.i18n.t("challenge.noCompleted") : 'No completed sessions yet.';
       tr.appendChild(td);
       challengeLeaderboardTbodyEl.appendChild(tr);
       return;
@@ -2241,7 +2456,11 @@ async function showChallengeLeaderboard(challengeId) {
       rank += 1;
     }
   } catch (err) {
-    if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = `Error: ${err.message}`;
+    if (challengeLeaderboardNameEl) {
+      challengeLeaderboardNameEl.textContent = window.i18n
+        ? window.i18n.t("challenge.errorPrefix", { message: err.message })
+        : `Error: ${err.message}`;
+    }
   }
   function td(text) { const c = document.createElement('td'); c.textContent = text; return c; }
 }
@@ -2249,7 +2468,15 @@ async function showChallengeLeaderboard(challengeId) {
 // Route the player to the challenge list when /challenges is in the URL,
 // or surface the nav link otherwise. This intentionally keeps the
 // existing hash-routing model and just hides/shows panels.
-function initChallengesUI() {
+async function initChallengesUI() {
+  // Wait for i18n messages to load before fetching/rendering — the
+  // challenge cards' Start/Leaderboard buttons are built with
+  // window.i18n.t() inline, so rendering before init() resolves
+  // would leave literal `challenge.startBtn` strings on screen with
+  // no data-i18n binding for updateDOM() to repair.
+  if (window.i18nReady) {
+    try { await window.i18nReady; } catch (_e) { /* fall through with English fallback */ }
+  }
   loadChallengeList().then(() => {
     renderChallengeList();
     if (location.pathname === '/challenges') {

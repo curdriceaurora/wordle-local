@@ -25,11 +25,26 @@
         }
       })();
     </script>
+    <!-- Pre-paint i18n bootstrap (lang attribute only — i18n.js is
+         deferred so it doesn't block stylesheet downloads). See
+         public/index.html for full rationale. -->
+    <script>
+      (() => {
+        try {
+          var STORAGE_KEY = "localePreference";
+          var stored = String(localStorage.getItem(STORAGE_KEY) || "").trim();
+          var SUPPORTED = ["en", "es"];
+          var lang = SUPPORTED.indexOf(stored) >= 0 ? stored : "en";
+          document.documentElement.lang = lang;
+        } catch (_err) { /* fail open */ }
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
+    <script src="/js/i18n.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to main content</a>
+    <a class="skip-link" href="#main" data-i18n="common.skipToMain">Skip to main content</a>
     <header class="topbar">
       <div>
         <h1>local-hosted-wordle</h1>
@@ -44,17 +59,17 @@
     <main id="main" class="layout">
       <section class="panel admin-shell">
         <section id="unlockPanel" class="admin-unlock" aria-live="polite">
-          <h2>Admin Console</h2>
-          <p class="note">
-            Enter your admin key to unlock provider tools. The key is session-scoped and never saved
-            in browser storage.
+          <h2 data-i18n="admin.consoleTitle">Admin Console</h2>
+          <p class="note" data-i18n="admin.unlockHint">
+            Enter the admin key to manage providers, runtime settings, and stats. The key is
+            session-scoped and never saved in browser storage.
           </p>
           <form id="unlockForm" class="create-form" autocomplete="off">
             <label>
-              Admin key
+              <span data-i18n="admin.adminKeyLabel">Admin key</span>
               <input id="adminKeyInput" name="adminKey" type="password" autocomplete="off" />
             </label>
-            <button type="submit">Unlock</button>
+            <button type="submit" data-i18n="admin.unlock">Unlock</button>
           </form>
           <div id="unlockStatus" class="message" role="status" aria-live="polite"></div>
         </section>
@@ -62,12 +77,19 @@
         <section id="shellPanel" class="admin-workspace hidden" aria-live="polite">
           <div class="admin-shell-head">
             <div>
-              <h2>Provider Workspace</h2>
-              <p class="note">Session unlocked for this tab only.</p>
+              <h2 data-i18n="admin.workspaceTitle">Provider Workspace</h2>
+              <p class="note" data-i18n="admin.workspaceUnlockedNote">Session unlocked for this tab only.</p>
             </div>
             <div class="admin-shell-actions">
-              <button id="refreshProvidersBtn" type="button" class="ghost">Refresh status</button>
-              <button id="lockSessionBtn" type="button" class="ghost">Lock session</button>
+              <label class="toggle" for="adminUiLangSelect">
+                <span data-i18n="header.language">Language</span>
+                <select id="adminUiLangSelect" data-i18n-attr="aria-label:header.language">
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+              </label>
+              <button id="refreshProvidersBtn" type="button" class="ghost" data-i18n="admin.common.refreshStatus">Refresh status</button>
+              <button id="lockSessionBtn" type="button" class="ghost" data-i18n="admin.lockSession">Lock session</button>
             </div>
           </div>
 
@@ -81,6 +103,7 @@
               aria-controls="admin-panel-providers"
               aria-selected="true"
               tabindex="0"
+              data-i18n="admin.tabs.providers"
             >
               Providers
             </button>
@@ -93,6 +116,7 @@
               aria-controls="admin-panel-imports"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.imports"
             >
               Import Queue
             </button>
@@ -105,6 +129,7 @@
               aria-controls="admin-panel-runtime"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.runtime"
             >
               Runtime Settings
             </button>
@@ -117,6 +142,7 @@
               aria-controls="admin-panel-profiles"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.profiles"
             >
               Profiles
             </button>
@@ -129,6 +155,7 @@
               aria-controls="admin-panel-classes"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.classes"
             >
               Classes
             </button>
@@ -141,6 +168,7 @@
               aria-controls="admin-panel-data"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.data"
             >
               Data
             </button>
@@ -153,6 +181,7 @@
               aria-controls="admin-panel-analytics"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.analytics"
             >
               Analytics
             </button>
@@ -165,6 +194,7 @@
               aria-controls="admin-panel-schedule"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.schedule"
             >
               Schedule
             </button>
@@ -177,6 +207,7 @@
               aria-controls="admin-panel-webhooks"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.webhooks"
             >
               Webhooks
             </button>
@@ -189,6 +220,7 @@
               aria-controls="admin-panel-notifications"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.notifications"
             >
               Notifications
             </button>
@@ -201,6 +233,7 @@
               aria-controls="admin-panel-challenges"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.challenges"
             >
               Challenges
             </button>
@@ -1329,12 +1362,16 @@
       <span id="adminUpdated">Session locked</span>
     </footer>
 
-    <!-- No defer here: app.js below is parser-blocking, so it runs DURING
-         parsing while a deferred Chart.js would run AFTER. That ordering
-         left window.Chart undefined on the first analytics render and the
-         charts only appeared on a window-switch re-render. Both scripts
-         execute in source order without defer. -->
-    <script src="/dist/vendor/chart.umd.min.js"></script>
-    <script src="/admin/app.js"></script>
+    <!-- All three scripts use `defer` so they execute in source order
+         AFTER parsing (and AFTER the deferred /js/i18n.js in <head>):
+         i18n.js → chart.js → admin/app.js. Without defer here, the
+         deferred i18n.js in <head> would run AFTER the parser-blocking
+         body scripts, leaving window.i18n undefined when admin/app.js
+         tries to wire its language switcher. The original concern that
+         a deferred Chart.js would run AFTER admin/app.js is resolved
+         by deferring both in the same source order — defer preserves
+         the ordering of deferred scripts. -->
+    <script src="/dist/vendor/chart.umd.min.js" defer></script>
+    <script src="/admin/app.js" defer></script>
   </body>
 </html>

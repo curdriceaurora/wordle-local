@@ -25,46 +25,71 @@
         }
       })();
     </script>
+    <!-- Pre-paint i18n bootstrap: read the stored locale preference and
+         set <html lang> BEFORE the stylesheet so screen readers + lang-
+         aware CSS see the right value on first paint. The full message
+         file is loaded by the deferred i18n.init() call later; this
+         inline block only handles the lang-attribute flicker so the
+         stylesheet download isn't render-blocked by a script fetch. -->
+    <script>
+      (() => {
+        try {
+          var STORAGE_KEY = "localePreference";
+          var stored = String(localStorage.getItem(STORAGE_KEY) || "").trim();
+          var SUPPORTED = ["en", "es"];
+          var lang = SUPPORTED.indexOf(stored) >= 0 ? stored : "en";
+          document.documentElement.lang = lang;
+        } catch (_err) { /* fail open with default markup lang */ }
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
+    <script src="/js/i18n.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to main content</a>
+    <a class="skip-link" href="#main" data-i18n="common.skipToMain">Skip to main content</a>
     <header class="topbar">
       <div>
         <h1>local-hosted-wordle</h1>
-        <p id="subtitle">Create and share custom Wordle links.</p>
+        <p id="subtitle" data-i18n="header.subtitle">Create and share custom Wordle links.</p>
       </div>
       <div class="top-actions">
-        <a class="admin-link" href="/">Create</a>
-        <a class="admin-link" href="/daily">Daily Word</a>
-        <a class="admin-link" href="/challenges" id="challengesNavLink" hidden>Challenges</a>
+        <a class="admin-link" href="/" data-i18n="header.create">Create</a>
+        <a class="admin-link" href="/daily" data-i18n="header.dailyWord">Daily Word</a>
+        <a class="admin-link" href="/challenges" id="challengesNavLink" hidden data-i18n="header.challenges">Challenges</a>
       </div>
       <div class="settings">
         <label class="toggle" for="themeSelect">
-          <span>Theme</span>
-          <select id="themeSelect" aria-label="Theme preference">
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
+          <span data-i18n="header.theme">Theme</span>
+          <select id="themeSelect" data-i18n-attr="aria-label:header.theme">
+            <option value="system" data-i18n="header.themeSystem">System</option>
+            <option value="dark" data-i18n="header.themeDark">Dark</option>
+            <option value="light" data-i18n="header.themeLight">Light</option>
           </select>
         </label>
         <label class="toggle">
           <input id="contrastToggle" type="checkbox" />
-          <span>High contrast</span>
+          <span data-i18n="header.highContrast">High contrast</span>
         </label>
         <label class="toggle">
           <input id="strictToggle" type="checkbox" />
-          <span>Strict mode</span>
+          <span data-i18n="header.strictMode">Strict mode</span>
+        </label>
+        <label class="toggle" for="uiLangSelect">
+          <span data-i18n="header.language">Language</span>
+          <select id="uiLangSelect" data-i18n-attr="aria-label:header.language">
+            <option value="en">English</option>
+            <option value="es">Español</option>
+          </select>
         </label>
         <button
           id="notificationToggle"
           type="button"
           class="toggle"
           aria-pressed="false"
-          aria-label="Daily puzzle notifications"
+          data-i18n-attr="aria-label:header.notificationsToggleAriaLabel"
           hidden
         >
-          <span id="notificationToggleLabel">Get notified when daily puzzle is ready</span>
+          <span id="notificationToggleLabel" data-i18n="header.notificationsToggleOff">Get notified when daily puzzle is ready</span>
         </button>
         <span id="notificationStatus" class="hint" aria-live="polite"></span>
       </div>
@@ -72,154 +97,161 @@
 
     <main id="main" class="layout">
       <section id="createPanel" class="panel">
-        <h2>Create a puzzle</h2>
+        <h2 data-i18n="create.heading">Create a puzzle</h2>
         <form id="createForm" class="create-form">
           <label>
-            Language
+            <span data-i18n="create.languageLabel">Language</span>
             <select id="langSelect"></select>
           </label>
           <label>
-            Word
-            <input id="wordInput" name="word" placeholder="Type a word" autocomplete="off" />
-            <span class="hint">A-Z only · 3-12 letters</span>
+            <span data-i18n="create.wordLabel">Word</span>
+            <input id="wordInput" name="word" autocomplete="off" data-i18n-attr="placeholder:create.wordPlaceholder" />
+            <span class="hint" data-i18n="create.wordHint">A-Z only · 3-12 letters</span>
           </label>
           <div class="form-row">
             <label>
-              Length
+              <span data-i18n="create.lengthLabel">Length</span>
               <input id="lengthInput" name="length" type="number" min="3" max="12" value="5" />
             </label>
             <label>
-              Guesses
+              <span data-i18n="create.guessesLabel">Guesses</span>
               <input id="guessInput" name="guesses" type="number" min="4" max="10" value="6" />
             </label>
-            <button type="button" id="randomBtn" class="ghost">Random word</button>
+            <button type="button" id="randomBtn" class="ghost" data-i18n="create.randomWord">Random word</button>
           </div>
-          <button type="submit">Start puzzle</button>
+          <button type="submit" data-i18n="create.startPuzzle">Start puzzle</button>
           <div id="createStatus" class="message" role="status" aria-live="polite"></div>
-          <p class="note">No login, no tracking. English is built in, with optional imported variants.</p>
-          <p class="note">Share links are encoded for convenience, not security.</p>
+          <p class="note" data-i18n="create.noLogin">No login, no tracking. English is built in, with optional imported variants.</p>
+          <p class="note" data-i18n="create.shareLinksNote">Share links are encoded for convenience, not security.</p>
         </form>
       </section>
 
       <section id="playPanel" class="panel hidden">
         <div class="play-head">
           <div>
-            <h2>Play</h2>
+            <h2 data-i18n="play.heading">Play</h2>
+            <!-- #playMeta is a runtime-owned slot. initPlay() rewrites
+                 textContent with formatted puzzle metadata (language,
+                 length, tries). DON'T bind data-i18n here — the i18n
+                 updateDOM() pass would clobber the dynamic value with
+                 static "Loading…" copy on every locale switch. The
+                 initial Loading… string is set by initPlay()
+                 internally via i18n.t("play.loading"). -->
             <p id="playMeta">Loading puzzle…</p>
           </div>
-          <a class="admin-link" href="/">Create yours</a>
+          <a class="admin-link" href="/" data-i18n="play.createYours">Create yours</a>
         </div>
         <section id="profilePanel" class="profile-panel hidden" aria-live="polite">
           <div class="profile-head">
-            <h3>Family Player</h3>
-            <button type="button" id="switchPlayerBtn" class="link-button hidden">Switch player</button>
+            <h3 data-i18n="play.familyPlayerHeading">Family Player</h3>
+            <button type="button" id="switchPlayerBtn" class="link-button hidden" data-i18n="play.switchPlayer">Switch player</button>
           </div>
           <div id="activePlayerWrap" class="note hidden">
-            Playing as <strong id="activePlayerName"></strong>
+            <span data-i18n="play.playingAs">Playing as</span> <strong id="activePlayerName"></strong>
           </div>
           <form id="profileForm" class="profile-form">
             <label>
-              Name
+              <span data-i18n="play.nameLabel">Name</span>
               <input
                 id="profileNameInput"
                 name="profileName"
-                placeholder="Enter your name"
                 autocomplete="off"
                 maxlength="24"
+                data-i18n-attr="placeholder:play.namePlaceholder"
               />
             </label>
-            <button type="submit" class="ghost">Use this name</button>
+            <button type="submit" class="ghost" data-i18n="play.useThisName">Use this name</button>
           </form>
           <div id="profileStatus" class="message" role="status" aria-live="polite"></div>
           <div id="savedPlayersWrap" class="saved-players hidden">
-            <p class="note">Saved players</p>
+            <p class="note" data-i18n="play.savedPlayers">Saved players</p>
             <div id="savedPlayers" class="player-chips"></div>
           </div>
           <div id="playerStats" class="player-stats hidden">
             <div class="stat-card">
-              <span>Played</span>
+              <span data-i18n="play.played">Played</span>
               <strong id="statPlayed">0</strong>
             </div>
             <div class="stat-card">
-              <span>Win rate</span>
+              <span data-i18n="play.winRate">Win rate</span>
               <strong id="statWinRate">0%</strong>
             </div>
             <div class="stat-card">
-              <span>Current streak</span>
+              <span data-i18n="play.currentStreak">Current streak</span>
               <strong id="statStreak">0</strong>
             </div>
             <div class="stat-card">
-              <span>Best solve</span>
+              <span data-i18n="play.bestSolve">Best solve</span>
               <strong id="statBest">-</strong>
             </div>
           </div>
         </section>
         <section id="leaderboardPanel" class="leaderboard-panel hidden">
           <div class="leaderboard-head">
-            <h3>Family Leaderboard</h3>
+            <h3 data-i18n="play.leaderboardHeading">Family Leaderboard</h3>
             <label>
-              Period
+              <span data-i18n="play.leaderboardPeriod">Period</span>
               <select id="leaderboardRange">
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="overall">Overall</option>
+                <option value="weekly" data-i18n="play.leaderboardWeekly">Weekly</option>
+                <option value="monthly" data-i18n="play.leaderboardMonthly">Monthly</option>
+                <option value="overall" data-i18n="play.leaderboardOverall">Overall</option>
               </select>
             </label>
           </div>
           <p id="leaderboardMeta" class="note"></p>
           <div class="leaderboard-table-wrap">
-            <table class="leaderboard-table" aria-label="Family leaderboard">
+            <table class="leaderboard-table" data-i18n-attr="aria-label:play.leaderboardLabel">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Player</th>
-                  <th>Wins</th>
-                  <th>Played</th>
-                  <th>Win %</th>
-                  <th>Best</th>
-                  <th>Streak</th>
+                  <th data-i18n="play.leaderboardCols.rank">#</th>
+                  <th data-i18n="play.leaderboardCols.player">Player</th>
+                  <th data-i18n="play.leaderboardCols.wins">Wins</th>
+                  <th data-i18n="play.leaderboardCols.played">Played</th>
+                  <th data-i18n="play.leaderboardCols.winPct">Win %</th>
+                  <th data-i18n="play.leaderboardCols.best">Best</th>
+                  <th data-i18n="play.leaderboardCols.streak">Streak</th>
                 </tr>
               </thead>
               <tbody id="leaderboardBody"></tbody>
             </table>
           </div>
         </section>
-        <div id="board" class="board" aria-label="Wordle board"></div>
+        <div id="board" class="board" data-i18n-attr="aria-label:play.boardLabel"></div>
         <div id="message" class="message" role="status" aria-live="polite"></div>
         <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
-        <div id="keyboard" class="keyboard" aria-label="Keyboard"></div>
+        <div id="keyboard" class="keyboard" data-i18n-attr="aria-label:play.keyboardLabel"></div>
         <div class="share">
           <label>
-            Share link
-            <input id="shareLink" readonly placeholder="Share link appears here" aria-label="Share link" />
+            <span data-i18n="play.shareLinkLabel">Share link</span>
+            <input id="shareLink" readonly data-i18n-attr="placeholder:play.sharePlaceholder;aria-label:play.shareLinkLabel" />
           </label>
           <div class="share-actions">
-            <button type="button" id="shareCopyBtn" class="ghost">Copy link</button>
-            <button type="button" id="shareInfoBtn" class="link-button">About share links</button>
+            <button type="button" id="shareCopyBtn" class="ghost" data-i18n="play.copyLink">Copy link</button>
+            <button type="button" id="shareInfoBtn" class="link-button" data-i18n="play.aboutShareLinks">About share links</button>
           </div>
-          <p class="note">Encoded links can be decoded. Don’t use them for secrets.</p>
+          <p class="note" data-i18n="play.encodedNote">Encoded links can be decoded. Don't use them for secrets.</p>
         </div>
       </section>
 
       <section id="errorPanel" class="panel hidden">
-        <h2>Oops!</h2>
+        <h2 data-i18n="error.heading">Oops!</h2>
         <p id="errorMessage" class="note"></p>
         <p id="errorCountdown" class="note"></p>
-        <a class="admin-link" href="/">Make a new puzzle</a>
+        <a class="admin-link" href="/" data-i18n="error.makeNewPuzzle">Make a new puzzle</a>
       </section>
 
       <section id="challengeListPanel" class="panel hidden">
-        <h2>Timed challenges</h2>
-        <p class="note">Solve N puzzles inside a time budget. Server picks the words; the timer is server-authoritative — switching tabs doesn't pause it.</p>
+        <h2 data-i18n="challenge.heading">Timed challenges</h2>
+        <p class="note" data-i18n="challenge.intro">Solve N puzzles inside a time budget. Server picks the words; the timer is server-authoritative — switching tabs doesn't pause it.</p>
         <div id="challengeProfileRow" class="form-row">
           <label>
-            Profile name
-            <input id="challengeProfileInput" type="text" maxlength="64" autocomplete="off" placeholder="Your name" />
-            <span class="hint">Used on the leaderboard. Stored on this device.</span>
+            <span data-i18n="challenge.profileNameLabel">Profile name</span>
+            <input id="challengeProfileInput" type="text" maxlength="64" autocomplete="off" data-i18n-attr="placeholder:challenge.profileNamePlaceholder" />
+            <span class="hint" data-i18n="challenge.profileNameHint">Used on the leaderboard. Stored on this device.</span>
           </label>
         </div>
         <div id="challengeListBody"></div>
-        <p id="challengeListEmpty" class="note hidden">No active challenges right now.</p>
+        <p id="challengeListEmpty" class="note hidden" data-i18n="challenge.noActive">No active challenges right now.</p>
       </section>
 
       <section id="challengePlayPanel" class="panel hidden" aria-labelledby="challengePlayHead">
@@ -231,45 +263,45 @@
           <div class="play-meta-right">
             <strong id="challengeTimer" aria-live="polite">--:--</strong>
             <span id="challengeScoreLine" class="hint"></span>
-            <button type="button" id="challengeQuitBtn" class="ghost">Quit</button>
+            <button type="button" id="challengeQuitBtn" class="ghost" data-i18n="challenge.quit">Quit</button>
           </div>
         </header>
-        <div id="challengeBoard" class="board" aria-label="Challenge board"></div>
-        <div id="challengeKeyboard" class="keyboard" aria-label="On-screen keyboard"></div>
+        <div id="challengeBoard" class="board" data-i18n-attr="aria-label:challenge.boardLabel"></div>
+        <div id="challengeKeyboard" class="keyboard" data-i18n-attr="aria-label:challenge.keyboardLabel"></div>
         <p id="challengePlayStatus" class="message" role="status" aria-live="polite"></p>
       </section>
 
       <section id="challengeSummaryPanel" class="panel hidden">
-        <h2>Challenge complete</h2>
+        <h2 data-i18n="challenge.complete">Challenge complete</h2>
         <div id="challengeSummaryBody"></div>
         <div class="form-row">
-          <button type="button" id="challengeBackToListBtn">Back to challenges</button>
-          <button type="button" id="challengeViewLeaderboardBtn" class="ghost">View leaderboard</button>
+          <button type="button" id="challengeBackToListBtn" data-i18n="challenge.backToList">Back to challenges</button>
+          <button type="button" id="challengeViewLeaderboardBtn" class="ghost" data-i18n="challenge.viewLeaderboard">View leaderboard</button>
         </div>
       </section>
 
       <section id="challengeLeaderboardPanel" class="panel hidden">
-        <h2>Challenge leaderboard</h2>
+        <h2 data-i18n="challenge.leaderboardHeading">Challenge leaderboard</h2>
         <p id="challengeLeaderboardName" class="note"></p>
         <table id="challengeLeaderboardTable" class="leaderboard-table">
           <thead>
             <tr>
-              <th scope="col">Rank</th>
-              <th scope="col">Player</th>
-              <th scope="col">Score</th>
-              <th scope="col">Solved</th>
-              <th scope="col">Time</th>
+              <th scope="col" data-i18n="challenge.leaderboardCols.rank">Rank</th>
+              <th scope="col" data-i18n="challenge.leaderboardCols.player">Player</th>
+              <th scope="col" data-i18n="challenge.leaderboardCols.score">Score</th>
+              <th scope="col" data-i18n="challenge.leaderboardCols.solved">Solved</th>
+              <th scope="col" data-i18n="challenge.leaderboardCols.time">Time</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-        <button type="button" id="challengeBackToListFromBoardBtn">Back</button>
+        <button type="button" id="challengeBackToListFromBoardBtn" data-i18n="challenge.back">Back</button>
       </section>
     </main>
 
     <footer class="footer">
-      <span>Custom Wordle · Local hosting</span>
-      <span id="updated">Ready</span>
+      <span data-i18n="footer.tagline">Custom Wordle · Local hosting</span>
+      <span id="updated" data-i18n="footer.ready">Ready</span>
     </footer>
 
     <div
@@ -284,16 +316,25 @@
       <div class="modal-backdrop" data-modal-close="true"></div>
       <div class="modal-card" role="document">
         <div class="modal-head">
-          <h2 id="shareModalTitle">About share links</h2>
-          <button type="button" id="shareModalClose" class="ghost">Close</button>
+          <h2 id="shareModalTitle" data-i18n="share.modalTitle">About share links</h2>
+          <button type="button" id="shareModalClose" class="ghost" data-i18n="share.close">Close</button>
         </div>
-        <p id="shareModalDesc">
-          Share links are encoded to make them easy to pass around. They are not secure and can be
-          decoded by anyone. Don’t use them for secrets.
+        <p id="shareModalDesc" data-i18n="share.modalBody1">
+          Encoding makes the URL travel-safe. Anyone with this link sees the puzzle word — there's no password.
+        </p>
+        <p data-i18n="share.modalBody2">
+          Don't share links to puzzles you don't want decoded.
         </p>
       </div>
     </div>
 
-    <script src="/app.js"></script>
+    <!-- defer so app.js runs AFTER the deferred /js/i18n.js in
+         <head>. Defer guarantees source order across deferred
+         scripts: i18n.js (head) executes first, then app.js (body),
+         so window.i18n is defined before the bootstrap IIFE runs.
+         Without this, app.js would be parser-blocking and run BEFORE
+         the deferred i18n.js, leaving window.i18n undefined and
+         silently no-oping the language switcher. -->
+    <script src="/app.js" defer></script>
   </body>
 </html>
