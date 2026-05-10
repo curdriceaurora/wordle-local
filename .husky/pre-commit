@@ -51,9 +51,23 @@ TMPDIR_LINT="$(mktemp -d)"
 # shellcheck disable=SC2064
 trap "rm -rf '$TMPDIR_LINT'" EXIT
 
-# Copy the repo's markdownlint config into the temp tree root so
-# linted temp files inherit the same rule set as a normal lint.
-if [ -f .markdownlint.json ]; then
+# Read the staged version of `.markdownlint.json` (not the worktree
+# version) and write it to the temp tree root. If the operator has
+# unstaged or partial-staged edits to the config, those must NOT
+# affect a lint of staged content — otherwise a partial commit that
+# stages stricter rules plus markdown could pass locally and then
+# fail `npm run markdown:check` / CI after commit, or unstaged
+# edits could block a clean staged commit. Reading from the index
+# (`git show :path`) keeps both the linted files and the lint
+# config from the same snapshot.
+#
+# Fall back to the worktree if the file isn't in the index (e.g.
+# the operator deleted `.markdownlint.json` from staging or never
+# tracked it). Silently skip if neither path resolves — markdownlint
+# walks parent dirs and falls back to its own defaults.
+if git show ":.markdownlint.json" > "$TMPDIR_LINT/.markdownlint.json" 2>/dev/null; then
+  :
+elif [ -f .markdownlint.json ]; then
   cp .markdownlint.json "$TMPDIR_LINT/.markdownlint.json"
 fi
 
