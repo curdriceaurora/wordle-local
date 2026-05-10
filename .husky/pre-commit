@@ -105,7 +105,13 @@ while IFS= read -r path; do
     target="$TMPDIR_LINT/$path"
     mkdir -p "$(dirname "$target")"
     git show ":$path" > "$target"
-    set -- "$@" "$target"
+    # Pass each path with a leading `:` so markdownlint-cli2 treats
+    # it as a literal file path rather than a glob pattern. Without
+    # this, a staged filename containing glob metacharacters (e.g.
+    # `docs/[draft].md`, `notes/{a,b}.md`) would be parsed as a
+    # character class / brace expansion and either match the wrong
+    # files or skip the staged file entirely.
+    set -- "$@" ":$target"
   fi
 done <<HEREDOC
 $STAGED_MD
