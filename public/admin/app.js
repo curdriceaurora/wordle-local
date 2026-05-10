@@ -4071,6 +4071,26 @@ if (challengesAdminNavBtn) {
   });
 }
 
+// ── Admin i18n bootstrap + language switcher ──────────────────────────
+(async function bootstrapAdminI18n() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  try {
+    await window.i18n.init();
+  } catch (_err) { /* fail open */ }
+  const langSelect = document.getElementById("adminUiLangSelect");
+  if (!langSelect) return;
+  langSelect.value = window.i18n.getCurrentLocale();
+  langSelect.addEventListener("change", async () => {
+    const next = String(langSelect.value || "en");
+    try {
+      await window.i18n.loadLocale(next);
+      window.i18n.updateDOM();
+    } catch (_err) {
+      langSelect.value = window.i18n.getCurrentLocale();
+    }
+  });
+})();
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

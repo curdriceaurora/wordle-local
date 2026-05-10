@@ -25,6 +25,17 @@
         }
       })();
     </script>
+    <!-- Pre-paint i18n bootstrap. See public/index.html for rationale. -->
+    <script src="/js/i18n.js"></script>
+    <script>
+      (() => {
+        try {
+          if (window.i18n && typeof window.i18n.bootstrapLang === "function") {
+            window.i18n.bootstrapLang();
+          }
+        } catch (_err) { /* fail open */ }
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
   </head>
@@ -44,17 +55,17 @@
     <main id="main" class="layout">
       <section class="panel admin-shell">
         <section id="unlockPanel" class="admin-unlock" aria-live="polite">
-          <h2>Admin Console</h2>
-          <p class="note">
+          <h2 data-i18n="admin.title">Admin Console</h2>
+          <p class="note" data-i18n="admin.unlockHint">
             Enter your admin key to unlock provider tools. The key is session-scoped and never saved
             in browser storage.
           </p>
           <form id="unlockForm" class="create-form" autocomplete="off">
             <label>
-              Admin key
+              <span data-i18n="admin.unlock">Admin key</span>
               <input id="adminKeyInput" name="adminKey" type="password" autocomplete="off" />
             </label>
-            <button type="submit">Unlock</button>
+            <button type="submit" data-i18n="admin.unlock">Unlock</button>
           </form>
           <div id="unlockStatus" class="message" role="status" aria-live="polite"></div>
         </section>
@@ -62,12 +73,19 @@
         <section id="shellPanel" class="admin-workspace hidden" aria-live="polite">
           <div class="admin-shell-head">
             <div>
-              <h2>Provider Workspace</h2>
+              <h2 data-i18n="admin.title">Provider Workspace</h2>
               <p class="note">Session unlocked for this tab only.</p>
             </div>
             <div class="admin-shell-actions">
-              <button id="refreshProvidersBtn" type="button" class="ghost">Refresh status</button>
-              <button id="lockSessionBtn" type="button" class="ghost">Lock session</button>
+              <label class="toggle" for="adminUiLangSelect">
+                <span data-i18n="header.language">Language</span>
+                <select id="adminUiLangSelect" data-i18n-attr="aria-label:header.language">
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                </select>
+              </label>
+              <button id="refreshProvidersBtn" type="button" class="ghost" data-i18n="admin.common.refresh">Refresh status</button>
+              <button id="lockSessionBtn" type="button" class="ghost" data-i18n="admin.lockSession">Lock session</button>
             </div>
           </div>
 
@@ -81,6 +99,7 @@
               aria-controls="admin-panel-providers"
               aria-selected="true"
               tabindex="0"
+              data-i18n="admin.tabs.providers"
             >
               Providers
             </button>
@@ -93,6 +112,7 @@
               aria-controls="admin-panel-imports"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.imports"
             >
               Import Queue
             </button>
@@ -105,6 +125,7 @@
               aria-controls="admin-panel-runtime"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.runtime"
             >
               Runtime Settings
             </button>
@@ -117,6 +138,7 @@
               aria-controls="admin-panel-profiles"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.profiles"
             >
               Profiles
             </button>
@@ -129,6 +151,7 @@
               aria-controls="admin-panel-classes"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.classes"
             >
               Classes
             </button>
@@ -141,6 +164,7 @@
               aria-controls="admin-panel-data"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.data"
             >
               Data
             </button>
@@ -153,6 +177,7 @@
               aria-controls="admin-panel-analytics"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.analytics"
             >
               Analytics
             </button>
@@ -165,6 +190,7 @@
               aria-controls="admin-panel-schedule"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.schedule"
             >
               Schedule
             </button>
@@ -177,6 +203,7 @@
               aria-controls="admin-panel-webhooks"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.webhooks"
             >
               Webhooks
             </button>
@@ -189,6 +216,7 @@
               aria-controls="admin-panel-notifications"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.notifications"
             >
               Notifications
             </button>
@@ -201,6 +229,7 @@
               aria-controls="admin-panel-challenges"
               aria-selected="false"
               tabindex="-1"
+              data-i18n="admin.tabs.challenges"
             >
               Challenges
             </button>

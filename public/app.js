@@ -902,7 +902,10 @@ async function submitGuess() {
         typeof data.answerMeaning === "string" && data.answerMeaning.trim()
           ? ` Meaning: ${data.answerMeaning.trim()}`
           : "";
-      setMessage(`Solved in ${currentRow + 1}/${maxGuesses}!${suffix}`);
+      const baseMessage = window.i18n
+        ? window.i18n.t("play.solvedFormat", { tries: currentRow + 1, max: maxGuesses })
+        : `Solved in ${currentRow + 1}/${maxGuesses}!`;
+      setMessage(`${baseMessage}${suffix}`);
       return;
     }
 
@@ -1546,6 +1549,35 @@ async function init() {
 
 init();
 
+// ── i18n bootstrap + language switcher ────────────────────────────────
+// Loads locale messages and applies translations to all data-i18n
+// nodes. The `<html lang>` attribute is set pre-paint by the inline
+// bootstrap in index.html; this block does the actual fetch + DOM
+// translation pass and wires the dropdown.
+(async function bootstrapI18n() {
+  if (typeof window === "undefined" || !window.i18n) return;
+  try {
+    await window.i18n.init();
+  } catch (_err) {
+    // init swallows network errors and falls back to English; nothing
+    // to do here beyond letting the page render with literal keys.
+  }
+  const langSelect = document.getElementById("uiLangSelect");
+  if (!langSelect) return;
+  langSelect.value = window.i18n.getCurrentLocale();
+  langSelect.addEventListener("change", async () => {
+    const next = String(langSelect.value || "en");
+    try {
+      await window.i18n.loadLocale(next);
+      window.i18n.updateDOM();
+    } catch (_err) {
+      // Roll the dropdown back to the active locale on failure so the
+      // UI matches what's actually loaded.
+      langSelect.value = window.i18n.getCurrentLocale();
+    }
+  });
+})();
+
 // ── Daily puzzle push notifications ──────────────────────────────────
 // Self-contained block at the end so adding/removing the feature is a
 // single contiguous edit. The opt-in toggle is hidden unless the
@@ -1596,15 +1628,23 @@ async function refreshNotificationToggle() {
   if (!notificationToggleEl) return;
   if (!pushNotificationsSupported()) {
     notificationToggleEl.hidden = true;
-    setNotificationStatus(window.isSecureContext ? '' : 'Notifications need HTTPS or localhost.');
+    setNotificationStatus(
+      window.isSecureContext
+        ? ''
+        : (window.i18n ? window.i18n.t("header.notificationsNeedHttps") : "Notifications need HTTPS or localhost.")
+    );
     return;
   }
   notificationToggleEl.hidden = false;
   if (Notification.permission === 'denied') {
     notificationToggleEl.disabled = true;
     notificationToggleEl.setAttribute('aria-pressed', 'false');
-    setNotificationLabel('Notifications blocked');
-    setNotificationStatus('Open browser settings to allow notifications, then reload.');
+    setNotificationLabel(window.i18n
+      ? window.i18n.t("header.notificationsBlocked")
+      : "Notifications blocked");
+    setNotificationStatus(window.i18n
+      ? window.i18n.t("header.notificationsBlockedHint")
+      : "Open browser settings to allow notifications, then reload.");
     return;
   }
   notificationToggleEl.disabled = false;
@@ -1619,7 +1659,11 @@ async function refreshNotificationToggle() {
     // pushManager API not available — leave subscribed=false.
   }
   notificationToggleEl.setAttribute('aria-pressed', subscribed ? 'true' : 'false');
-  setNotificationLabel(subscribed ? 'Notifications: on' : 'Get notified when daily puzzle is ready');
+  setNotificationLabel(
+    subscribed
+      ? (window.i18n ? window.i18n.t("header.notificationsToggleOn") : "Notifications: on")
+      : (window.i18n ? window.i18n.t("header.notificationsToggleOff") : "Get notified when daily puzzle is ready")
+  );
   setNotificationStatus('');
 }
 
@@ -1861,13 +1905,13 @@ function renderChallengeList() {
     actions.className = 'form-row';
     const startBtn = document.createElement('button');
     startBtn.type = 'button';
-    startBtn.textContent = 'Start';
+    startBtn.textContent = window.i18n ? window.i18n.t("challenge.startBtn") : "Start";
     startBtn.addEventListener('click', () => startChallenge(ch.id));
     actions.appendChild(startBtn);
     const lbBtn = document.createElement('button');
     lbBtn.type = 'button';
     lbBtn.className = 'ghost';
-    lbBtn.textContent = 'Leaderboard';
+    lbBtn.textContent = window.i18n ? window.i18n.t("challenge.leaderboardBtn") : "Leaderboard";
     lbBtn.addEventListener('click', () => showChallengeLeaderboard(ch.id));
     actions.appendChild(lbBtn);
     card.appendChild(actions);
@@ -1889,14 +1933,16 @@ async function startChallenge(challengeId) {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      alert(json.error || `Could not start (HTTP ${res.status})`);
+      alert(json.error || `HTTP ${res.status}`);
       return;
     }
     challengeState.activeChallenge = challengeState.challenges.find((c) => c.id === challengeId);
     challengeState.session = json.session;
     enterChallengePlay();
   } catch (err) {
-    alert(`Could not start challenge: ${err.message}`);
+    alert(window.i18n
+      ? window.i18n.t("challenge.couldNotStart", { message: err.message })
+      : `Could not start challenge: ${err.message}`);
   }
 }
 
@@ -1990,11 +2036,15 @@ function renderChallengeBoard() {
   // Surface puzzle-of-N progress and a running solved/score line so
   // the player knows where they are without scrolling.
   if (challengePlayMetaEl) {
-    challengePlayMetaEl.textContent = `Puzzle ${active.index + 1} of ${challenge.puzzleCount}`;
+    challengePlayMetaEl.textContent = window.i18n
+      ? window.i18n.t("challenge.puzzleProgress", { current: active.index + 1, total: challenge.puzzleCount })
+      : `Puzzle ${active.index + 1} of ${challenge.puzzleCount}`;
   }
   if (challengeScoreLineEl) {
     const solved = session.puzzles.filter((p) => p.solved).length;
-    challengeScoreLineEl.textContent = `${solved}/${challenge.puzzleCount} solved`;
+    challengeScoreLineEl.textContent = window.i18n
+      ? window.i18n.t("challenge.solvedRunning", { solved, total: challenge.puzzleCount })
+      : `${solved}/${challenge.puzzleCount} solved`;
   }
   const length = active.length || (challenge.wordLength || 5);
   const maxGuesses = challenge.maxGuesses;
@@ -2064,7 +2114,10 @@ function onChallengeKey(key) {
   const length = active.length || (challengeState.activeChallenge?.wordLength || 5);
   if (key === 'Enter') {
     if (challengeState.pendingGuess.length !== length) {
-      setChallengePlayStatus(`Guess must be ${length} letters.`, 'admin-status-missing');
+      setChallengePlayStatus(
+        window.i18n ? window.i18n.t("play.guessTooShort", { length }) : `Guess must be ${length} letters.`,
+        'admin-status-missing'
+      );
       return;
     }
     submitChallengeGuess();
@@ -2100,7 +2153,7 @@ document.addEventListener('keydown', (event) => {
 async function submitChallengeGuess() {
   const guess = challengeState.pendingGuess;
   challengeState.pendingGuess = '';
-  setChallengePlayStatus('Submitting…');
+  setChallengePlayStatus(window.i18n ? window.i18n.t("challenge.submitting") : 'Submitting…');
   try {
     const res = await fetch(
       `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/guess`,
@@ -2112,7 +2165,10 @@ async function submitChallengeGuess() {
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setChallengePlayStatus(json.error || `Guess rejected (HTTP ${res.status})`, 'admin-status-missing');
+      const fallback = window.i18n
+        ? window.i18n.t("challenge.guessRejected", { status: res.status })
+        : `Guess rejected (HTTP ${res.status})`;
+      setChallengePlayStatus(json.error || fallback, 'admin-status-missing');
       return;
     }
     challengeState.session = json.session;
@@ -2126,7 +2182,12 @@ async function submitChallengeGuess() {
     }
     setChallengePlayStatus('');
   } catch (err) {
-    setChallengePlayStatus(`Could not submit guess: ${err.message}`, 'admin-status-missing');
+    setChallengePlayStatus(
+      window.i18n
+        ? window.i18n.t("challenge.guessSubmitFailed", { message: err.message })
+        : `Could not submit guess: ${err.message}`,
+      'admin-status-missing'
+    );
   }
 }
 
@@ -2140,10 +2201,11 @@ function enterChallengeSummary() {
     return;
   }
   const solved = s.puzzles.filter((p) => p.solved).length;
-  const status = s.status === 'completed' ? 'Completed!'
-    : s.status === 'timed-out' ? 'Time up!'
-    : s.status === 'abandoned' ? 'Quit'
-    : s.status;
+  let status;
+  if (s.status === 'completed') status = window.i18n ? window.i18n.t("challenge.summaryStatusCompleted") : 'Completed!';
+  else if (s.status === 'timed-out') status = window.i18n ? window.i18n.t("challenge.summaryStatusTimedOut") : 'Time up!';
+  else if (s.status === 'abandoned') status = window.i18n ? window.i18n.t("challenge.summaryStatusAbandoned") : 'Quit';
+  else status = window.i18n ? window.i18n.t("challenge.summaryStatusGeneric") : 'Done';
   challengeSummaryBodyEl.innerHTML = '';
   const head = document.createElement('p');
   head.innerHTML = `<strong>${status}</strong> · Score: <strong>${s.score ?? 0}</strong> · Solved ${solved}/${c.puzzleCount} · Time: ${s.elapsedSeconds ?? 0}s`;
@@ -2154,7 +2216,10 @@ function enterChallengeSummary() {
     const li = document.createElement('li');
     const word = p.word || '???';
     const tries = p.guesses?.length || 0;
-    li.textContent = `${p.solved ? '✅' : '❌'} ${word} — ${tries} guess${tries === 1 ? '' : 'es'}`;
+    const guessLabel = window.i18n
+      ? window.i18n.t("challenge.summaryGuesses", { count: tries })
+      : (tries === 1 ? `${tries} guess` : `${tries} guesses`);
+    li.textContent = `${p.solved ? '✅' : '❌'} ${word} — ${guessLabel}`;
     list.appendChild(li);
   }
   challengeSummaryBodyEl.appendChild(list);
@@ -2187,7 +2252,7 @@ if (challengeViewLeaderboardBtnEl) {
 if (challengeQuitBtnEl) {
   challengeQuitBtnEl.addEventListener('click', async () => {
     if (!challengeState.session) return;
-    if (!confirm('Quit this challenge? Your progress so far will be saved as abandoned.')) return;
+    if (!confirm(window.i18n ? window.i18n.t("challenge.quitConfirm") : 'Quit this challenge? Your progress so far will be saved as abandoned.')) return;
     try {
       const res = await fetch(
         `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/finish`,
@@ -2200,7 +2265,12 @@ if (challengeQuitBtnEl) {
         enterChallengeSummary();
       }
     } catch (err) {
-      setChallengePlayStatus(`Quit failed: ${err.message}`, 'admin-status-missing');
+      setChallengePlayStatus(
+        window.i18n
+          ? window.i18n.t("challenge.quitFailed", { message: err.message })
+          : `Quit failed: ${err.message}`,
+        'admin-status-missing'
+      );
     }
   });
 }
@@ -2209,11 +2279,17 @@ async function showChallengeLeaderboard(challengeId) {
   showChallengePanelOnly('challengeLeaderboardPanel');
   if (!challengeLeaderboardTbodyEl) return;
   challengeLeaderboardTbodyEl.innerHTML = '';
-  if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Loading…';
+  if (challengeLeaderboardNameEl) {
+    challengeLeaderboardNameEl.textContent = window.i18n ? window.i18n.t("challenge.loading") : 'Loading…';
+  }
   try {
     const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
     if (!res.ok) {
-      if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Leaderboard unavailable.';
+      if (challengeLeaderboardNameEl) {
+        challengeLeaderboardNameEl.textContent = window.i18n
+          ? window.i18n.t("challenge.leaderboardUnavailable")
+          : 'Leaderboard unavailable.';
+      }
       return;
     }
     const json = await res.json();
@@ -2224,7 +2300,7 @@ async function showChallengeLeaderboard(challengeId) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.colSpan = 5;
-      td.textContent = 'No completed sessions yet.';
+      td.textContent = window.i18n ? window.i18n.t("challenge.noCompleted") : 'No completed sessions yet.';
       tr.appendChild(td);
       challengeLeaderboardTbodyEl.appendChild(tr);
       return;
@@ -2241,7 +2317,11 @@ async function showChallengeLeaderboard(challengeId) {
       rank += 1;
     }
   } catch (err) {
-    if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = `Error: ${err.message}`;
+    if (challengeLeaderboardNameEl) {
+      challengeLeaderboardNameEl.textContent = window.i18n
+        ? window.i18n.t("challenge.errorPrefix", { message: err.message })
+        : `Error: ${err.message}`;
+    }
   }
   function td(text) { const c = document.createElement('td'); c.textContent = text; return c; }
 }
