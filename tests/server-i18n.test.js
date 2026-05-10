@@ -27,11 +27,15 @@ describe("parseAcceptLanguage", () => {
   });
 
   test("clamps q above 1 to 1", () => {
-    // q=2 is invalid; the regex `[\d.]+` doesn't match `-1`, so a
-    // negative q is silently ignored (keeps the default q=1) — but a
-    // numeric q over 1 is clamped to 1, so the order resolves by
-    // header position.
+    // q=2 over-saturates → clamped to 1 → es and en tie at q=1, so
+    // order resolves by header position (es comes second).
     expect(parseAcceptLanguage("en;q=0.5,es;q=2")).toBe("es");
+  });
+
+  test("clamps negative q to 0 (least preferred, not 'default 1')", () => {
+    // The parser now accepts an optional sign and clamps to [0,1].
+    // q=-1 → 0 (least preferred), so en at q=0.5 wins over es.
+    expect(parseAcceptLanguage("es;q=-1,en;q=0.5")).toBe("en");
   });
 
   test("malformed q (e.g. q=.) is ignored — no NaN poisoning the comparator", () => {

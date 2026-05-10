@@ -2256,8 +2256,33 @@ function enterChallengeSummary() {
   else if (s.status === 'abandoned') status = window.i18n ? window.i18n.t("challenge.summaryStatusAbandoned") : 'Quit';
   else status = window.i18n ? window.i18n.t("challenge.summaryStatusGeneric") : 'Done';
   challengeSummaryBodyEl.innerHTML = '';
+  // Build the head as separate text + strong nodes (no innerHTML
+  // interpolation — would otherwise be a small XSS surface for any
+  // future call site that passes user-controlled data, and the
+  // hardcoded English labels prevented locale switching from
+  // affecting the line at all).
   const head = document.createElement('p');
-  head.innerHTML = `<strong>${status}</strong> · Score: <strong>${s.score ?? 0}</strong> · Solved ${solved}/${c.puzzleCount} · Time: ${s.elapsedSeconds ?? 0}s`;
+  const scoreLabel = window.i18n ? window.i18n.t("challenge.summaryScoreLabel") : "Score";
+  const solvedLabel = window.i18n ? window.i18n.t("challenge.summarySolvedLabel") : "Solved";
+  const timeLabel = window.i18n ? window.i18n.t("challenge.summaryTimeLabel") : "Time";
+  const solvedFrac = window.i18n
+    ? window.i18n.t("challenge.summarySolvedFraction", { solved, total: c.puzzleCount })
+    : `${solved}/${c.puzzleCount}`;
+  const timeSec = window.i18n
+    ? window.i18n.t("challenge.summaryTimeSeconds", { seconds: s.elapsedSeconds ?? 0 })
+    : `${s.elapsedSeconds ?? 0}s`;
+  const scoreFormatted = window.i18n && typeof window.i18n.formatNumber === 'function'
+    ? window.i18n.formatNumber(s.score ?? 0)
+    : String(s.score ?? 0);
+  const statusStrong = document.createElement('strong');
+  statusStrong.textContent = status;
+  head.appendChild(statusStrong);
+  head.appendChild(document.createTextNode(` · ${scoreLabel}: `));
+  const scoreStrong = document.createElement('strong');
+  scoreStrong.textContent = scoreFormatted;
+  head.appendChild(scoreStrong);
+  head.appendChild(document.createTextNode(` · ${solvedLabel} ${solvedFrac}`));
+  head.appendChild(document.createTextNode(` · ${timeLabel}: ${timeSec}`));
   challengeSummaryBodyEl.appendChild(head);
   const list = document.createElement('ol');
   list.className = 'summary-list';
@@ -2343,7 +2368,14 @@ async function showChallengeLeaderboard(challengeId) {
     }
     const json = await res.json();
     if (challengeLeaderboardNameEl) {
-      challengeLeaderboardNameEl.textContent = `${json.challenge?.name || 'Challenge'} · ${json.challenge?.replayPolicy || ''} replay`;
+      const fallbackName = window.i18n
+        ? window.i18n.t("challenge.leaderboardFallbackName")
+        : "Challenge";
+      const headerName = json.challenge?.name || fallbackName;
+      const headerPolicy = json.challenge?.replayPolicy || "";
+      challengeLeaderboardNameEl.textContent = window.i18n
+        ? window.i18n.t("challenge.leaderboardHeader", { name: headerName, policy: headerPolicy })
+        : `${headerName} · ${headerPolicy} replay`;
     }
     if (!Array.isArray(json.rows) || json.rows.length === 0) {
       const tr = document.createElement('tr');

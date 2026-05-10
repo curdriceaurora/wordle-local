@@ -28,19 +28,22 @@
     <!-- Pre-paint i18n bootstrap: read the stored locale preference and
          set <html lang> BEFORE the stylesheet so screen readers + lang-
          aware CSS see the right value on first paint. The full message
-         file is loaded by the i18n.init() call below; this inline block
-         only handles the lang-attribute flicker. -->
-    <script src="/js/i18n.js"></script>
+         file is loaded by the deferred i18n.init() call later; this
+         inline block only handles the lang-attribute flicker so the
+         stylesheet download isn't render-blocked by a script fetch. -->
     <script>
       (() => {
         try {
-          if (window.i18n && typeof window.i18n.bootstrapLang === "function") {
-            window.i18n.bootstrapLang();
-          }
-        } catch (_err) { /* fail open with the default lang attribute */ }
+          var STORAGE_KEY = "localePreference";
+          var stored = String(localStorage.getItem(STORAGE_KEY) || "").trim();
+          var SUPPORTED = ["en", "es"];
+          var lang = SUPPORTED.indexOf(stored) >= 0 ? stored : "en";
+          document.documentElement.lang = lang;
+        } catch (_err) { /* fail open with default markup lang */ }
       })();
     </script>
     <link rel="stylesheet" href="/styles.css" />
+    <script src="/js/i18n.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -317,8 +320,10 @@
           <button type="button" id="shareModalClose" class="ghost" data-i18n="share.close">Close</button>
         </div>
         <p id="shareModalDesc" data-i18n="share.modalBody1">
-          Share links are encoded to make them easy to pass around. They are not secure and can be
-          decoded by anyone. Don't use them for secrets.
+          Encoding makes the URL travel-safe. Anyone with this link sees the puzzle word — there's no password.
+        </p>
+        <p data-i18n="share.modalBody2">
+          Don't share links to puzzles you don't want decoded.
         </p>
       </div>
     </div>

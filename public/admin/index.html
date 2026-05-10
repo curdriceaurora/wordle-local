@@ -25,19 +25,23 @@
         }
       })();
     </script>
-    <!-- Pre-paint i18n bootstrap. See public/index.html for rationale. -->
-    <script src="/js/i18n.js"></script>
+    <!-- Pre-paint i18n bootstrap (lang attribute only — i18n.js is
+         deferred so it doesn't block stylesheet downloads). See
+         public/index.html for full rationale. -->
     <script>
       (() => {
         try {
-          if (window.i18n && typeof window.i18n.bootstrapLang === "function") {
-            window.i18n.bootstrapLang();
-          }
+          var STORAGE_KEY = "localePreference";
+          var stored = String(localStorage.getItem(STORAGE_KEY) || "").trim();
+          var SUPPORTED = ["en", "es"];
+          var lang = SUPPORTED.indexOf(stored) >= 0 ? stored : "en";
+          document.documentElement.lang = lang;
         } catch (_err) { /* fail open */ }
       })();
     </script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/admin/admin.css" />
+    <script src="/js/i18n.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -84,7 +88,7 @@
                   <option value="es">Español</option>
                 </select>
               </label>
-              <button id="refreshProvidersBtn" type="button" class="ghost" data-i18n="admin.common.refresh">Refresh status</button>
+              <button id="refreshProvidersBtn" type="button" class="ghost" data-i18n="admin.common.refreshStatus">Refresh status</button>
               <button id="lockSessionBtn" type="button" class="ghost" data-i18n="admin.lockSession">Lock session</button>
             </div>
           </div>
