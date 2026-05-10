@@ -202,10 +202,21 @@ function visit(node, ctx) {
       }
     }
     if (calleeName && TARGET_CALL_NAMES.has(calleeName)) {
+      // Snapshot each frame's name + hasSlotClaim AT THIS MOMENT,
+      // not as a live reference. Without this deep snapshot, a
+      // slot claim that appears AFTER the writer in source order
+      // would retroactively mark this recorded call as safe — but
+      // ordering matters: `writeJsonAtomic(...); await claim();`
+      // is a real bypass even though the same function eventually
+      // claims. Source-order visit guarantees claims seen so far
+      // are encoded; claims seen later are not.
       ctx.calls.push({
         name: calleeName,
         line: node.loc ? node.loc.start.line : 0,
-        fnStack: ctx.fnStack.slice(),
+        fnStack: ctx.fnStack.map((f) => ({
+          name: f.name,
+          hasSlotClaim: f.hasSlotClaim === true,
+        })),
       });
     }
     if (calleeName === SLOT_CLAIM_NAME) {
