@@ -18,6 +18,7 @@ function createChallengesRouter(deps) {
   const {
     challengeConfigStore,
     challengeResultsStore,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     getDictionary,
@@ -177,60 +178,87 @@ function createChallengesRouter(deps) {
           code: "LANG_UNAVAILABLE"
         });
       }
-      // Resume an in-flight session if one exists for this (challenge,
-      // profile). Settle on timeout first so the resume path doesn't
-      // hand back a stale "in-progress" snapshot for a session whose
-      // budget already expired.
-      let session = await challengeResultsStore.findInFlight(challenge.id, profile.profileId);
-      if (session) {
-        session = await settleIfTimedOut(session, challenge, now);
-        if (session.status === "in-progress" || session.status === "pending") {
-          const projected = projectForResponse(session, challenge, now);
-          return res.status(200).json({ ok: true, session: projected, resumed: true });
+      // The find-or-create critical section runs under the cross-route
+      // mutex shared with PUT /api/admin/challenges/:id. Without that
+      // mutex, an admin edit can read hasResults=false (no sessions
+      // yet), then we create the first session here, then the admin's
+      // update commits with hasResults=false and lets through an
+      // immutable-fields edit that the store's contract forbids once
+      // any session exists. Wrapping createSession (and the in-flight
+      // / replay-policy checks that gate it) in the same mutex closes
+      // that TOCTOU. Returns either a resume payload or a created one;
+      // the wrapper unwraps the discriminated result for us.
+      const result = await withChallengeAdminUserMutex(async () => {
+        // Resume an in-flight session if one exists for this
+        // (challenge, profile). Settle on timeout first so the resume
+        // path doesn't hand back a stale "in-progress" snapshot for a
+        // session whose budget already expired.
+        let session = await challengeResultsStore.findInFlight(challenge.id, profile.profileId);
+        if (session) {
+          session = await settleIfTimedOut(session, challenge, now);
+          if (session.status === "in-progress" || session.status === "pending") {
+            return { kind: "resumed", session };
+          }
+          // Otherwise fall through and create a new session per replay policy.
         }
-        // Otherwise fall through and create a new session per replay policy.
-      }
-      // Replay-policy gate.
-      const past = (await challengeResultsStore.findCompletedForChallenge(challenge.id))
-        .filter((s) => s.profileId === profile.profileId);
-      const replayCheck = challengeEngine.checkReplayAllowed({
-        challenge, pastSessions: past, profileId: profile.profileId
+        // Replay-policy gate.
+        const past = (await challengeResultsStore.findCompletedForChallenge(challenge.id))
+          .filter((s) => s.profileId === profile.profileId);
+        const replayCheck = challengeEngine.checkReplayAllowed({
+          challenge, pastSessions: past, profileId: profile.profileId
+        });
+        if (replayCheck) {
+          return { kind: "replay-blocked", code: replayCheck };
+        }
+        // Build server-side puzzles and persist.
+        let puzzles;
+        try {
+          puzzles = buildPuzzlesForChallenge(challenge);
+        } catch (err) {
+          if (err.code === "LANG_UNAVAILABLE") {
+            return { kind: "lang-unavailable", message: err.message };
+          }
+          throw err;
+        }
+        // createSession returns `{ session, resumed }` because it
+        // re-checks the in-flight invariant atomically inside its
+        // commit. A racing concurrent /start for the same (challengeId,
+        // profileId) gets the existing in-flight session back as a
+        // resume rather than creating a duplicate — matches what
+        // findInFlight above would have caught if the timing had been
+        // serial. The outer mutex serializes against admin's update,
+        // not against itself: createSession's own #commit lock handles
+        // user-vs-user concurrency.
+        return {
+          kind: "created",
+          ...await challengeResultsStore.createSession({
+            challengeId: challenge.id,
+            profileId: profile.profileId,
+            profileName: profile.profileName,
+            startedAt: now.toISOString(),
+            puzzles
+          })
+        };
       });
-      if (replayCheck) {
+      if (result.kind === "resumed") {
+        const projected = projectForResponse(result.session, challenge, now);
+        return res.status(200).json({ ok: true, session: projected, resumed: true });
+      }
+      if (result.kind === "replay-blocked") {
         return res.status(409).json({
           error: "Replay not allowed for this challenge under its replay policy.",
-          code: replayCheck
+          code: result.code
         });
       }
-      // Build server-side puzzles and persist.
-      let puzzles;
-      try {
-        puzzles = buildPuzzlesForChallenge(challenge);
-      } catch (err) {
-        if (err.code === "LANG_UNAVAILABLE") {
-          return res.status(503).json({ error: err.message, code: "LANG_UNAVAILABLE" });
-        }
-        throw err;
+      if (result.kind === "lang-unavailable") {
+        return res.status(503).json({ error: result.message, code: "LANG_UNAVAILABLE" });
       }
-      // createSession returns `{ session, resumed }` because it
-      // re-checks the in-flight invariant atomically inside its
-      // commit. A racing concurrent /start for the same (challengeId,
-      // profileId) gets the existing in-flight session back as a
-      // resume rather than creating a duplicate — matches what
-      // findInFlight above would have caught if the timing had been
-      // serial.
-      const { session: created, resumed: createdResumed } = await challengeResultsStore.createSession({
-        challengeId: challenge.id,
-        profileId: profile.profileId,
-        profileName: profile.profileName,
-        startedAt: now.toISOString(),
-        puzzles
-      });
-      const projected = projectForResponse(created, challenge, now);
-      return res.status(createdResumed ? 200 : 201).json({
+      // result.kind === "created" — has session + resumed flag.
+      const projected = projectForResponse(result.session, challenge, now);
+      return res.status(result.resumed ? 200 : 201).json({
         ok: true,
         session: projected,
-        resumed: createdResumed
+        resumed: result.resumed
       });
     } catch (err) {
       return challengeError(res, err, "start");

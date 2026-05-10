@@ -1432,6 +1432,24 @@ const challengeResultsStore = new ChallengeResultsStore({
   logger: console,
   claimDirectDataWriteSlot
 });
+// Cross-route mutex for challenge config-vs-session ops. claimDirectDataWriteSlot
+// is a counter (multiple writers can hold it at once — that's how the
+// backup/restore busy-check sees concurrent activity), so it's NOT an
+// exclusive lock. The admin PUT path needs to read challengeResultsStore
+// (hasResults check) and then write challengeConfigStore atomically with
+// respect to user POSTs that create the FIRST session — otherwise the
+// hasResults snapshot can lie. The two stores have separate commit
+// queues, so neither queue alone can serialize them. This Promise-chain
+// mutex ties admin update + user start together so the immutable-fields
+// check is observed under the same lock the mutation runs under.
+let challengeAdminUserMutex = Promise.resolve();
+function withChallengeAdminUserMutex(fn) {
+  const next = challengeAdminUserMutex.then(fn, fn);
+  // Swallow rejection on the chain so one failed op doesn't poison
+  // the next; the caller still gets the original promise's outcome.
+  challengeAdminUserMutex = next.then(() => undefined, () => undefined);
+  return next;
+}
 // Resolve runtime notifications config from app-config overrides (live)
 // with env-var seed fallbacks. Called every time scheduler/service
 // needs the config so admin edits take effect without restart.
@@ -3250,6 +3268,7 @@ app.use(
     challengeConfigStore,
     challengeResultsStore,
     challengeEngine,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     challengeModeEnabled: ENV_CHALLENGE_MODE_ENABLED,
@@ -3348,6 +3367,7 @@ app.use(
   createChallengesRouter({
     challengeConfigStore,
     challengeResultsStore,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     getDictionary,

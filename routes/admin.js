@@ -147,6 +147,7 @@ function createAdminRouter(deps) {
     challengeConfigStore,
     challengeResultsStore,
     challengeEngine,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     challengeModeEnabled,
@@ -1253,21 +1254,21 @@ function createAdminRouter(deps) {
       try {
         const body = req.body || {};
         enforceEnvCaps(body);
-        // Move the hasResults check INSIDE the slot. Reading sessions
-        // outside the slot lets a /api/challenges/:id/start invocation
-        // race in between this read and the config update — it could
-        // create the first session for the challenge during that
-        // window. The update() then sees hasResults=false (the snapshot
-        // value) and performs an immutable-fields edit that the store
-        // contract forbids once any session exists. Locking the
-        // observation under the same slot the mutation uses closes
-        // that TOCTOU (createSession also runs under withSlot, so they
-        // serialize against each other through the slot).
-        const updated = await withSlot(async () => {
+        // The hasResults observation and the config update must be
+        // serialized against /api/challenges/:id/start so an
+        // immutable-fields edit can't slip through while the first
+        // session is being created. The backup/restore slot is a
+        // counter (multiple writers OK), so it doesn't serialize
+        // here on its own — withChallengeAdminUserMutex is a
+        // dedicated promise-chain mutex shared with the user-side
+        // start route. We still claim the backup/restore slot too
+        // because the underlying writes go to data/, and that's the
+        // slot's job (busy-check during backup).
+        const updated = await withChallengeAdminUserMutex(() => withSlot(async () => {
           const sessions = await challengeResultsStore.getSnapshot();
           const hasResults = sessions.sessions.some((s) => s.challengeId === req.params.id);
           return challengeConfigStore.update(req.params.id, body, { hasResults });
-        });
+        }));
         webhookAudit("challenge.update", {
           actor: actorFingerprint(req),
           id: updated.id
