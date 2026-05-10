@@ -37,6 +37,31 @@
 // The script also flags top-level (module-scope) calls — those are
 // unambiguous bypasses because module-scope code runs at require()
 // time, before any slot can be claimed.
+//
+// Known limitations (this is a heuristic guardrail, not a complete
+// static analyzer):
+//
+//   * Slot-release tracking. The check accepts an awaited claim
+//     anywhere earlier in the enclosing function but doesn't track
+//     `release()` calls. A pattern like
+//     `await claim(); release(); await writeJsonAtomic(...)`
+//     passes even though the slot was dropped before the write.
+//     Mitigation: SAFE_PER_FILE is the authoritative allowlist for
+//     documented stores; new code outside that list still has to
+//     follow `claim → write → release` in source order.
+//
+//   * Source-order vs execution-order. The visitor walks function
+//     definitions in source order, not call/execution order. A
+//     helper defined in the same scope and invoked AFTER a claim
+//     can show as unprotected because it was visited first. The
+//     existing store pattern (claim at top of `#commit`, writer
+//     in a nested `run` arrow defined later) walks correctly
+//     because source order matches execution order; refactors
+//     that violate that may produce false positives or negatives.
+//
+// In short: SAFE_PER_FILE captures the truth for documented store
+// patterns; the slot-claim heuristic catches casual bypasses in
+// new code; sophisticated mis-uses still need code review.
 
 const fs = require("fs");
 const path = require("path");
@@ -162,13 +187,26 @@ function methodKeyName(keyNode) {
   return null;
 }
 
-// AST node types that introduce a conditional execution path
-// between their position and an outer scope. A
-// `claimDirectDataWriteSlot()` whose path back to the enclosing
-// function passes through any of these is NOT unconditional
-// within that function — code reaching the slot claim is gated
-// on the conditional, so subsequent writes in the function body
-// can't be assumed to be slot-protected.
+// AST node types that gate execution conditionally between their
+// position and an outer scope. A `claimDirectDataWriteSlot()`
+// whose path back to the enclosing function passes through any
+// of these isn't guaranteed to run; subsequent writes in the
+// function body can't be assumed slot-protected.
+//
+// `TryStatement` is intentionally NOT in this set — the `try`
+// block itself runs unconditionally (the only conditional flow
+// is through `CatchClause`, which IS in the set). A common
+// pattern is:
+//
+//   await claimDirectDataWriteSlot();
+//   try {
+//     await writeJsonAtomic(...);   // safe — try doesn't gate the claim
+//   } finally {
+//     release();
+//   }
+//
+// Treating `try` as conditional would falsely flag this pattern
+// (Copilot caught the issue on PR #108 round 9).
 const CONDITIONAL_NODE_TYPES = new Set([
   "IfStatement",
   "ForStatement",
@@ -178,7 +216,6 @@ const CONDITIONAL_NODE_TYPES = new Set([
   "DoWhileStatement",
   "SwitchStatement",
   "SwitchCase",
-  "TryStatement",
   "CatchClause",
   "ConditionalExpression", // ternary
   "LogicalExpression",      // &&, ||, ??
