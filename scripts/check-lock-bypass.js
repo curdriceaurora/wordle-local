@@ -69,33 +69,55 @@ const acorn = require("acorn");
 
 const projectRoot = path.resolve(__dirname, "..");
 
-// Per-(file, function-name) allowlist of `writeJsonAtomic` callers
-// that are KNOWN documented patterns from `lib/locks.md`. These are
-// scoped to the files where the pattern actually lives — a generic
-// name like `commit` or `load` is only exempt INSIDE the listed
-// store files. A future bypass in `routes/` or `server.js` (or in
-// a new lib file) using one of these names would not match this
-// allowlist and would still be flagged.
+// Per-(file, function-name) allowlist of `writeJsonAtomic` callers.
+// Generic names like `commit` / `load` are only exempt INSIDE the
+// listed store files; a bypass with the same name in `routes/` or
+// a new lib file is still flagged.
 //
-// Each entry is justified by its store's role in `lib/locks.md` —
-// either store-claims-slot via `#commit` (modern pattern) or
-// caller-claims-slot via the route layer (legacy pattern). Adding
-// a new entry here requires linking back to the lock-graph rationale.
-const SAFE_PER_FILE = new Map([
-  // Modern commitQueue stores — slot claimed inside `#commit`.
+// Two tiers (treated identically by the runtime check, but split
+// for documentation — see `lib/locks.md` "Slot-claim ownership"):
+//
+//   * INTERNAL — store's own `#commit` claims
+//     `claimDirectDataWriteSlot()`. Safe regardless of who calls
+//     the store's public mutators. The modern pattern from PR
+//     #103 onward.
+//
+//   * CALLER — store does NOT claim internally. Callers MUST
+//     wrap mutators in `withSlot(...)` (admin routes do this) or
+//     run at boot before any concurrency (sync init paths). A
+//     future caller that invokes a store mutator without wrapping
+//     would still pass `locks:check` because of the per-file
+//     exemption — codex named this risk on PR #108 round 10. The
+//     mitigation is `lib/locks.md`'s "Slot-claim ownership"
+//     subsection (audit each new caller) plus the SAFE_PER_FILE
+//     entries below being explicit about which tier each store
+//     belongs to. Long-term, the right fix is to migrate these
+//     stores to the INTERNAL pattern; tracked separately.
+const INTERNAL_CLAIM_STORES = new Map([
   ["lib/challenge-config-store.js", new Set(["#commit", "#loadInternal"])],
   ["lib/challenge-results-store.js", new Set(["#commit", "#loadInternal"])],
   ["lib/push-subscription-store.js", new Set(["#commit", "#loadInternal"])],
-  ["lib/schedule-store.js", new Set(["#commit", "#loadInternal"])],
   ["lib/webhook-delivery-store.js", new Set(["#commit", "#loadInternal"])],
   ["lib/webhook-store.js", new Set(["#commit", "#loadInternal"])],
-  // Legacy writeQueue / sync stores — caller claims slot at the
-  // admin route layer or the boot path.
+]);
+const CALLER_CLAIM_STORES = new Map([
+  // Schedule store: route layer (admin schedule routes) wraps
+  // mutators in withSlot(); reconciler runs under the data lock.
+  ["lib/schedule-store.js", new Set(["#commit", "#loadInternal"])],
+  // Admin-jobs store: write paths run under the import-queue
+  // active ref (observed by backup busy-check) or under withSlot
+  // at the route layer.
   ["lib/admin-jobs-store.js", new Set(["#persist", "load"])],
+  // App-config store: replaceOverridesSync runs under withSlot in
+  // routes/admin.js; loadSync runs at boot before any concurrency.
   ["lib/app-config-store.js", new Set(["loadSync", "replaceOverridesSync"])],
+  // Language-registry: updateSync runs under withSlot in
+  // routes/admin.js; #recoverWithDefaults is the boot/recovery path.
   ["lib/language-registry.js", new Set(["#recoverWithDefaults", "updateSync"])],
+  // Vapid-store: keypair init at boot before any concurrency.
   ["lib/vapid-store.js", new Set(["ensureKeysSync"])],
 ]);
+const SAFE_PER_FILE = new Map([...INTERNAL_CLAIM_STORES, ...CALLER_CLAIM_STORES]);
 
 // Files whose `writeJsonAtomic` call sites are exempt entirely.
 // Each entry MUST have a justification comment explaining the
