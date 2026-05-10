@@ -58,6 +58,12 @@ Process rules that cost ~zero per PR but apply immediately:
 - **PR size cap**: PRs ≥ 2000 lines must be split unless the diff is a
   single semantic unit.
 
+- **Class-wide remediation**: when a reviewer flags a single instance,
+  grep the codebase for the pattern and fix every match in the same PR.
+  Never defer to a follow-up — that's how PR #106 rounds 9 and 13
+  came to be (same `/admin` gate-scope class flagged once on round 6,
+  twice more later).
+
 - **Sequence rehearsal**: for any docs change with ordered commands,
   copy-paste each in order against a clean state before pushing.
 

@@ -71,7 +71,44 @@ PR #106 was a P1 caused by writing "launch, then edit .env"
 instead of "edit, then launch" — would have surfaced in 60 seconds
 of self-rehearsal.
 
-### 4. Commit-message-as-evidence for code-behavior claims
+### 4. Class-wide remediation
+
+When a reviewer flags a single instance of an issue — a misleading
+phrase, a missing aria-label, a TOCTOU-style race, a doc claim that
+doesn't match the code — **don't just fix that line**. Treat the
+flag as a representative of a *class* of bug and grep the codebase
+for the rest of the class.
+
+Process for each finding:
+
+1. Identify the class. Reframe the finding from "wrong at file:line"
+   to "what pattern does this represent?" Examples:
+   - "`/admin` gate scope claim is wrong" → class: every place a gate
+     scope is described (README, docs/, code comments).
+   - "Backspace key missing aria-label" → class: every special key
+     button rendered by `makeKbKey` or its callers.
+   - "Slot bypass in `challenge-config-store` bootstrap" → class:
+     every store with an ENOENT-on-bootstrap path.
+   - "MD022 violation in README:69" → class: every `.md` file in
+     the repo.
+2. Grep / search for the pattern. `grep -rn`, `rg`, or a subagent
+   for ambiguous patterns. Inspect each match.
+3. Fix all instances in the same commit (or split into a sibling
+   commit if the original PR's scope can't absorb them — but never
+   defer to a follow-up PR; that's how rounds 9 and 13 of #106 came
+   to be).
+4. Mention the class-wide sweep in the commit message: "Reviewer
+   flagged X at file:line; grep across codebase found N other
+   matches; all N+1 fixed."
+
+**This is the highest-leverage process rule.** Round 6 of #106
+fixed one `/admin` gate scope claim; rounds 9 and 13 fixed the
+other two — three rounds for what should have been one. The
+markdownlint sweep that landed alongside this rule used exactly
+this pattern: CodeRabbit flagged MD022 in one file; the fix was
+to clean all 32 markdown files in the repo at once.
+
+### 5. Commit-message-as-evidence for code-behavior claims
 
 Any docs change that asserts "X requires Y" or "the route does Z"
 must back the claim with a quoted source reference in the commit
@@ -92,7 +129,7 @@ Forces the verification before push. Round 6 of PR #106 (`/admin`
 gate scope) and rounds 9 + 13 (`/api/word` also gated, recreate vs
 restart) all stem from claims I asserted without verifying first.
 
-### 5. Mechanical pre-flight
+### 6. Mechanical pre-flight
 
 Before opening a PR or pushing a commit:
 
