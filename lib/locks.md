@@ -33,7 +33,7 @@ them up was the most common P1 source in the campaign.**
 | `directDataWriteActiveRef` | Counter (read by busy-check) | Backup/restore exclusion | `server.js` | Backup/restore busy-check observes it |
 | `withWordWriteLock` | Strict per-key mutex (Promise chain) | Decide-then-write atomicity | `server.js` | Manual `POST /api/word`, scheduler reconciler |
 | `withChallengeAdminUserMutex` | Cross-route Promise chain | Cross-store atomicity | `server.js` | `PUT /api/admin/challenges/:id`, `POST /api/challenges/:id/start` |
-| Per-store `commitQueue` | Per-instance Promise chain (FIFO) | Per-store atomicity | each `lib/<store>.js` | The store's own `update`/`createSession`/`#commit` |
+| Per-store `commitQueue` / `writeQueue` | Per-instance Promise chain (FIFO) | Per-store atomicity | each `lib/<store>.js` | The store's own `update`/`createSession`/`#commit` |
 | `providerImportQueueActiveRef` | Boolean | Backup/restore exclusion | `server.js` | Async provider import queue |
 | `providerImportSyncActiveRef` | Boolean | Backup/restore exclusion | `server.js` | Sync provider import path |
 | `providerImportEnqueueActiveRef` | Boolean | Backup/restore exclusion | `server.js` | Provider import upload+enqueue window |
@@ -51,7 +51,7 @@ archive's bytes get renamed into `data/`).
   Generally you don't claim it directly — it's claimed by the backup
   route, observed by everything else.
 - **Don't use when**: you want to serialize two regular writers against
-  each other. Use a per-store `commitQueue` or a dedicated mutex
+  each other. Use a per-store `commitQueue` / `writeQueue` or a dedicated mutex
   instead — `dataMutationLockRef` is a *single global flag*, not a
   general-purpose lock.
 - **Pitfall**: awaiting `waitForRelease()` when the lock isn't held is
@@ -81,7 +81,7 @@ direct writers against each other.
 
 - **Use when**: you're adding a route handler or scheduled job that
   writes directly to a `data/` file (bypassing a store's
-  `commitQueue`) and you need the backup/restore busy-check to see
+  `commitQueue` / `writeQueue`) and you need the backup/restore busy-check to see
   the work as in-flight.
 - **Don't use when**: you need EXCLUSIVE access. Two callers can both
   hold the slot at once and both will write; the slot doesn't prevent
@@ -106,7 +106,7 @@ and the scheduler reconciler both serialize through it.
 - **Use when**: you need decide-then-write atomicity for a specific key.
   The decision (read current state, compute next state) and the write
   must not interleave with another writer's decision-then-write.
-- **Don't use when**: a per-store `commitQueue` already provides this.
+- **Don't use when**: a per-store `commitQueue` / `writeQueue` already provides this.
   `withWordWriteLock` exists because `data/word.json` is written from
   TWO independent code paths that don't share a store instance.
 
@@ -126,19 +126,44 @@ observation is atomic with respect to the user's `createSession`.
   first route writes derived state from the stale config. Always
   re-read authoritative state INSIDE the mutex closure.
 
-### Per-store `commitQueue` (per-instance Promise chain)
+### Per-store `commitQueue` / `writeQueue` (per-instance Promise chain)
 
-Each persistent store (`backup-store`, `schedule-store`, `webhook-store`,
-`webhook-delivery-store`, `push-subscription-store`,
-`challenge-config-store`, `challenge-results-store`) has its own
-`commitQueue` that serializes commits within that store. Driven by
-`#commit(updater)` which:
+Each persistent store has its own per-instance Promise chain that
+serializes writes within that store. **Two names exist for historical
+reasons**: older stores call the field `writeQueue` (the original
+naming convention from the leaderboard store); newer stores added
+during the #98–#103 campaign use `commitQueue` paired with a
+private `#commit(updater)` method. Both are the same primitive.
+The backup-restore drain path (`drainStoreWriteQueues` in
+`routes/backup.js`) is the authoritative list — when adding a new
+store, append its queue there too.
+
+Mapping today:
+
+| Store | Queue field name |
+| --- | --- |
+| `lib/leaderboard-store.js` | `writeQueue` |
+| `lib/admin-jobs-store.js` | `writeQueue` |
+| `lib/classes-store.js` | `writeQueue` |
+| `lib/schedule-store.js` | `commitQueue` |
+| `lib/webhook-store.js` | `commitQueue` |
+| `lib/webhook-delivery-store.js` | `commitQueue` |
+| `lib/push-subscription-store.js` | `commitQueue` |
+| `lib/challenge-config-store.js` | `commitQueue` |
+| `lib/challenge-results-store.js` | `commitQueue` |
+
+Each `commitQueue`-style store is driven by a private `#commit(updater)`
+that:
 
 1. Claims `claimDirectDataWriteSlot` for backup/restore safety.
 2. Chains the updater onto `commitQueue` so prior commits drain first.
 3. Inside the updater: reads cached state, runs the mutator, runs
    `normalizeStore` (the store's structural validator), persists via
    `writeJsonAtomic`, releases the slot.
+
+The older `writeQueue` stores follow the same pattern with slightly
+different method names (e.g. `commit()` rather than `#commit()`); the
+behavioral contract is identical.
 
 - **Use when**: implementing a store update method. Wrap your mutator
   in `#commit`. The mutator should be pure (state in, next state out)
