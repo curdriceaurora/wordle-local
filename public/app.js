@@ -197,10 +197,10 @@ function showErrorPanel(message) {
   playPanel.classList.add("hidden");
   errorPanel.classList.remove("hidden");
   // The link-failure message is owned by JS (it's never in markup),
-  // so localize it here at render time. Falls back to English if i18n
-  // hasn't loaded — though init() now awaits window.i18nReady so this
-  // path should always have a real translation when callable from
-  // route validation.
+  // so localize it here at render time. Callers pass `null` for the
+  // generic case so this function can pick the localized default;
+  // only pass an explicit string when forwarding a server-supplied
+  // (already-localized) message such as result.message.
   const fallbackMsg = "That link doesn't work. Let's make a new puzzle.";
   errorMessageEl.textContent = message
     || (window.i18n ? window.i18n.t("error.linkFailed") : fallbackMsg);
@@ -1521,25 +1521,25 @@ async function init() {
       : resolvedLang;
 
     if (!trimmedCode || !/^[a-zA-Z]+$/.test(trimmedCode)) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (!resolvedLang) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (hasLoadedLanguageMeta && !availableLang) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
     if (isDailyFromLink && !parseDateString(resolvedDailyDate)) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
 
     const minLength = hasLoadedLanguageMeta ? getMinLengthForLang(availableLang) : minLen;
     if (trimmedCode.length < minLength || trimmedCode.length > maxLen) {
-      showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(null);
       return;
     }
 
@@ -1547,7 +1547,7 @@ async function init() {
     if (guessesParam !== null) {
       const parsed = Number(guessesParam);
       if (!Number.isInteger(parsed) || parsed < minGuesses || parsed > maxGuessesAllowed) {
-        showErrorPanel("That link doesn't work. Let's make a new puzzle.");
+        showErrorPanel(null);
         return;
       }
       guessesCount = parsed;
@@ -1563,7 +1563,7 @@ async function init() {
       dailyDate: resolvedDailyDate
     });
     if (!result.ok) {
-      showErrorPanel(result.message || "That link doesn't work. Let's make a new puzzle.");
+      showErrorPanel(result.message || null);
     }
   } else {
     initCreate();
@@ -1610,12 +1610,21 @@ init();
       // loadLocale() internally re-runs updateDOM(); no second call
       // needed here (was a redundant full DOM traversal).
       await window.i18n.loadLocale(next);
-      // Re-render dynamic challenge list so the buttons created via
-      // i18n.t() pick up the new locale. The list panel is the only
-      // place in this file that injects translated text into newly-
-      // created DOM nodes (vs. data-i18n-bound markup, which
-      // updateDOM() handles automatically).
+      // Re-render any challenge panel that's currently visible — its
+      // text is built imperatively via i18n.t() into new DOM nodes,
+      // so updateDOM() (which only retranslates data-i18n-bound nodes)
+      // doesn't reach it. The list view is the most common case; the
+      // play board's strings come from data-i18n bindings in markup,
+      // so it doesn't need a manual re-render. Summary + leaderboard
+      // panels are imperatively rendered, so we re-fire their loaders.
       if (typeof renderChallengeList === "function") renderChallengeList();
+      const summaryVisible = challengeSummaryPanelEl && !challengeSummaryPanelEl.classList.contains('hidden');
+      const leaderboardVisible = challengeLeaderboardPanelEl && !challengeLeaderboardPanelEl.classList.contains('hidden');
+      if (summaryVisible && challengeState.session && typeof enterChallengeSummary === "function") {
+        enterChallengeSummary();
+      } else if (leaderboardVisible && challengeState.lastLeaderboardChallengeId && typeof showChallengeLeaderboard === "function") {
+        showChallengeLeaderboard(challengeState.lastLeaderboardChallengeId);
+      }
     } catch (_err) {
       // Roll the dropdown back to the active locale on failure so the
       // UI matches what's actually loaded.
@@ -1940,11 +1949,24 @@ function renderChallengeList() {
     meta.className = 'note';
     // Build the meta segments conditionally so wordLength=null
     // doesn't render as an empty "·  ·" segment.
-    const metaSegments = [`${ch.puzzleCount} puzzles`];
-    if (ch.wordLength) metaSegments.push(`${ch.wordLength}-letter`);
-    metaSegments.push(`${ch.timeBudgetSeconds}s budget`);
-    metaSegments.push(`${ch.maxGuesses} guesses each`);
-    metaSegments.push(`replay: ${ch.replayPolicy}`);
+    const i18n = window.i18n;
+    const metaSegments = [
+      i18n ? i18n.t("challenge.metaPuzzles", { count: ch.puzzleCount }) : `${ch.puzzleCount} puzzles`,
+    ];
+    if (ch.wordLength) {
+      metaSegments.push(
+        i18n ? i18n.t("challenge.metaWordLength", { length: ch.wordLength }) : `${ch.wordLength}-letter`
+      );
+    }
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaTimeBudget", { seconds: ch.timeBudgetSeconds }) : `${ch.timeBudgetSeconds}s budget`
+    );
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaMaxGuesses", { count: ch.maxGuesses }) : `${ch.maxGuesses} guesses each`
+    );
+    metaSegments.push(
+      i18n ? i18n.t("challenge.metaReplay", { policy: ch.replayPolicy }) : `replay: ${ch.replayPolicy}`
+    );
     meta.textContent = metaSegments.join(' · ');
     card.appendChild(meta);
     const actions = document.createElement('div');

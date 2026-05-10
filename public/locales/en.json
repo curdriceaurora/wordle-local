@@ -90,6 +90,13 @@
     "noActive": "No active challenges right now.",
     "startBtn": "Start",
     "leaderboardBtn": "Leaderboard",
+    "metaPuzzles_one": "{count} puzzle",
+    "metaPuzzles_other": "{count} puzzles",
+    "metaWordLength": "{length}-letter",
+    "metaTimeBudget": "{seconds}s budget",
+    "metaMaxGuesses_one": "{count} guess each",
+    "metaMaxGuesses_other": "{count} guesses each",
+    "metaReplay": "replay: {policy}",
     "puzzleProgress": "Puzzle {current} of {total}",
     "solvedRunning": "{solved}/{total} solved",
     "quit": "Quit",
@@ -194,7 +201,8 @@
     "loading": "Loading…",
     "error": "Error",
     "back": "Back",
-    "ok": "OK"
+    "ok": "OK",
+    "skipToMain": "Skip to main content"
   },
   "serverError": {
     "challengeNotFound": "Challenge not found.",

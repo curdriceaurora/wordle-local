@@ -141,11 +141,15 @@ function main() {
   }
 
   // Coverage check: every reference in source files must resolve in en.
+  // A missing scan file is a hard failure: SCAN_FILES is the contract
+  // between this gate and the codebase, so a missing entry means the
+  // file was renamed/deleted and the list needs updating — silently
+  // skipping it would let untracked references regress unnoticed.
   const allReferences = new Set();
   for (const rel of SCAN_FILES) {
     const filePath = path.join(projectRoot, rel);
     if (!fs.existsSync(filePath)) {
-      console.warn(`[i18n:check] WARN: ${rel} not found`);
+      fail(`scan target ${rel} not found — update SCAN_FILES in scripts/i18n-coverage.js`);
       continue;
     }
     const source = fs.readFileSync(filePath, "utf8");

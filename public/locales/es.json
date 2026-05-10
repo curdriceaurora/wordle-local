@@ -90,6 +90,13 @@
     "noActive": "No hay retos activos en este momento.",
     "startBtn": "Empezar",
     "leaderboardBtn": "Clasificación",
+    "metaPuzzles_one": "{count} puzle",
+    "metaPuzzles_other": "{count} puzles",
+    "metaWordLength": "{length} letras",
+    "metaTimeBudget": "{seconds}s de tiempo",
+    "metaMaxGuesses_one": "{count} intento cada uno",
+    "metaMaxGuesses_other": "{count} intentos cada uno",
+    "metaReplay": "repetir: {policy}",
     "puzzleProgress": "Puzle {current} de {total}",
     "solvedRunning": "{solved}/{total} resueltos",
     "quit": "Salir",
@@ -194,7 +201,8 @@
     "loading": "Cargando…",
     "error": "Error",
     "back": "Atrás",
-    "ok": "Aceptar"
+    "ok": "Aceptar",
+    "skipToMain": "Saltar al contenido principal"
   },
   "serverError": {
     "challengeNotFound": "Reto no encontrado.",
