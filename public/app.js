@@ -1229,7 +1229,13 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     endPerfMeasure(initTimer, "failed");
-    return { ok: false, message: data.error || "That link doesn't work." };
+    // Return null (not an English literal) when the server didn't
+    // supply an error string — showErrorPanel(null) then picks the
+    // localized error.linkFailed default. /api/puzzle currently
+    // returns English error strings; if we ever wire that endpoint
+    // through translateForRequest (it's challenge-routes-only today),
+    // those will already be localized when forwarded as-is here.
+    return { ok: false, message: data.error || null };
   }
 
   cols = data.length;
@@ -1913,9 +1919,33 @@ if (challengeProfileInputEl) {
   });
 }
 
+// Wrap fetch() so challenge endpoints — the only routes wired into
+// `translateForRequest()` server-side — see the UI-selected locale
+// even when the browser's own Accept-Language header points at a
+// different language. This lets a user on a Spanish browser switch
+// the UI switcher to English and have the server return English
+// error JSON, and vice versa. Other endpoints don't translate
+// responses today, so leaving their fetches untouched avoids extra
+// network surface area for no behavioral gain.
+function challengeFetch(input, init) {
+  const opts = init ? { ...init } : {};
+  const headers = new Headers(opts.headers || {});
+  const locale = (window.i18n && typeof window.i18n.getCurrentLocale === "function")
+    ? window.i18n.getCurrentLocale()
+    : "";
+  if (locale && !headers.has("Accept-Language")) {
+    // Send `<locale>,<base>;q=0.5` so the server still has a valid
+    // base fallback if it ever needs one. parseAcceptLanguage handles
+    // q-factor ranking; the high-priority entry wins.
+    headers.set("Accept-Language", `${locale},${locale.split("-")[0]};q=0.5`);
+  }
+  opts.headers = headers;
+  return fetch(input, opts);
+}
+
 async function loadChallengeList() {
   try {
-    const res = await fetch('/api/challenges');
+    const res = await challengeFetch('/api/challenges');
     if (!res.ok) {
       if (res.status === 404 && (await res.json().catch(() => ({}))).code === 'CHALLENGE_MODE_DISABLED') {
         if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
@@ -1994,7 +2024,7 @@ async function startChallenge(challengeId) {
   }
   const finalName = challengeProfileInputEl?.value?.trim() || profile.name || 'Player';
   try {
-    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
+    const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profileId: profile.id, profileName: finalName })
@@ -2076,7 +2106,7 @@ async function handleChallengeTimedOutClient() {
   // final score). Don't trust the client clock for the outcome.
   if (!challengeState.session) return;
   try {
-    const res = await fetch(
+    const res = await challengeFetch(
       `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}`
     );
     if (res.ok) {
@@ -2226,7 +2256,7 @@ async function submitChallengeGuess() {
   challengeState.pendingGuess = '';
   setChallengePlayStatus(window.i18n ? window.i18n.t("challenge.submitting") : 'Submitting…');
   try {
-    const res = await fetch(
+    const res = await challengeFetch(
       `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/guess`,
       {
         method: 'POST',
@@ -2350,7 +2380,7 @@ if (challengeQuitBtnEl) {
     if (!challengeState.session) return;
     if (!confirm(window.i18n ? window.i18n.t("challenge.quitConfirm") : 'Quit this challenge? Your progress so far will be saved as abandoned.')) return;
     try {
-      const res = await fetch(
+      const res = await challengeFetch(
         `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/finish`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
       );
@@ -2379,7 +2409,7 @@ async function showChallengeLeaderboard(challengeId) {
     challengeLeaderboardNameEl.textContent = window.i18n ? window.i18n.t("challenge.loading") : 'Loading…';
   }
   try {
-    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
+    const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
     if (!res.ok) {
       if (challengeLeaderboardNameEl) {
         challengeLeaderboardNameEl.textContent = window.i18n
