@@ -127,7 +127,14 @@
         <div class="play-head">
           <div>
             <h2 data-i18n="play.heading">Play</h2>
-            <p id="playMeta" data-i18n="play.loading">Loading puzzle…</p>
+            <!-- #playMeta is a runtime-owned slot. initPlay() rewrites
+                 textContent with formatted puzzle metadata (language,
+                 length, tries). DON'T bind data-i18n here — the i18n
+                 updateDOM() pass would clobber the dynamic value with
+                 static "Loading…" copy on every locale switch. The
+                 initial Loading… string is set by initPlay()
+                 internally via i18n.t("play.loading"). -->
+            <p id="playMeta">Loading puzzle…</p>
           </div>
           <a class="admin-link" href="/" data-i18n="play.createYours">Create yours</a>
         </div>
@@ -306,12 +313,12 @@
       <div class="modal-backdrop" data-modal-close="true"></div>
       <div class="modal-card" role="document">
         <div class="modal-head">
-          <h2 id="shareModalTitle">About share links</h2>
-          <button type="button" id="shareModalClose" class="ghost">Close</button>
+          <h2 id="shareModalTitle" data-i18n="share.modalTitle">About share links</h2>
+          <button type="button" id="shareModalClose" class="ghost" data-i18n="share.close">Close</button>
         </div>
-        <p id="shareModalDesc">
+        <p id="shareModalDesc" data-i18n="share.modalBody1">
           Share links are encoded to make them easy to pass around. They are not secure and can be
-          decoded by anyone. Don’t use them for secrets.
+          decoded by anyone. Don't use them for secrets.
         </p>
       </div>
     </div>

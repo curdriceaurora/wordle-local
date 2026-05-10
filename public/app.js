@@ -1585,8 +1585,9 @@ window.i18nReady = (async function bootstrapI18n() {
   langSelect.addEventListener("change", async () => {
     const next = String(langSelect.value || "en");
     try {
+      // loadLocale() internally re-runs updateDOM(); no second call
+      // needed here (was a redundant full DOM traversal).
       await window.i18n.loadLocale(next);
-      window.i18n.updateDOM();
       // Re-render dynamic challenge list so the buttons created via
       // i18n.t() pick up the new locale. The list panel is the only
       // place in this file that injects translated text into newly-

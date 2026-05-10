@@ -228,7 +228,7 @@ function createChallengesRouter(deps) {
   async function loadSessionAndChallenge(req, res) {
     const challenge = await challengeConfigStore.findById(req.params.id);
     if (!challenge) {
-      res.status(404).json({ error: "Challenge not found.", code: "CHALLENGE_NOT_FOUND" });
+      res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
       return null;
     }
     const session = await challengeResultsStore.findById(req.params.sessionId);

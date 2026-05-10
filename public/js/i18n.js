@@ -200,6 +200,11 @@
 
   // Apply translations to all DOM nodes carrying data-i18n / data-i18n-attr.
   // Called automatically after loadLocale() and once during init().
+  // Skip nodes whose `t(key)` returns the literal key — that means
+  // neither the active locale nor the en fallback has the key. Leaving
+  // the existing markup intact (the original English literal that ships
+  // in index.html) keeps the UI usable when /locales/en.json fetch
+  // fails on first load instead of replacing real text with raw keys.
   function updateDOM(root) {
     var doc = root || global.document;
     if (!doc) return;
@@ -211,6 +216,7 @@
       var key = el.getAttribute(DOM_BINDING_ATTR);
       if (!key) continue;
       var text = t(key);
+      if (text === key) continue; // no translation available — keep existing markup
       // For inputs/textareas with data-i18n, treat it as placeholder.
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
         el.placeholder = text;
@@ -232,7 +238,9 @@
         var attr = pair[0].trim();
         var keyForAttr = pair[1].trim();
         if (!attr || !keyForAttr) continue;
-        node.setAttribute(attr, t(keyForAttr));
+        var attrText = t(keyForAttr);
+        if (attrText === keyForAttr) continue;
+        node.setAttribute(attr, attrText);
       }
     }
   }
