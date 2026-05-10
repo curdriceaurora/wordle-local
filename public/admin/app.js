@@ -4092,13 +4092,29 @@ window.i18nReady = (async function bootstrapAdminI18n() {
     const next = String(langSelect.value || "en");
     try {
       await window.i18n.loadLocale(next);
-      window.i18n.updateDOM();
-      // The admin shell builds plenty of runtime tables/forms whose
-      // textContent is hardcoded English at the moment. Migration of
-      // those is incremental — `data-i18n` markup re-renders here,
-      // but dynamic-rendered admin copy reverts to English on
-      // re-render until each tab is migrated. Documented in
-      // docs/i18n.md as "remaining work".
+      // updateDOM() runs inside loadLocale() now; static markup with
+      // data-i18n is already retranslated. Dynamic admin tables
+      // (provider rows, profile lists, etc.) build their cells with
+      // hardcoded English textContent that doesn't carry data-i18n,
+      // so we re-fire the active tab's loader to redraw those cells.
+      // Each loader is idempotent — calling it after a locale switch
+      // just rebuilds the table from the cached snapshot. Soft-allow
+      // any loader the active tab doesn't have (e.g. before unlock).
+      const reloaders = [
+        ["providers", typeof loadProviders === "function" ? loadProviders : null],
+        ["profiles", typeof loadProfiles === "function" ? loadProfiles : null],
+        ["classes", typeof loadClasses === "function" ? loadClasses : null],
+        ["analytics", typeof loadAnalytics === "function" ? loadAnalytics : null],
+        ["schedule", typeof loadSchedule === "function" ? loadSchedule : null],
+        ["webhooks", typeof loadWebhooks === "function" ? loadWebhooks : null],
+        ["notifications", typeof loadNotifications === "function" ? loadNotifications : null],
+        ["challenges", typeof loadChallengesAdmin === "function" ? loadChallengesAdmin : null]
+      ];
+      for (const [tab, fn] of reloaders) {
+        if (state?.unlocked && state?.activeTab === tab && fn) {
+          fn({ announce: false }).catch(() => {});
+        }
+      }
     } catch (_err) {
       langSelect.value = window.i18n.getCurrentLocale();
     }

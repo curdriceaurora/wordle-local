@@ -172,6 +172,10 @@
       currentLocale = locale;
       writeStoredLocale(locale);
       updateHtmlLang(locale);
+      // Apply translations to all bound DOM nodes so callers don't
+      // have to remember to call updateDOM() themselves. This matches
+      // the documented contract.
+      updateDOM();
       return;
     }
     if (availableLocales.indexOf(locale) === -1) {
@@ -185,6 +189,7 @@
     currentLocale = locale;
     writeStoredLocale(locale);
     updateHtmlLang(locale);
+    updateDOM();
   }
 
   function updateHtmlLang(locale) {

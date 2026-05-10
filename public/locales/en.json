@@ -15,7 +15,8 @@
     "notificationsToggleOn": "Notifications: on",
     "notificationsBlocked": "Notifications blocked",
     "notificationsBlockedHint": "Open browser settings to allow notifications, then reload.",
-    "notificationsNeedHttps": "Notifications need HTTPS or localhost."
+    "notificationsNeedHttps": "Notifications need HTTPS or localhost.",
+    "notificationsToggleAriaLabel": "Daily puzzle notifications"
   },
   "create": {
     "heading": "Create a puzzle",
@@ -35,6 +36,9 @@
     "loading": "Loading puzzle…",
     "createYours": "Create yours",
     "switchPlayer": "Switch player",
+    "familyPlayerHeading": "Family Player",
+    "playingAs": "Playing as",
+    "nameLabel": "Name",
     "namePlaceholder": "Enter your name",
     "useThisName": "Use this name",
     "savedPlayers": "Saved players",
@@ -43,6 +47,20 @@
     "currentStreak": "Current streak",
     "bestSolve": "Best solve",
     "leaderboardLabel": "Family leaderboard",
+    "leaderboardHeading": "Family Leaderboard",
+    "leaderboardPeriod": "Period",
+    "leaderboardWeekly": "Weekly",
+    "leaderboardMonthly": "Monthly",
+    "leaderboardOverall": "Overall",
+    "leaderboardCols": {
+      "rank": "#",
+      "player": "Player",
+      "wins": "Wins",
+      "played": "Played",
+      "winPct": "Win %",
+      "best": "Best",
+      "streak": "Streak"
+    },
     "boardLabel": "Wordle board",
     "keyboardLabel": "Keyboard",
     "sharePlaceholder": "Share link appears here",
@@ -52,6 +70,7 @@
     "encodedNote": "Encoded links can be decoded. Don't use them for secrets.",
     "solvedFormat": "Solved in {tries}/{max}!",
     "solvedFormatWithStreak": "Solved in {tries}/{max}! Streak: {streak}.",
+    "solvedMeaningPrefix": "Meaning: {meaning}",
     "guessNotInList": "Not in word list.",
     "guessTooShort": "Guess must be {length} letters."
   },
@@ -126,8 +145,10 @@
   },
   "admin": {
     "title": "Admin",
+    "consoleTitle": "Admin Console",
     "adminKeyLabel": "Admin key",
     "workspaceTitle": "Provider Workspace",
+    "workspaceUnlockedNote": "Session unlocked for this tab only.",
     "unlock": "Unlock",
     "unlockHint": "Enter the admin key to manage providers, runtime settings, and stats.",
     "lockSession": "Lock session",

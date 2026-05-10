@@ -83,7 +83,7 @@
           type="button"
           class="toggle"
           aria-pressed="false"
-          data-i18n-attr="aria-label:header.notificationsToggleOff"
+          data-i18n-attr="aria-label:header.notificationsToggleAriaLabel"
           hidden
         >
           <span id="notificationToggleLabel" data-i18n="header.notificationsToggleOff">Get notified when daily puzzle is ready</span>
@@ -133,15 +133,15 @@
         </div>
         <section id="profilePanel" class="profile-panel hidden" aria-live="polite">
           <div class="profile-head">
-            <h3>Family Player</h3>
+            <h3 data-i18n="play.familyPlayerHeading">Family Player</h3>
             <button type="button" id="switchPlayerBtn" class="link-button hidden" data-i18n="play.switchPlayer">Switch player</button>
           </div>
           <div id="activePlayerWrap" class="note hidden">
-            Playing as <strong id="activePlayerName"></strong>
+            <span data-i18n="play.playingAs">Playing as</span> <strong id="activePlayerName"></strong>
           </div>
           <form id="profileForm" class="profile-form">
             <label>
-              <span data-i18n="play.namePlaceholder">Enter your name</span>
+              <span data-i18n="play.nameLabel">Name</span>
               <input
                 id="profileNameInput"
                 name="profileName"
@@ -178,13 +178,13 @@
         </section>
         <section id="leaderboardPanel" class="leaderboard-panel hidden">
           <div class="leaderboard-head">
-            <h3>Family Leaderboard</h3>
+            <h3 data-i18n="play.leaderboardHeading">Family Leaderboard</h3>
             <label>
-              Period
+              <span data-i18n="play.leaderboardPeriod">Period</span>
               <select id="leaderboardRange">
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="overall">Overall</option>
+                <option value="weekly" data-i18n="play.leaderboardWeekly">Weekly</option>
+                <option value="monthly" data-i18n="play.leaderboardMonthly">Monthly</option>
+                <option value="overall" data-i18n="play.leaderboardOverall">Overall</option>
               </select>
             </label>
           </div>
@@ -193,13 +193,13 @@
             <table class="leaderboard-table" data-i18n-attr="aria-label:play.leaderboardLabel">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Player</th>
-                  <th>Wins</th>
-                  <th>Played</th>
-                  <th>Win %</th>
-                  <th>Best</th>
-                  <th>Streak</th>
+                  <th data-i18n="play.leaderboardCols.rank">#</th>
+                  <th data-i18n="play.leaderboardCols.player">Player</th>
+                  <th data-i18n="play.leaderboardCols.wins">Wins</th>
+                  <th data-i18n="play.leaderboardCols.played">Played</th>
+                  <th data-i18n="play.leaderboardCols.winPct">Win %</th>
+                  <th data-i18n="play.leaderboardCols.best">Best</th>
+                  <th data-i18n="play.leaderboardCols.streak">Streak</th>
                 </tr>
               </thead>
               <tbody id="leaderboardBody"></tbody>

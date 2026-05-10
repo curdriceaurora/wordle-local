@@ -74,14 +74,20 @@ describe("translateForRequest", () => {
   });
 
   test("falls back to en when key only exists in en", () => {
+    // Use the test seam to construct deliberately one-sided fixtures
+    // so the es→en fallback branch is actually exercised. The shipped
+    // locale files maintain strict parity (the coverage gate enforces
+    // it), so a real one-sided key won't appear from disk.
+    const { _setLocaleForTests, resetCache } = require("../lib/server-i18n");
+    _setLocaleForTests("en", { fixture: { onlyInEn: "English-only value" } });
+    _setLocaleForTests("es", { fixture: {} });
     const req = { headers: { "accept-language": "es" } };
-    // `header.create` exists in both, but if a key only existed in en
-    // we'd want that fallback to fire. We can't guarantee one-sided
-    // keys without doctoring locale files, so assert that the lookup
-    // at least returns SOMETHING for any key in either locale.
-    const out = translateForRequest(req, "play.createYours");
-    expect(typeof out).toBe("string");
-    expect(out.length).toBeGreaterThan(0);
+    expect(translateForRequest(req, "fixture.onlyInEn")).toBe("English-only value");
+    // Sanity: a key missing from both locales should return the
+    // literal key, not silently emit empty string.
+    expect(translateForRequest(req, "fixture.missing")).toBe("fixture.missing");
+    // Cleanup: restore real on-disk locales for downstream tests.
+    resetCache();
   });
 
   test("returns literal key when missing from both locales", () => {

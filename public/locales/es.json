@@ -15,7 +15,8 @@
     "notificationsToggleOn": "Notificaciones: activadas",
     "notificationsBlocked": "Notificaciones bloqueadas",
     "notificationsBlockedHint": "Abre la configuración del navegador para permitir notificaciones y luego recarga.",
-    "notificationsNeedHttps": "Las notificaciones requieren HTTPS o localhost."
+    "notificationsNeedHttps": "Las notificaciones requieren HTTPS o localhost.",
+    "notificationsToggleAriaLabel": "Notificaciones del puzle diario"
   },
   "create": {
     "heading": "Crear un puzle",
@@ -35,6 +36,9 @@
     "loading": "Cargando puzle…",
     "createYours": "Crea el tuyo",
     "switchPlayer": "Cambiar jugador",
+    "familyPlayerHeading": "Jugador familiar",
+    "playingAs": "Jugando como",
+    "nameLabel": "Nombre",
     "namePlaceholder": "Escribe tu nombre",
     "useThisName": "Usar este nombre",
     "savedPlayers": "Jugadores guardados",
@@ -43,6 +47,20 @@
     "currentStreak": "Racha actual",
     "bestSolve": "Mejor resolución",
     "leaderboardLabel": "Tabla familiar",
+    "leaderboardHeading": "Tabla familiar",
+    "leaderboardPeriod": "Periodo",
+    "leaderboardWeekly": "Semanal",
+    "leaderboardMonthly": "Mensual",
+    "leaderboardOverall": "Total",
+    "leaderboardCols": {
+      "rank": "#",
+      "player": "Jugador",
+      "wins": "Victorias",
+      "played": "Partidas",
+      "winPct": "% victorias",
+      "best": "Mejor",
+      "streak": "Racha"
+    },
     "boardLabel": "Tablero de Wordle",
     "keyboardLabel": "Teclado",
     "sharePlaceholder": "El enlace para compartir aparece aquí",
@@ -52,6 +70,7 @@
     "encodedNote": "Los enlaces codificados pueden decodificarse. No los uses para secretos.",
     "solvedFormat": "¡Resuelto en {tries}/{max}!",
     "solvedFormatWithStreak": "¡Resuelto en {tries}/{max}! Racha: {streak}.",
+    "solvedMeaningPrefix": "Significado: {meaning}",
     "guessNotInList": "No está en la lista de palabras.",
     "guessTooShort": "El intento debe tener {length} letras."
   },
@@ -126,8 +145,10 @@
   },
   "admin": {
     "title": "Administración",
+    "consoleTitle": "Consola de administración",
     "adminKeyLabel": "Clave de administración",
     "workspaceTitle": "Espacio de proveedores",
+    "workspaceUnlockedNote": "Sesión desbloqueada solo en esta pestaña.",
     "unlock": "Desbloquear",
     "unlockHint": "Introduce la clave de administración para gestionar proveedores, ajustes de ejecución y estadísticas.",
     "lockSession": "Bloquear sesión",

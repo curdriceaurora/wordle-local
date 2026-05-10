@@ -898,13 +898,18 @@ async function submitGuess() {
     if (data.isCorrect) {
       locked = true;
       await upsertDailyResult(true, currentRow + 1, maxGuesses);
-      const suffix =
+      const meaning =
         typeof data.answerMeaning === "string" && data.answerMeaning.trim()
-          ? ` Meaning: ${data.answerMeaning.trim()}`
+          ? data.answerMeaning.trim()
           : "";
       const baseMessage = window.i18n
         ? window.i18n.t("play.solvedFormat", { tries: currentRow + 1, max: maxGuesses })
         : `Solved in ${currentRow + 1}/${maxGuesses}!`;
+      const suffix = meaning
+        ? ` ${window.i18n
+          ? window.i18n.t("play.solvedMeaningPrefix", { meaning })
+          : `Meaning: ${meaning}`}`
+        : "";
       setMessage(`${baseMessage}${suffix}`);
       return;
     }
@@ -1951,7 +1956,10 @@ async function startChallenge(challengeId) {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      alert(json.error || `HTTP ${res.status}`);
+      const fallback = window.i18n
+        ? window.i18n.t("challenge.couldNotStart", { message: `HTTP ${res.status}` })
+        : `Could not start challenge: HTTP ${res.status}`;
+      alert(json.error || fallback);
       return;
     }
     challengeState.activeChallenge = challengeState.challenges.find((c) => c.id === challengeId);

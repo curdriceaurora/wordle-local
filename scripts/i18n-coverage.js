@@ -7,12 +7,14 @@
 // public/admin/app.js for `data-i18n="…"`, `data-i18n-attr="…"`, and
 // runtime `i18n.t("…")` references. Asserts:
 //   1. Every referenced key resolves to a string in `public/locales/en.json`.
+//      A bare reference like `stats.daysAgo` is satisfied if the base
+//      key OR any plural variant (`stats.daysAgo_one`, `…_other`, etc.)
+//      exists — that's how the runtime resolves plural calls.
 //   2. `public/locales/en.json` and `public/locales/es.json` have
-//      identical key sets (after collapsing plural suffixes).
-//
-// Pluralization: keys ending in `_one`/`_other`/`_zero`/`_two`/`_few`/
-// `_many` are treated as variants of the base key. They count as
-// covered if EITHER the bare key OR any plural variant exists.
+//      identical key sets — STRICT per-key equality, including each
+//      individual plural-suffixed key. Both locales must define the
+//      same `_one` / `_other` etc. variants so the runtime never has
+//      to fall back across locales mid-plural.
 //
 // Exits non-zero if any assertion fails.
 
