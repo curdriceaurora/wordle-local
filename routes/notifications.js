@@ -57,8 +57,22 @@ function createNotificationsRouter(deps) {
       });
     } catch (err) {
       if (err instanceof PushSubscriptionStoreError) {
-        const status = err.code === "INVALID_REQUEST" ? 400 : 503;
-        return res.status(status).json({ error: err.message, code: err.code });
+        if (err.code === "INVALID_REQUEST") {
+          // INVALID_REQUEST messages are author-curated and safe — they
+          // describe the offending field shape, not server-side state.
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        // STORE_READ_FAILED / STORE_WRITE_FAILED / STORE_PARSE_FAILED
+        // messages may include the absolute store path on disk
+        // (push-subscription-store wraps fs errors with a "Failed to
+        // read/persist subscriptions store at <path>." message). Mask
+        // those for the public endpoint and log the raw error
+        // server-side. The error code is generic enough to keep.
+        console.error(`[notify] subscribe ${err.code}:`, err);
+        return res.status(503).json({
+          error: "Subscription failed. Try again later.",
+          code: err.code
+        });
       }
       console.error("[notify] subscribe failed:", err);
       return res.status(503).json({
@@ -74,8 +88,16 @@ function createNotificationsRouter(deps) {
       return res.status(204).send();
     } catch (err) {
       if (err instanceof PushSubscriptionStoreError) {
-        const status = err.code === "INVALID_REQUEST" ? 400 : 503;
-        return res.status(status).json({ error: err.message, code: err.code });
+        if (err.code === "INVALID_REQUEST") {
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        // Same masking as subscribe — STORE_* messages carry the
+        // store filepath and shouldn't reach unauthenticated callers.
+        console.error(`[notify] unsubscribe ${err.code}:`, err);
+        return res.status(503).json({
+          error: "Unsubscribe failed. Try again later.",
+          code: err.code
+        });
       }
       console.error("[notify] unsubscribe failed:", err);
       return res.status(503).json({

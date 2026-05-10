@@ -2193,7 +2193,11 @@ function renderChallengeKeyboard() {
   const rows = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
   for (let r = 0; r < rows.length; r++) {
     const rowEl = document.createElement('div');
-    rowEl.className = 'kb-row';
+    // Match the daily/created keyboard's class names (.key-row / .key /
+    // .key.wide). The earlier kb-row/kb-key naming had no styles in
+    // public/styles.css, so the challenge keyboard rendered as
+    // unstyled buttons stacked vertically.
+    rowEl.className = 'key-row';
     if (r === rows.length - 1) {
       rowEl.appendChild(makeKbKey('Enter', 'Enter', 'wide'));
     }
@@ -2208,8 +2212,18 @@ function renderChallengeKeyboard() {
 function makeKbKey(label, key, extraClass) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'kb-key' + (extraClass ? ` ${extraClass}` : '');
+  btn.className = 'key' + (extraClass ? ` ${extraClass}` : '');
   btn.textContent = label;
+  // Special keys render glyphs/labels that don't read well to screen
+  // readers — "⌫" is a private-use character with no semantic name in
+  // most assistive-tech voices, and "Enter" without context can be
+  // ambiguous. Provide an explicit accessible name for the special
+  // keys; alphabet keys already announce their letter via textContent.
+  if (key === 'Backspace') {
+    btn.setAttribute('aria-label', 'Backspace');
+  } else if (key === 'Enter') {
+    btn.setAttribute('aria-label', 'Submit guess');
+  }
   btn.addEventListener('click', () => onChallengeKey(key));
   return btn;
 }

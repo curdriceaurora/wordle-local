@@ -129,14 +129,16 @@ runtime.
 | --- | --- |
 | Toggle hidden | Browser lacks `PushManager` / Service Worker, or the site is HTTP (not HTTPS or localhost). |
 | Toggle disabled, "Notifications blocked" | Browser permission denied. Open browser settings → site permissions → reload. |
-| Subscribe returns 503 `VAPID_MISSING` | Boot path hasn't run `ensurePushKeysSync` yet — wait a few seconds and retry. |
+| Subscribe returns 503 `VAPID_MISSING` | Boot path hasn't run `vapidStore.ensureKeysSync()` yet — wait a few seconds and retry. |
 | No notification at midnight | Check `notifications.enabled` in admin Runtime Settings, server-local timezone of the host, and the `lastDailyFireAt` timestamp on the admin Notifications tab. |
 | Notification body shows wrong word length | The scheduler reads `wordDataCache` at fire time. If admin set a new word AFTER the daily reconcile, the new word reflects on the next fire. |
 
 ## Dependencies
 
-- `web-push@^3.6.0` — runtime dependency for VAPID JWT signing and
-  RFC 8291 message encryption.
+- `web-push@^3.6.7` — runtime dependency for VAPID JWT signing and
+  RFC 8291 message encryption. (License: MPL-2.0; see
+  `THIRD_PARTY_NOTICES.md` for source-disclosure requirements if you
+  ship a modified fork.)
 
 ## Test coverage
 

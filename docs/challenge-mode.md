@@ -64,8 +64,13 @@ score = sum(perPuzzleScore for each solved puzzle)
 - Timeouts settle on the server's `Date.now()` against the persisted
   `startedAt`; tab-backgrounding on the client can't pause the budget.
 - Wrong-length guesses are rejected without consuming a try.
-- Non-dictionary guesses are rejected (when the answer dictionary for
-  the language is loaded).
+- Non-dictionary guesses are rejected (when the guess dictionary for
+  the language is loaded). The guess dictionary is the broader
+  vocabulary used for input validation — distinct from the answer pool
+  used to PICK target words. Provider-imported languages with a
+  curated answer pool will still accept any guess in the full guess
+  dictionary, matching `/api/guess`'s behavior for daily/created
+  puzzles.
 
 ## Storage
 

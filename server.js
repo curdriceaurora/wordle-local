@@ -326,9 +326,13 @@ const ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT = clampEnvBounded(
 );
 
 // Web Push notifications. Disabled at the runtime level via the
-// notifications.enabled config flag (operator-controlled at runtime
-// via the admin Notifications tab). The PUSH_NOTIFICATIONS_ENABLED env
-// var only seeds the default config on first boot.
+// notifications.enabled config flag, set through `PUT
+// /api/admin/runtime-config` (admin Runtime Settings tab) — NOT via
+// the admin Notifications tab, which today only shows status,
+// subscriber count, and the "Send broadcast" / dry-run controls. The
+// PUSH_NOTIFICATIONS_ENABLED env var only seeds the default config on
+// first boot; once a runtime override has been written, the override
+// wins until explicitly cleared. See docs/notifications.md.
 const ENV_PUSH_NOTIFICATIONS_ENABLED_DEFAULT =
   String(process.env.PUSH_NOTIFICATIONS_ENABLED || "true").toLowerCase() !== "false";
 const ENV_PUSH_DAILY_FIRE_LOCAL_TIME_DEFAULT = (() => {
@@ -1428,6 +1432,24 @@ const challengeResultsStore = new ChallengeResultsStore({
   logger: console,
   claimDirectDataWriteSlot
 });
+// Cross-route mutex for challenge config-vs-session ops. claimDirectDataWriteSlot
+// is a counter (multiple writers can hold it at once — that's how the
+// backup/restore busy-check sees concurrent activity), so it's NOT an
+// exclusive lock. The admin PUT path needs to read challengeResultsStore
+// (hasResults check) and then write challengeConfigStore atomically with
+// respect to user POSTs that create the FIRST session — otherwise the
+// hasResults snapshot can lie. The two stores have separate commit
+// queues, so neither queue alone can serialize them. This Promise-chain
+// mutex ties admin update + user start together so the immutable-fields
+// check is observed under the same lock the mutation runs under.
+let challengeAdminUserMutex = Promise.resolve();
+function withChallengeAdminUserMutex(fn) {
+  const next = challengeAdminUserMutex.then(fn, fn);
+  // Swallow rejection on the chain so one failed op doesn't poison
+  // the next; the caller still gets the original promise's outcome.
+  challengeAdminUserMutex = next.then(() => undefined, () => undefined);
+  return next;
+}
 // Resolve runtime notifications config from app-config overrides (live)
 // with env-var seed fallbacks. Called every time scheduler/service
 // needs the config so admin edits take effect without restart.
@@ -1612,6 +1634,18 @@ const providerImportSyncActiveRef = { value: false };
 // staged upload + queued job orphaned. The restore busy check
 // observes this ref and 409s the restore in that window.
 const providerImportEnqueueActiveRef = { value: false };
+// Counter for fire-and-forget webhook emits started from the import
+// queue's finally block. The emit() call goes through the webhook
+// store's commitQueue (disk persistence), so awaiting it would re-
+// introduce the queue stall we documented when this code was
+// awaiting. Detaching the await fixes throughput but opens a window
+// where providerImportQueueActiveRef can drop to false before the
+// delivery row is durably enqueued — a restore racing in that window
+// would roll the import back, then the late emit fires for a
+// reverted job. The restore busy-check observes this counter to
+// keep the import "busy" for as long as any emits are still
+// in-flight, closing the gap.
+const webhookEmitInFlightRef = { count: 0 };
 // Promise-barrier for restoreInProgressRef so direct writers can
 // `await` for the restore to release without busy-spinning on a
 // resolved data-lock barrier (the data lock isn't held during the
@@ -2786,29 +2820,45 @@ async function startProviderImportQueueIfNeeded() {
         await adminJobsStore.markFailed(job.id, failure);
       } finally {
         await cleanupManualUploadStaging(job.request?.manualUpload).catch(() => {});
-        // Best-effort emit. Failures here are logged but never block the
-        // queue — the job's persisted status is the source of truth.
-        try {
-          if (result) {
-            await webhookService.emit("provider.import.completed", {
-              jobId: job.id,
-              variant: result.variant,
-              commit: result.commit,
-              sourceType: result.sourceType,
-              filterMode: result.filterMode,
-              counts: result.counts,
-              artifacts: result.artifacts
+        // True fire-and-forget emit so a slow/contended commitQueue can't
+        // block the next job in the import queue. Earlier code awaited
+        // emit() but the comment claimed "never block the queue" —
+        // emit() persists to disk through the same commit serialization
+        // path as deliveries, so awaiting it pinned the queue to disk
+        // I/O (and to whichever delivery is currently being persisted).
+        // Detach via .catch on a non-awaited promise; failures still
+        // log. Track the in-flight emit so the restore busy-check
+        // can keep the import "busy" until the delivery is durably
+        // enqueued — without that, a restore can roll the app back
+        // before the late emit lands and the persisted delivery
+        // would describe an import the operator just reverted.
+        function emitDetached(event, payload) {
+          webhookEmitInFlightRef.count += 1;
+          webhookService.emit(event, payload)
+            .catch((emitErr) => {
+              console.error(`[webhook] emit failed for ${event}:`, emitErr);
+            })
+            .finally(() => {
+              webhookEmitInFlightRef.count -= 1;
             });
-          } else if (failure) {
-            await webhookService.emit("provider.import.failed", {
-              jobId: job.id,
-              variant: job.request?.variant || null,
-              sourceType: job.request?.sourceType || null,
-              error: failure
-            });
-          }
-        } catch (emitErr) {
-          console.error("[webhook] emit failed for provider import:", emitErr);
+        }
+        if (result) {
+          emitDetached("provider.import.completed", {
+            jobId: job.id,
+            variant: result.variant,
+            commit: result.commit,
+            sourceType: result.sourceType,
+            filterMode: result.filterMode,
+            counts: result.counts,
+            artifacts: result.artifacts
+          });
+        } else if (failure) {
+          emitDetached("provider.import.failed", {
+            jobId: job.id,
+            variant: job.request?.variant || null,
+            sourceType: job.request?.sourceType || null,
+            error: failure
+          });
         }
       }
     }
@@ -3117,6 +3167,7 @@ app.use(
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     providerImportEnqueueActiveRef,
+    webhookEmitInFlightRef,
     dataMutationLockRef,
     restoreInProgressRef,
     directDataWriteActiveRef,
@@ -3194,8 +3245,10 @@ app.use(
     parseBulkNames,
     UTF8_BOM,
     normalizeLang,
+    resolveLang,
     getLocalDateString,
     aggregateAnalytics,
+    getCurrentWordData: () => wordDataCache || null,
     analyticsCacheTtlMs: ENV_ANALYTICS_CACHE_TTL_MS,
     analyticsTimezone: ENV_ANALYTICS_TIMEZONE,
     scheduleStore,
@@ -3215,6 +3268,7 @@ app.use(
     challengeConfigStore,
     challengeResultsStore,
     challengeEngine,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     challengeModeEnabled: ENV_CHALLENGE_MODE_ENABLED,
@@ -3313,6 +3367,7 @@ app.use(
   createChallengesRouter({
     challengeConfigStore,
     challengeResultsStore,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     getDictionary,

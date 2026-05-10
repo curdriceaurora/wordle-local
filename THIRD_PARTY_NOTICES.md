@@ -29,4 +29,8 @@ expose the lower-level `aes128gcm` content encoding helpers needed
 for RFC 8291 message bodies.
 
 - Project: https://github.com/web-push-libs/web-push
-- License: MIT
+- License: MPL-2.0 (Mozilla Public License 2.0)
+- Source obligation: distributing modified versions of `web-push` (or
+  any covered file) requires making that modified source available to
+  recipients under MPL-2.0. We use the upstream package unmodified;
+  any future fork/patch must preserve this disclosure.

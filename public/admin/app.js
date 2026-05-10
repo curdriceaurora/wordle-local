@@ -2394,6 +2394,38 @@ lockSessionBtnEl.addEventListener("click", () => {
   if (typeof webhookDeliveriesSubscriptionEl !== "undefined" && webhookDeliveriesSubscriptionEl) {
     webhookDeliveriesSubscriptionEl.innerHTML = "";
   }
+  // Scrub the challenge-admin tab's state + DOM the same way other
+  // tabs do. Without this, locking on the Challenges tab and unlocking
+  // again would briefly render the previous (now-stale) challenge
+  // table and leaderboard contents until the next loadChallengesAdmin()
+  // fetch completes — same shared-machine PII concern as the classes
+  // tab.
+  state.challengesAdmin = [];
+  state.challengesAdminLoading = false;
+  // Bump the request-id so any in-flight loadChallengesAdmin() /
+  // loadChallengeAdminLeaderboard() promise is invalidated. Without
+  // this, a fetch started before lock could resolve afterward and
+  // repopulate state.challengesAdmin / the table bodies after we've
+  // just scrubbed them — surfacing as stale data on the next unlock.
+  state.challengesAdminRequestId = (state.challengesAdminRequestId || 0) + 1;
+  if (typeof challengesAdminTbodyEl !== "undefined" && challengesAdminTbodyEl) {
+    challengesAdminTbodyEl.innerHTML = "";
+  }
+  if (typeof challengesAdminLbTbodyEl !== "undefined" && challengesAdminLbTbodyEl) {
+    challengesAdminLbTbodyEl.innerHTML = "";
+  }
+  if (typeof challengeAdminLeaderboardNameEl !== "undefined" && challengeAdminLeaderboardNameEl) {
+    challengeAdminLeaderboardNameEl.textContent = "";
+  }
+  if (typeof challengeAdminLeaderboardSectionEl !== "undefined" && challengeAdminLeaderboardSectionEl) {
+    challengeAdminLeaderboardSectionEl.hidden = true;
+  }
+  if (typeof challengeAdminFormEl !== "undefined" && challengeAdminFormEl) {
+    challengeAdminFormEl.reset();
+  }
+  if (typeof challengesAdminStatusEl !== "undefined" && challengesAdminStatusEl) {
+    setStatus(challengesAdminStatusEl, "", "");
+  }
   destroyAllAnalyticsCharts();
   if (analyticsCardsEl) {
     analyticsCardsEl.querySelectorAll('[data-metric]').forEach((el) => {
@@ -3102,15 +3134,42 @@ function renderScheduleStrip(snapshot) {
   } catch (_err) {
     // best-effort; bad zone surfaces in the existing form
   }
-  const todayEntry = (snapshot.scheduled_words || []).find(
-    (row) => row.date === todayLocal
-  );
-  setStripField(
-    "todayResolved",
-    todayEntry
-      ? `${todayLocal} → ${todayEntry.word} (${todayEntry.lang})`
-      : `${todayLocal} (no entry)`
-  );
+  // The reconciler (scheduler-tick.scheduledEntryFor) picks today's
+  // entry by language: prefer the row matching word.json.lang else
+  // fall back to the first today-row by lang asc. Reproduce that
+  // selection in the strip so the operator's "Today" line matches
+  // what /daily will actually serve. With a single language this
+  // collapses to "first match by date" which is what the previous
+  // code did; with multiple langs the strip used to lie by always
+  // showing the first row regardless of which lang word.json names.
+  // Sort today's rows by lang BEFORE choosing the fallback. The
+  // reconciler's scheduledEntryFor falls back by language order
+  // (because the schedule is stored sorted by lang asc) — relying on
+  // the array's natural order would let the strip disagree with the
+  // backend if the schedule payload ever changed shape (e.g. a
+  // future store version emits unsorted entries). Sorting here makes
+  // the disambiguation deterministic against the same lang ordering.
+  const todayRows = (snapshot.scheduled_words || [])
+    .filter((row) => row.date === todayLocal)
+    .slice()
+    .sort((a, b) => (a.lang < b.lang ? -1 : a.lang > b.lang ? 1 : 0));
+  let todayEntry = null;
+  if (todayRows.length > 0) {
+    const preferredLang = snapshot.current_word_lang || null;
+    todayEntry =
+      (preferredLang && todayRows.find((row) => row.lang === preferredLang))
+      || todayRows[0];
+  }
+  let todayValue;
+  if (todayEntry) {
+    const extra = todayRows.length > 1
+      ? ` · ${todayRows.length - 1} other lang${todayRows.length === 2 ? "" : "s"} scheduled`
+      : "";
+    todayValue = `${todayLocal} → ${todayEntry.word} (${todayEntry.lang})${extra}`;
+  } else {
+    todayValue = `${todayLocal} (no entry)`;
+  }
+  setStripField("todayResolved", todayValue);
   setStripField(
     "lastReconciledAt",
     snapshot.last_reconciled_at
@@ -3849,6 +3908,13 @@ const challengeAdminLbCloseBtnEl = document.getElementById("challengeAdminLbClos
 if (typeof state !== "undefined") {
   state.challengesAdminLoading = false;
   state.challengesAdmin = [];
+  // Monotonic request id for both Challenges admin loaders. Mirrors
+  // the analytics/webhooks/schedule pattern so a fetch started before
+  // a session lock can't repopulate the (now hidden) Challenges DOM
+  // when its response arrives after the lock. Bumped on lock, so
+  // any in-flight request whose captured id no longer matches is
+  // discarded at response time without rendering.
+  state.challengesAdminRequestId = 0;
 }
 
 function setChallengeAdminStatus(text, tone = "") {
@@ -3860,17 +3926,23 @@ function setChallengeAdminStatus(text, tone = "") {
 
 async function loadChallengesAdmin() {
   if (!state?.unlocked) return;
+  state.challengesAdminRequestId += 1;
+  const requestId = state.challengesAdminRequestId;
   state.challengesAdminLoading = true;
   setChallengeAdminStatus("Loading…");
   try {
     const payload = await requestAdminJson("/api/admin/challenges");
+    if (requestId !== state.challengesAdminRequestId) return;
     state.challengesAdmin = Array.isArray(payload.challenges) ? payload.challenges : [];
     renderChallengesAdmin();
     setChallengeAdminStatus("Loaded.", "admin-status-ok");
   } catch (err) {
+    if (requestId !== state.challengesAdminRequestId) return;
     setChallengeAdminStatus(`Load failed: ${err.message}`, "admin-status-missing");
   } finally {
-    state.challengesAdminLoading = false;
+    if (requestId === state.challengesAdminRequestId) {
+      state.challengesAdminLoading = false;
+    }
   }
 }
 
@@ -4021,11 +4093,19 @@ async function deleteChallenge(id, name) {
 
 async function loadChallengeAdminLeaderboard(id, name) {
   if (!state?.unlocked || !challengeAdminLeaderboardSectionEl || !challengesAdminLbTbodyEl) return;
+  // Same request-id guard as loadChallengesAdmin: a leaderboard
+  // fetch started before lock could otherwise resolve afterward and
+  // repopulate the panel with stale data that survives until the
+  // next legit unlock. Capture the id at start and discard responses
+  // that don't match.
+  state.challengesAdminRequestId += 1;
+  const requestId = state.challengesAdminRequestId;
   challengeAdminLeaderboardSectionEl.hidden = false;
   if (challengeAdminLeaderboardNameEl) challengeAdminLeaderboardNameEl.textContent = name;
   challengesAdminLbTbodyEl.innerHTML = "";
   try {
     const payload = await requestAdminJson(`/api/admin/challenges/${encodeURIComponent(id)}/leaderboard`);
+    if (requestId !== state.challengesAdminRequestId) return;
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (rows.length === 0) {
       const tr = document.createElement("tr");
@@ -4049,6 +4129,7 @@ async function loadChallengeAdminLeaderboard(id, name) {
       rank += 1;
     }
   } catch (err) {
+    if (requestId !== state.challengesAdminRequestId) return;
     setChallengeAdminStatus(`Leaderboard load failed: ${err.message}`, "admin-status-missing");
   }
 }

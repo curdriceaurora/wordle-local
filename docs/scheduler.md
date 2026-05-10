@@ -81,13 +81,44 @@ sequence (or coordinate across deployments).
 ### Manual override semantics
 
 `POST /api/word` is still the manual-override path. The scheduler writes
-`data/word.json.lastScheduledFor = today` whenever it persists a word;
-manual writes don't set that field. The next reconcile sees:
+`data/word.json.lastScheduledFor = todayLocal` whenever it persists a
+word; manual writes don't set that field at all. The reconciler decides
+"manual override?" by checking `lastScheduledFor` for **absence**
+(`=== undefined || === null`) — NOT by comparing it to `todayLocal`. A
+prior scheduler write whose `lastScheduledFor` is yesterday's
+schedule-local day is therefore correctly classified as a stale
+scheduler write (not a manual override) and is fair game to overwrite.
 
-- `word.json.date === today` AND `lastScheduledFor !== today` → manual
-  override is fresh; **leave it alone** for the rest of the local day.
-- `word.json.date < today` (or any other state) → fair game; write the
-  scheduled or auto-rotated word.
+When the reconciler runs, it sees one of:
+
+- `lastScheduledFor` absent (manual override path) AND the override is
+  fresh (see "fresh enough to honour" rules below) → **leave it alone**
+  for the rest of the local day.
+- `lastScheduledFor` absent AND the override is stale → fair game.
+- `lastScheduledFor` present (scheduler-owned write) → fair game; the
+  reconciler may overwrite with the day's scheduled or auto-rotated
+  word, regardless of whether `lastScheduledFor` matches `todayLocal`.
+
+A manual override is "fresh enough to honour" if either:
+
+1. `word.json.date === serverToday` (the operator pinned today
+   explicitly), OR
+2. `word.json.date === null` or omitted entirely AND the override's
+   effective day, computed from `updatedAt`'s server-local date, is
+   still `serverToday`. Without this fallback, a null-date override
+   would live forever instead of expiring at the next midnight.
+
+`serverToday` is the server's local date (`getLocalDateString(now)`),
+NOT the schedule's timezone. An operator POSTing without `date`
+shouldn't be surprised that the override expires sooner than expected
+if the server's TZ differs from the schedule's. Recommend setting
+`date: serverToday` in manual writes for explicit clarity.
+
+The scheduler is NOT timezone-aware in the override-freshness check —
+it always uses the server's own `getLocalDateString(now)`. The
+schedule's `timezone` only affects which row is picked from
+`scheduled_words`, not whether a manual override is still considered
+fresh.
 
 ## Timezone alignment
 

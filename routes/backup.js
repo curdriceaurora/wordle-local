@@ -224,6 +224,7 @@ function createBackupRouter(deps) {
     providerImportQueueActiveRef,
     providerImportSyncActiveRef,
     providerImportEnqueueActiveRef,
+    webhookEmitInFlightRef,
     dataMutationLockRef,
     restoreInProgressRef,
     directDataWriteActiveRef,
@@ -314,6 +315,7 @@ function createBackupRouter(deps) {
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
       || providerImportEnqueueActiveRef?.value
+      || (webhookEmitInFlightRef && webhookEmitInFlightRef.count > 0)
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
       || (directDataWriteActiveRef && directDataWriteActiveRef.value > 0)
@@ -509,6 +511,7 @@ function createBackupRouter(deps) {
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
       || providerImportEnqueueActiveRef?.value
+      || (webhookEmitInFlightRef && webhookEmitInFlightRef.count > 0)
       || dataMutationLockRef?.value
       || restoreInProgressRef?.value
       || (directDataWriteActiveRef && directDataWriteActiveRef.value > 0)
@@ -577,6 +580,7 @@ function createBackupRouter(deps) {
       providerImportQueueActiveRef?.value
       || providerImportSyncActiveRef?.value
       || providerImportEnqueueActiveRef?.value
+      || (webhookEmitInFlightRef && webhookEmitInFlightRef.count > 0)
     ) {
       restoreInProgressRef.value = false;
       try {

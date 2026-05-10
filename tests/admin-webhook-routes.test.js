@@ -247,9 +247,11 @@ describe("GET /api/admin/webhooks/:id/deliveries", () => {
       .post("/api/admin/webhooks")
       .send({ url: "https://example.com/x", events: ["webhook.test"] });
     const id = created.body.subscription.id;
-    // Trigger a test delivery so there's something in the store. The
-    // actual fetch will fail (we don't have a server listening at
-    // example.com/x in tests), but the delivery row will exist.
+    // Trigger a test delivery so there's something in the store.
+    // `globalThis.fetch` is stubbed to a 200 response in `beforeEach`,
+    // so this delivery succeeds and the row is persisted under the
+    // subscription. We don't assert the success status here — only
+    // that a delivery row exists for the GET to enumerate.
     await supertest(app).post(`/api/admin/webhooks/${encodeURIComponent(id)}/test`);
     const res = await supertest(app).get(`/api/admin/webhooks/${encodeURIComponent(id)}/deliveries`);
     expect(res.status).toBe(200);

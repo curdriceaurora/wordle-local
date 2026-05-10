@@ -18,6 +18,7 @@ function createChallengesRouter(deps) {
   const {
     challengeConfigStore,
     challengeResultsStore,
+    withChallengeAdminUserMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     getDictionary,
@@ -54,7 +55,8 @@ function createChallengesRouter(deps) {
     if (err instanceof ChallengeConfigStoreError || err instanceof ChallengeResultsStoreError) {
       const status = err.code === "INVALID_REQUEST" ? 400
         : err.code === "CHALLENGE_NOT_FOUND" || err.code === "SESSION_NOT_FOUND" ? 404
-        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" ? 409
+        : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID"
+          || err.code === "SESSION_COMPLETE" || err.code === "SESSION_NOT_ACTIVE" ? 409
         : 503;
       return res.status(status).json({ error: err.message, code: err.code });
     }
@@ -158,68 +160,133 @@ function createChallengesRouter(deps) {
       return res.status(400).json({ error: "profileId is required.", code: "INVALID_REQUEST" });
     }
     try {
-      const challenge = await challengeConfigStore.findById(req.params.id);
-      if (!challenge || challenge.deleted) {
+      const now = new Date();
+      // Pre-mutex existence check is just for fast-failing 404s. The
+      // authoritative read happens INSIDE the mutex below — without
+      // the inner re-read, a concurrent admin edit that wins the
+      // mutex first could change immutable fields (wordLength,
+      // puzzleCount, timeBudgetSeconds) while we still hold a stale
+      // snapshot, then we'd persist the first session under the OLD
+      // config while subsequent reads see the NEW config — guaranteed
+      // mismatch.
+      const initialChallenge = await challengeConfigStore.findById(req.params.id);
+      if (!initialChallenge || initialChallenge.deleted) {
         return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
       }
-      // Window check.
-      const now = new Date();
-      if (challenge.startTime && Date.parse(challenge.startTime) > now.getTime()) {
-        return res.status(409).json({ error: "Challenge has not started yet.", code: "CHALLENGE_NOT_OPEN" });
-      }
-      if (challenge.endTime && Date.parse(challenge.endTime) <= now.getTime()) {
-        return res.status(409).json({ error: "Challenge has ended.", code: "CHALLENGE_CLOSED" });
-      }
-      if (!isLanguageAvailable(challenge.lang)) {
-        return res.status(503).json({
-          error: `Language ${challenge.lang} is not currently available.`,
-          code: "LANG_UNAVAILABLE"
-        });
-      }
-      // Resume an in-flight session if one exists for this (challenge,
-      // profile). Settle on timeout first so the resume path doesn't
-      // hand back a stale "in-progress" snapshot for a session whose
-      // budget already expired.
-      let session = await challengeResultsStore.findInFlight(challenge.id, profile.profileId);
-      if (session) {
-        session = await settleIfTimedOut(session, challenge, now);
-        if (session.status === "in-progress" || session.status === "pending") {
-          const projected = projectForResponse(session, challenge, now);
-          return res.status(200).json({ ok: true, session: projected, resumed: true });
+      // The find-or-create critical section runs under the cross-route
+      // mutex shared with PUT /api/admin/challenges/:id. Without that
+      // mutex, an admin edit can read hasResults=false (no sessions
+      // yet), then we create the first session here, then the admin's
+      // update commits with hasResults=false and lets through an
+      // immutable-fields edit that the store's contract forbids once
+      // any session exists. Wrapping createSession (and the in-flight
+      // / replay-policy / config-read checks that gate it) in the
+      // same mutex closes that TOCTOU. Returns a discriminated
+      // kind:"resumed"/"replay-blocked"/"lang-unavailable"/"window"/
+      // "not-found"/"created" so the response shaping stays out of
+      // the lock.
+      const result = await withChallengeAdminUserMutex(async () => {
+        // Re-read the challenge from the authoritative store now that
+        // we hold the mutex. If admin's PUT won the lock first, this
+        // sees the NEW config; the session about to be created uses
+        // the same config that future reads will see. If user wins,
+        // admin's hasResults check on its turn observes the just-
+        // committed session and rejects forbidden edits.
+        const challenge = await challengeConfigStore.findById(req.params.id);
+        if (!challenge || challenge.deleted) {
+          return { kind: "not-found" };
         }
-        // Otherwise fall through and create a new session per replay policy.
-      }
-      // Replay-policy gate.
-      const past = (await challengeResultsStore.findCompletedForChallenge(challenge.id))
-        .filter((s) => s.profileId === profile.profileId);
-      const replayCheck = challengeEngine.checkReplayAllowed({
-        challenge, pastSessions: past, profileId: profile.profileId
+        // Window + lang checks against the post-mutex config.
+        if (challenge.startTime && Date.parse(challenge.startTime) > now.getTime()) {
+          return { kind: "window", code: "CHALLENGE_NOT_OPEN", message: "Challenge has not started yet." };
+        }
+        if (challenge.endTime && Date.parse(challenge.endTime) <= now.getTime()) {
+          return { kind: "window", code: "CHALLENGE_CLOSED", message: "Challenge has ended." };
+        }
+        if (!isLanguageAvailable(challenge.lang)) {
+          return {
+            kind: "lang-unavailable",
+            message: `Language ${challenge.lang} is not currently available.`
+          };
+        }
+        // Resume an in-flight session if one exists for this
+        // (challenge, profile). Settle on timeout first so the resume
+        // path doesn't hand back a stale "in-progress" snapshot for a
+        // session whose budget already expired.
+        let session = await challengeResultsStore.findInFlight(challenge.id, profile.profileId);
+        if (session) {
+          session = await settleIfTimedOut(session, challenge, now);
+          if (session.status === "in-progress" || session.status === "pending") {
+            return { kind: "resumed", session, challenge };
+          }
+          // Otherwise fall through and create a new session per replay policy.
+        }
+        // Replay-policy gate.
+        const past = (await challengeResultsStore.findCompletedForChallenge(challenge.id))
+          .filter((s) => s.profileId === profile.profileId);
+        const replayCheck = challengeEngine.checkReplayAllowed({
+          challenge, pastSessions: past, profileId: profile.profileId
+        });
+        if (replayCheck) {
+          return { kind: "replay-blocked", code: replayCheck };
+        }
+        // Build server-side puzzles and persist.
+        let puzzles;
+        try {
+          puzzles = buildPuzzlesForChallenge(challenge);
+        } catch (err) {
+          if (err.code === "LANG_UNAVAILABLE") {
+            return { kind: "lang-unavailable", message: err.message };
+          }
+          throw err;
+        }
+        // createSession returns `{ session, resumed }` because it
+        // re-checks the in-flight invariant atomically inside its
+        // commit. A racing concurrent /start for the same (challengeId,
+        // profileId) gets the existing in-flight session back as a
+        // resume rather than creating a duplicate — matches what
+        // findInFlight above would have caught if the timing had been
+        // serial. The outer mutex serializes against admin's update,
+        // not against itself: createSession's own #commit lock handles
+        // user-vs-user concurrency.
+        const createResult = await challengeResultsStore.createSession({
+          challengeId: challenge.id,
+          profileId: profile.profileId,
+          profileName: profile.profileName,
+          startedAt: now.toISOString(),
+          puzzles
+        });
+        return { kind: "created", session: createResult.session, resumed: createResult.resumed, challenge };
       });
-      if (replayCheck) {
+      if (result.kind === "not-found") {
+        return res.status(404).json({ error: translateForRequest(req, "serverError.challengeNotFound"), code: "CHALLENGE_NOT_FOUND" });
+      }
+      if (result.kind === "window") {
+        return res.status(409).json({ error: result.message, code: result.code });
+      }
+      if (result.kind === "resumed") {
+        const projected = projectForResponse(result.session, result.challenge, now);
+        return res.status(200).json({ ok: true, session: projected, resumed: true });
+      }
+      if (result.kind === "replay-blocked") {
         return res.status(409).json({
           error: "Replay not allowed for this challenge under its replay policy.",
-          code: replayCheck
+          code: result.code
         });
       }
-      // Build server-side puzzles and persist.
-      let puzzles;
-      try {
-        puzzles = buildPuzzlesForChallenge(challenge);
-      } catch (err) {
-        if (err.code === "LANG_UNAVAILABLE") {
-          return res.status(503).json({ error: err.message, code: "LANG_UNAVAILABLE" });
-        }
-        throw err;
+      if (result.kind === "lang-unavailable") {
+        return res.status(503).json({ error: result.message, code: "LANG_UNAVAILABLE" });
       }
-      const created = await challengeResultsStore.createSession({
-        challengeId: challenge.id,
-        profileId: profile.profileId,
-        profileName: profile.profileName,
-        startedAt: now.toISOString(),
-        puzzles
+      // result.kind === "created" — has session, resumed flag, and
+      // the challenge config that was current under the mutex (used
+      // here so the projection sees the same fields the session was
+      // built with).
+      const projected = projectForResponse(result.session, result.challenge, now);
+      return res.status(result.resumed ? 200 : 201).json({
+        ok: true,
+        session: projected,
+        resumed: result.resumed
       });
-      const projected = projectForResponse(created, challenge, now);
-      return res.status(201).json({ ok: true, session: projected, resumed: false });
     } catch (err) {
       return challengeError(res, err, "start");
     }
@@ -305,53 +372,95 @@ function createChallengesRouter(deps) {
           code: "INVALID_GUESS"
         });
       }
-      const feedback = evaluateGuess(rawGuess, active.word);
-      const updatedPuzzles = session.puzzles.map((p) => {
-        if (p.index !== active.index) return p;
-        const guesses = (p.guesses || []).concat(rawGuess);
-        const solved = rawGuess === p.word;
-        return {
-          ...p,
-          guesses,
-          solved
-        };
-      });
-      let nextStatus = session.status;
-      // Auto-complete if every puzzle is solved or exhausted (last
-      // guess was either the answer or the maxGuesses-th attempt).
-      const allDone = updatedPuzzles.every(
-        (p) => p.solved || (p.guesses?.length || 0) >= challenge.maxGuesses
-      );
-      let scoreFinal;
-      let elapsedFinal;
-      if (allDone) {
-        const now = new Date();
-        elapsedFinal = Math.max(
-          0,
-          Math.floor((now.getTime() - Date.parse(session.startedAt)) / 1000)
+      // Mutate atomically inside the store's commit lock. The earlier
+      // version computed updatedPuzzles outside the commit and then
+      // sent the whole array as a patch — two concurrent /guess
+      // requests would both compute from the same stale snapshot and
+      // the second commit's puzzles array would overwrite the first
+      // guess. Reading the latest session inside the mutator (via
+      // transactionalUpdate) closes that race.
+      //
+      // Compute feedback INSIDE the mutator too. The pre-transaction
+      // `active` puzzle and its `active.word` could be stale by the
+      // time the lock is acquired (a concurrent /guess for the same
+      // session may have solved or exhausted it), and `latestActive`
+      // can refer to a different puzzle entirely. Returning feedback
+      // computed from `active.word` would then color the wrong row in
+      // the client. Capture both feedback and the post-mutation status
+      // via outer-scope locals so the response reflects what was
+      // actually applied.
+      let appliedFeedback = null;
+      const updated = await challengeResultsStore.transactionalUpdate(session.id, (latest) => {
+        // Latest-status TOCTOU: a concurrent /finish or settle-on-
+        // timeout could have transitioned this session to terminal
+        // since the route's pre-transaction read. Re-check inside the
+        // commit so we never apply a guess to a completed/timed-out/
+        // abandoned session.
+        if (latest.status !== "in-progress" && latest.status !== "pending") {
+          throw new ChallengeResultsStoreError(
+            "SESSION_NOT_ACTIVE",
+            `Session is ${latest.status}; no further guesses accepted.`
+          );
+        }
+        // Re-derive the active puzzle from the LATEST persisted state.
+        // This handles the case where another /guess has already
+        // landed: we'll see its updated puzzle, find the new active
+        // puzzle (or none), and append our guess to that one. The
+        // length check above used `active.word.length`, which is
+        // immutable for a given puzzle index, so the request body's
+        // length validation still holds for the latest active puzzle.
+        const latestActive = latest.puzzles.find(
+          (p) => !p.solved && (p.guesses?.length || 0) < challenge.maxGuesses
         );
-        elapsedFinal = Math.min(elapsedFinal, challenge.timeBudgetSeconds);
-        scoreFinal = challengeEngine.computeScore({
-          challenge,
-          puzzles: updatedPuzzles,
-          elapsedSeconds: elapsedFinal
+        if (!latestActive) {
+          throw new ChallengeResultsStoreError(
+            "SESSION_COMPLETE",
+            "All puzzles in this session are complete."
+          );
+        }
+        // Feedback is now derived from the puzzle that actually
+        // receives the guess. With concurrent /guess invocations,
+        // latestActive can be a different puzzle than the
+        // pre-transaction `active`; computing here ensures the
+        // returned colors match the persisted update.
+        appliedFeedback = evaluateGuess(rawGuess, latestActive.word);
+        const updatedPuzzles = latest.puzzles.map((p) => {
+          if (p.index !== latestActive.index) return p;
+          const guesses = (p.guesses || []).concat(rawGuess);
+          const solved = rawGuess === p.word;
+          return { ...p, guesses, solved };
         });
-        nextStatus = "completed";
-      }
-      const patch = { puzzles: updatedPuzzles, status: nextStatus };
-      if (allDone) {
-        patch.finishedAt = new Date().toISOString();
-        patch.elapsedSeconds = elapsedFinal;
-        patch.score = scoreFinal;
-      }
-      const updated = await challengeResultsStore.update(session.id, patch);
+        const merged = { ...latest, puzzles: updatedPuzzles };
+        const allDone = updatedPuzzles.every(
+          (p) => p.solved || (p.guesses?.length || 0) >= challenge.maxGuesses
+        );
+        if (allDone) {
+          const now = new Date();
+          let elapsedFinal = Math.max(
+            0,
+            Math.floor((now.getTime() - Date.parse(latest.startedAt)) / 1000)
+          );
+          elapsedFinal = Math.min(elapsedFinal, challenge.timeBudgetSeconds);
+          merged.finishedAt = now.toISOString();
+          merged.elapsedSeconds = elapsedFinal;
+          merged.score = challengeEngine.computeScore({
+            challenge,
+            puzzles: updatedPuzzles,
+            elapsedSeconds: elapsedFinal
+          });
+          merged.status = "completed";
+        } else {
+          merged.status = latest.status;
+        }
+        return merged;
+      });
       const projected = projectForResponse(updated, challenge);
       // Submit score to the leaderboard projection on completion.
       // Surface the per-guess feedback row that the client renders.
       return res.json({
         ok: true,
         session: projected,
-        feedback
+        feedback: appliedFeedback
       });
     } catch (err) {
       return challengeError(res, err, "guess");
