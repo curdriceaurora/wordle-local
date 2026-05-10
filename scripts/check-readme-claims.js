@@ -119,9 +119,14 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
   let fenceLang = "";
 
   for (const { no, line } of lines) {
-    if (line.includes(SKIP_TAG)) continue;
-
-    // Fence tracking.
+    // Fence tracking ALWAYS runs first, before the skip-tag check.
+    // If a `<!-- claim:skip -->` is added to a fence open/close
+    // line, we still need to toggle `inFence` so subsequent lines
+    // know whether they're inside a code block — otherwise a
+    // skipped fence-line would desync state for the rest of the
+    // file. (Copilot caught this on PR #108 round 5.) After
+    // toggling, we honor the skip tag to avoid running other
+    // checks against the fence-marker line itself.
     const fenceMatch = line.match(/^[ \t]*```([a-zA-Z0-9_.-]*)/);
     if (fenceMatch) {
       if (!inFence) {
@@ -133,6 +138,8 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
       }
       continue;
     }
+
+    if (line.includes(SKIP_TAG)) continue;
 
     // ---- Markdown link target check (prose only, not code fences) ----
     if (!inFence) {

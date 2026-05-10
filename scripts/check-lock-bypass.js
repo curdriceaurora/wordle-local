@@ -8,13 +8,15 @@
 // emit/delivery race conditions, and so on. See `lib/locks.md` for
 // the full lock graph.
 //
-// Implementation: parses each .js file with `acorn` (the ESLint-
-// bundled JS parser; no extra dep) and walks the AST. The earlier
-// regex-based draft missed every method inside a `class { ... }`
-// body because its function-detector keyed on top-level depth,
-// which is a real correctness bug surfaced by reviewers on PR #108.
-// AST-based scope tracking handles classes, nested closures, arrow
-// methods, and other JS forms uniformly.
+// Implementation: parses each .js file with `acorn` (an explicit
+// devDependency — declared in package.json so the check doesn't
+// silently break if eslint stops bringing it transitively) and
+// walks the AST. The earlier regex-based draft missed every
+// method inside a `class { ... }` body because its function-
+// detector keyed on top-level depth, which was a real correctness
+// bug surfaced by reviewers on PR #108. AST-based scope tracking
+// handles classes, nested closures, arrow methods, and other JS
+// forms uniformly.
 //
 // Heuristic per call site:
 //
@@ -161,7 +163,13 @@ function methodKeyName(keyNode) {
 // Recursive AST visitor. Tracks a stack of enclosing function-like
 // nodes (with their resolved names) and a parallel stack of body
 // strings (for the "any enclosing fn body claims the slot" check).
-function visit(node, ctx) {
+// `parentType` lets the CallExpression branch tell whether the
+// call is wrapped in an AwaitExpression — needed because
+// `claimDirectDataWriteSlot()` returns a Promise that must be
+// awaited before the slot is actually held; an unawaited call
+// returns immediately with a pending Promise and the next line
+// runs as if the slot weren't claimed.
+function visit(node, ctx, parentType) {
   if (!node || typeof node !== "object" || !node.type) return;
 
   // Open a function-like scope. We push BEFORE recursing into
@@ -220,37 +228,39 @@ function visit(node, ctx) {
       });
     }
     if (calleeName === SLOT_CLAIM_NAME) {
-      // Mark only the INNERMOST enclosing function as having an
-      // explicit claim. Marking ancestors would incorrectly accept
-      // an unrelated `writeJsonAtomic(...)` in an outer function
-      // when the only `claimDirectDataWriteSlot()` was in a nested
-      // helper:
-      //
-      //   function outer() {
-      //     async function helper() {
-      //       await claimDirectDataWriteSlot();  // marks helper only
-      //     }
-      //     writeJsonAtomic(...);                // ← still flagged
-      //   }
-      //
-      // The reverse direction (claim in outer, write in nested
-      // helper) is still accepted because the writeJsonAtomic
-      // check inspects the entire enclosing chain via
-      // `call.fnStack.some((f) => f.hasSlotClaim)`.
-      if (ctx.fnStack.length > 0) {
-        ctx.fnStack[ctx.fnStack.length - 1].hasSlotClaim = true;
+      // Only treat the claim as effective if it's awaited.
+      // `claimDirectDataWriteSlot()` returns a Promise; the slot
+      // isn't actually held until the await resolves. An expression
+      // like `const release = claimDirectDataWriteSlot();` (no
+      // await) returns a pending Promise and the next line runs
+      // as if the slot weren't claimed — exactly the bypass codex
+      // P2 named on PR #108 round 5.
+      const isAwaited = parentType === "AwaitExpression";
+      if (isAwaited) {
+        // Mark only the INNERMOST enclosing function as having an
+        // explicit claim. Marking ancestors would incorrectly
+        // accept an unrelated `writeJsonAtomic(...)` in an outer
+        // function when the claim was in a nested helper. The
+        // reverse direction (claim in outer, write in nested
+        // helper) is still accepted because the writeJsonAtomic
+        // check inspects the entire enclosing chain.
+        if (ctx.fnStack.length > 0) {
+          ctx.fnStack[ctx.fnStack.length - 1].hasSlotClaim = true;
+        }
       }
     }
   }
 
-  // Recurse.
+  // Recurse, passing the current node's type as parentType so
+  // children can detect whether they're wrapped in an
+  // AwaitExpression / etc.
   for (const key of Object.keys(node)) {
     if (key === "loc" || key === "range" || key === "type") continue;
     const child = node[key];
     if (Array.isArray(child)) {
-      for (const c of child) visit(c, ctx);
+      for (const c of child) visit(c, ctx, node.type);
     } else if (child && typeof child === "object" && child.type) {
-      visit(child, ctx);
+      visit(child, ctx, node.type);
     }
   }
 
