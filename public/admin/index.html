@@ -192,6 +192,18 @@
             >
               Notifications
             </button>
+            <button
+              id="admin-tab-challenges"
+              type="button"
+              class="ghost admin-tab"
+              data-tab="challenges"
+              role="tab"
+              aria-controls="admin-panel-challenges"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              Challenges
+            </button>
           </nav>
 
           <section
@@ -1188,6 +1200,122 @@
                 <strong>Preview:</strong>
                 <span id="notifBroadcastPreviewText"></span>
               </div>
+            </section>
+          </section>
+
+          <section
+            id="admin-panel-challenges"
+            class="admin-slot"
+            data-panel="challenges"
+            role="tabpanel"
+            aria-labelledby="admin-tab-challenges"
+            tabindex="0"
+            hidden
+          >
+            <h3>Timed challenges</h3>
+            <p class="note">
+              Multi-puzzle, time-budgeted gameplay. Server-authoritative
+              timer + word selection prevent cheating. Challenges with at
+              least one session are config-locked; soft-delete and
+              re-create to change scoring/timing.
+            </p>
+            <div id="challengesAdminStatus" class="message" role="status" aria-live="polite"></div>
+
+            <section class="admin-subpanel">
+              <h4>Create or edit a challenge</h4>
+              <form id="challengeAdminForm" class="form-inline">
+                <input type="hidden" id="challengeAdminId" />
+                <label class="form-inline">
+                  <span>Name</span>
+                  <input type="text" id="challengeAdminName" maxlength="80" required />
+                </label>
+                <label class="form-inline">
+                  <span>Language</span>
+                  <input type="text" id="challengeAdminLang" pattern="[a-z]{2}(-[A-Z]{2})?" required maxlength="6" value="en" />
+                </label>
+                <label class="form-inline">
+                  <span>Word length</span>
+                  <input type="number" id="challengeAdminWordLength" min="3" max="12" value="5" />
+                </label>
+                <label class="form-inline">
+                  <span>Puzzles</span>
+                  <input type="number" id="challengeAdminPuzzleCount" min="1" max="50" required value="5" />
+                </label>
+                <label class="form-inline">
+                  <span>Time budget (sec)</span>
+                  <input type="number" id="challengeAdminTimeBudget" min="30" max="7200" required value="300" />
+                </label>
+                <label class="form-inline">
+                  <span>Max guesses</span>
+                  <input type="number" id="challengeAdminMaxGuesses" min="1" max="12" required value="6" />
+                </label>
+                <label class="form-inline">
+                  <span>Score per puzzle</span>
+                  <input type="number" id="challengeAdminPerPuzzleScore" min="0" max="10000" required value="1000" />
+                </label>
+                <label class="form-inline">
+                  <span>Speed bonus factor</span>
+                  <input type="number" id="challengeAdminSpeedBonus" min="0" max="100" step="0.1" required value="0.5" />
+                </label>
+                <label class="form-inline">
+                  <span>Replay policy</span>
+                  <select id="challengeAdminReplayPolicy">
+                    <option value="best">best</option>
+                    <option value="first-only">first-only</option>
+                    <option value="unlimited">unlimited</option>
+                  </select>
+                </label>
+                <label class="form-inline">
+                  <span>Start time (optional)</span>
+                  <input type="datetime-local" id="challengeAdminStartTime" />
+                </label>
+                <label class="form-inline">
+                  <span>End time (optional)</span>
+                  <input type="datetime-local" id="challengeAdminEndTime" />
+                </label>
+                <button type="submit" id="challengeAdminSaveBtn">Save</button>
+                <button type="button" id="challengeAdminClearBtn" class="ghost">Clear</button>
+              </form>
+            </section>
+
+            <section class="admin-subpanel">
+              <h4>Challenges</h4>
+              <div class="admin-table-wrap">
+                <table id="challengesAdminTable" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col">Lang</th>
+                      <th scope="col">Puzzles × Time</th>
+                      <th scope="col">Replay</th>
+                      <th scope="col">Sessions</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="admin-subpanel" id="challengeAdminLeaderboardSection" hidden>
+              <h4>Leaderboard: <span id="challengeAdminLeaderboardName"></span></h4>
+              <div class="admin-table-wrap">
+                <table id="challengesAdminLbTable" class="admin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Rank</th>
+                      <th scope="col">Player</th>
+                      <th scope="col">Score</th>
+                      <th scope="col">Solved</th>
+                      <th scope="col">Time</th>
+                      <th scope="col">Finished</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <button type="button" id="challengeAdminLbCloseBtn" class="ghost">Close</button>
             </section>
           </section>
 

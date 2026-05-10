@@ -48,3 +48,5 @@ data/webhooks.json
 data/webhook-deliveries.json
 data/push-subscriptions.json
 data/vapid-keys.json
+data/challenges.json
+data/challenge-results.json

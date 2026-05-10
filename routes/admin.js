@@ -141,7 +141,15 @@ function createAdminRouter(deps) {
     webhookDefaultMaxAttempts,
     pushSubscriptionStore,
     notificationService,
-    PushSubscriptionStoreError
+    PushSubscriptionStoreError,
+    challengeConfigStore,
+    challengeResultsStore,
+    challengeEngine,
+    ChallengeConfigStoreError,
+    ChallengeResultsStoreError,
+    challengeModeEnabled,
+    challengeMaxTimeBudgetSeconds,
+    challengeMaxPuzzles
   } = deps;
 
   // Required dep — the toggle and runtime-config handlers depend on
@@ -1095,6 +1103,133 @@ function createAdminRouter(deps) {
           error: "Broadcast failed.",
           code: "BROADCAST_FAILED"
         });
+      }
+    });
+  }
+
+  // ── Challenge mode (admin) ───────────────────────────────────────────
+  if (challengeConfigStore && challengeResultsStore && challengeEngine) {
+    function challengeAdminError(res, err, context) {
+      if (err instanceof ChallengeConfigStoreError || err instanceof ChallengeResultsStoreError) {
+        const status = err.code === "INVALID_REQUEST" ? 400
+          : err.code === "CHALLENGE_NOT_FOUND" || err.code === "SESSION_NOT_FOUND" ? 404
+          : err.code === "CONFIG_LOCKED" || err.code === "DUPLICATE_ID" ? 409
+          : 503;
+        return res.status(status).json({ error: err.message, code: err.code });
+      }
+      console.error(`[challenge:admin] ${context} failed:`, err);
+      return res.status(503).json({ error: "Challenge admin request failed.", code: "INTERNAL" });
+    }
+
+    router.get("/api/admin/challenges", async (req, res) => {
+      try {
+        const all = await challengeConfigStore.listAll();
+        // Single-pass session count by challenge id — the previous
+        // .map(c => allSessions.filter(...)) was O(challenges × sessions)
+        // and would scale poorly once many sessions accumulated.
+        const allSessions = (await challengeResultsStore.getSnapshot()).sessions;
+        const countByChallenge = new Map();
+        for (const s of allSessions) {
+          countByChallenge.set(s.challengeId, (countByChallenge.get(s.challengeId) || 0) + 1);
+        }
+        const summary = all.map((c) => ({
+          ...c,
+          sessionCount: countByChallenge.get(c.id) || 0
+        }));
+        return res.json({
+          ok: true,
+          challenges: summary,
+          enabled: challengeModeEnabled !== false
+        });
+      } catch (err) {
+        return challengeAdminError(res, err, "list");
+      }
+    });
+
+    function enforceEnvCaps(input) {
+      // Operator's deploy-time caps tighten the per-deployment range.
+      // Schema/store enforces 30–7200s and 1–50 puzzles as hard caps;
+      // these are the operator's softer caps surfaced as a 400.
+      if (Number.isInteger(input.timeBudgetSeconds) && Number.isInteger(challengeMaxTimeBudgetSeconds)
+        && input.timeBudgetSeconds > challengeMaxTimeBudgetSeconds) {
+        throw new ChallengeConfigStoreError(
+          "INVALID_REQUEST",
+          `timeBudgetSeconds exceeds operator cap of ${challengeMaxTimeBudgetSeconds}.`
+        );
+      }
+      if (Number.isInteger(input.puzzleCount) && Number.isInteger(challengeMaxPuzzles)
+        && input.puzzleCount > challengeMaxPuzzles) {
+        throw new ChallengeConfigStoreError(
+          "INVALID_REQUEST",
+          `puzzleCount exceeds operator cap of ${challengeMaxPuzzles}.`
+        );
+      }
+    }
+
+    router.post("/api/admin/challenges", async (req, res) => {
+      try {
+        const body = req.body || {};
+        enforceEnvCaps(body);
+        const created = await withSlot(async () => {
+          return challengeConfigStore.create(body);
+        });
+        webhookAudit("challenge.create", {
+          actor: actorFingerprint(req),
+          id: created.id,
+          name: created.name,
+          lang: created.lang
+        });
+        return res.status(201).json({ ok: true, challenge: created });
+      } catch (err) {
+        return challengeAdminError(res, err, "create");
+      }
+    });
+
+    router.put("/api/admin/challenges/:id", async (req, res) => {
+      try {
+        const body = req.body || {};
+        enforceEnvCaps(body);
+        const sessions = await challengeResultsStore.getSnapshot();
+        const hasResults = sessions.sessions.some((s) => s.challengeId === req.params.id);
+        const updated = await withSlot(async () => {
+          return challengeConfigStore.update(req.params.id, body, { hasResults });
+        });
+        webhookAudit("challenge.update", {
+          actor: actorFingerprint(req),
+          id: updated.id
+        });
+        return res.json({ ok: true, challenge: updated });
+      } catch (err) {
+        return challengeAdminError(res, err, "update");
+      }
+    });
+
+    router.delete("/api/admin/challenges/:id", async (req, res) => {
+      try {
+        const removed = await withSlot(async () => {
+          return challengeConfigStore.softDelete(req.params.id);
+        });
+        webhookAudit("challenge.delete", {
+          actor: actorFingerprint(req),
+          id: removed.id
+        });
+        return res.json({ ok: true, challenge: removed });
+      } catch (err) {
+        return challengeAdminError(res, err, "delete");
+      }
+    });
+
+    router.get("/api/admin/challenges/:id/leaderboard", async (req, res) => {
+      try {
+        const challenge = await challengeConfigStore.findById(req.params.id);
+        if (!challenge) {
+          return res.status(404).json({ error: "Challenge not found.", code: "CHALLENGE_NOT_FOUND" });
+        }
+        const sessions = await challengeResultsStore.findCompletedForChallenge(challenge.id);
+        const rows = challengeEngine.buildLeaderboard({ challenge, sessions });
+        return res.json({ ok: true, challenge, rows });
+      } catch (err) {
+        return challengeAdminError(res, err, "leaderboard");
       }
     });
   }

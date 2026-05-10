@@ -1727,3 +1727,547 @@ if ('serviceWorker' in navigator) {
       .catch(() => {});
   });
 }
+
+// ── Timed challenges ──────────────────────────────────────────────────
+// Entirely self-contained at the bottom of the file: the existing play
+// panel is for daily/custom puzzles and would need invasive refactoring
+// to support multi-puzzle sessions. The challenge UI duplicates a small
+// amount of board/keyboard rendering rather than untangle that.
+
+const CHALLENGE_PROFILE_ID_KEY = 'wordle.challenge.profileId';
+const CHALLENGE_PROFILE_NAME_KEY = 'wordle.challenge.profileName';
+const CHALLENGE_TIMER_TICK_MS = 1000;
+
+const challengesNavLinkEl = document.getElementById('challengesNavLink');
+const challengeListPanelEl = document.getElementById('challengeListPanel');
+const challengeListBodyEl = document.getElementById('challengeListBody');
+const challengeListEmptyEl = document.getElementById('challengeListEmpty');
+const challengeProfileInputEl = document.getElementById('challengeProfileInput');
+const challengePlayPanelEl = document.getElementById('challengePlayPanel');
+const challengePlayHeadEl = document.getElementById('challengePlayHead');
+const challengePlayMetaEl = document.getElementById('challengePlayMeta');
+const challengeTimerEl = document.getElementById('challengeTimer');
+const challengeScoreLineEl = document.getElementById('challengeScoreLine');
+const challengeBoardEl = document.getElementById('challengeBoard');
+const challengeKeyboardEl = document.getElementById('challengeKeyboard');
+const challengePlayStatusEl = document.getElementById('challengePlayStatus');
+const challengeQuitBtnEl = document.getElementById('challengeQuitBtn');
+const challengeSummaryPanelEl = document.getElementById('challengeSummaryPanel');
+const challengeSummaryBodyEl = document.getElementById('challengeSummaryBody');
+const challengeBackToListBtnEl = document.getElementById('challengeBackToListBtn');
+const challengeViewLeaderboardBtnEl = document.getElementById('challengeViewLeaderboardBtn');
+const challengeLeaderboardPanelEl = document.getElementById('challengeLeaderboardPanel');
+const challengeLeaderboardNameEl = document.getElementById('challengeLeaderboardName');
+const challengeLeaderboardTbodyEl = challengeLeaderboardPanelEl
+  ? challengeLeaderboardPanelEl.querySelector('tbody')
+  : null;
+const challengeBackToListFromBoardBtnEl = document.getElementById('challengeBackToListFromBoardBtn');
+
+const challengeState = {
+  challenges: [],
+  activeChallenge: null,
+  session: null,
+  pendingGuess: '',
+  timerHandle: null,
+  remainingSeconds: 0,
+  lastLeaderboardChallengeId: null
+};
+
+function showChallengePanelOnly(idOrNull) {
+  // Hide all CHALLENGE panels, then show the one we want. Non-challenge
+  // panels (createPanel/playPanel/etc.) are managed elsewhere — this
+  // function intentionally only owns the challenge-mode UI subtree.
+  const challengePanels = [
+    challengeListPanelEl, challengePlayPanelEl,
+    challengeSummaryPanelEl, challengeLeaderboardPanelEl
+  ];
+  for (const el of challengePanels) {
+    if (el) el.classList.add('hidden');
+  }
+  if (idOrNull) {
+    const target = document.getElementById(idOrNull);
+    if (target) target.classList.remove('hidden');
+  }
+}
+
+function getChallengeProfile() {
+  let id = '';
+  try { id = localStorage.getItem(CHALLENGE_PROFILE_ID_KEY) || ''; } catch (_e) { /* ignore */ }
+  if (!id) {
+    // Generate a random local id; stable across sessions on this device.
+    id = 'p-' + Math.random().toString(36).slice(2, 12);
+    try { localStorage.setItem(CHALLENGE_PROFILE_ID_KEY, id); } catch (_e) { /* ignore */ }
+  }
+  let name = '';
+  try { name = localStorage.getItem(CHALLENGE_PROFILE_NAME_KEY) || ''; } catch (_e) { /* ignore */ }
+  return { id, name };
+}
+
+function setChallengeProfileName(name) {
+  try { localStorage.setItem(CHALLENGE_PROFILE_NAME_KEY, name); } catch (_e) { /* ignore */ }
+}
+
+if (challengeProfileInputEl) {
+  challengeProfileInputEl.value = getChallengeProfile().name;
+  challengeProfileInputEl.addEventListener('input', () => {
+    setChallengeProfileName(String(challengeProfileInputEl.value || '').trim().slice(0, 64));
+  });
+}
+
+async function loadChallengeList() {
+  try {
+    const res = await fetch('/api/challenges');
+    if (!res.ok) {
+      if (res.status === 404 && (await res.json().catch(() => ({}))).code === 'CHALLENGE_MODE_DISABLED') {
+        if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
+        return;
+      }
+      return;
+    }
+    const json = await res.json();
+    challengeState.challenges = Array.isArray(json.challenges) ? json.challenges : [];
+    if (challengesNavLinkEl) challengesNavLinkEl.hidden = challengeState.challenges.length === 0;
+  } catch (_err) {
+    if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
+  }
+}
+
+function renderChallengeList() {
+  if (!challengeListBodyEl) return;
+  challengeListBodyEl.innerHTML = '';
+  if (!challengeState.challenges.length) {
+    if (challengeListEmptyEl) challengeListEmptyEl.classList.remove('hidden');
+    return;
+  }
+  if (challengeListEmptyEl) challengeListEmptyEl.classList.add('hidden');
+  for (const ch of challengeState.challenges) {
+    const card = document.createElement('div');
+    card.className = 'admin-status-card';
+    const title = document.createElement('h3');
+    title.textContent = ch.name;
+    card.appendChild(title);
+    const meta = document.createElement('p');
+    meta.className = 'note';
+    // Build the meta segments conditionally so wordLength=null
+    // doesn't render as an empty "·  ·" segment.
+    const metaSegments = [`${ch.puzzleCount} puzzles`];
+    if (ch.wordLength) metaSegments.push(`${ch.wordLength}-letter`);
+    metaSegments.push(`${ch.timeBudgetSeconds}s budget`);
+    metaSegments.push(`${ch.maxGuesses} guesses each`);
+    metaSegments.push(`replay: ${ch.replayPolicy}`);
+    meta.textContent = metaSegments.join(' · ');
+    card.appendChild(meta);
+    const actions = document.createElement('div');
+    actions.className = 'form-row';
+    const startBtn = document.createElement('button');
+    startBtn.type = 'button';
+    startBtn.textContent = 'Start';
+    startBtn.addEventListener('click', () => startChallenge(ch.id));
+    actions.appendChild(startBtn);
+    const lbBtn = document.createElement('button');
+    lbBtn.type = 'button';
+    lbBtn.className = 'ghost';
+    lbBtn.textContent = 'Leaderboard';
+    lbBtn.addEventListener('click', () => showChallengeLeaderboard(ch.id));
+    actions.appendChild(lbBtn);
+    card.appendChild(actions);
+    challengeListBodyEl.appendChild(card);
+  }
+}
+
+async function startChallenge(challengeId) {
+  const profile = getChallengeProfile();
+  if (!profile.name && challengeProfileInputEl?.value) {
+    setChallengeProfileName(challengeProfileInputEl.value.trim());
+  }
+  const finalName = challengeProfileInputEl?.value?.trim() || profile.name || 'Player';
+  try {
+    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId: profile.id, profileName: finalName })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(json.error || `Could not start (HTTP ${res.status})`);
+      return;
+    }
+    challengeState.activeChallenge = challengeState.challenges.find((c) => c.id === challengeId);
+    challengeState.session = json.session;
+    enterChallengePlay();
+  } catch (err) {
+    alert(`Could not start challenge: ${err.message}`);
+  }
+}
+
+function enterChallengePlay() {
+  showChallengePanelOnly('challengePlayPanel');
+  challengePlayHeadEl.textContent = challengeState.activeChallenge?.name || 'Challenge';
+  challengeState.pendingGuess = '';
+  startChallengeTimer();
+  renderChallengeBoard();
+  renderChallengeKeyboard();
+  setChallengePlayStatus('');
+}
+
+function setChallengePlayStatus(text, tone = '') {
+  if (!challengePlayStatusEl) return;
+  challengePlayStatusEl.textContent = text || '';
+  challengePlayStatusEl.classList.remove('admin-status-ok', 'admin-status-missing');
+  if (tone) challengePlayStatusEl.classList.add(tone);
+}
+
+function startChallengeTimer() {
+  stopChallengeTimer();
+  // Use server-supplied remainingSeconds as ground truth; we tick the
+  // client-visible countdown locally between requests but the server
+  // re-issues the truth on every guess response.
+  const initial = challengeState.session?.remainingSeconds ?? 0;
+  challengeState.remainingSeconds = Math.max(0, Math.floor(initial));
+  paintChallengeTimer();
+  challengeState.timerHandle = setInterval(() => {
+    if (challengeState.remainingSeconds <= 0) {
+      stopChallengeTimer();
+      handleChallengeTimedOutClient();
+      return;
+    }
+    challengeState.remainingSeconds -= 1;
+    paintChallengeTimer();
+  }, CHALLENGE_TIMER_TICK_MS);
+}
+
+function stopChallengeTimer() {
+  if (challengeState.timerHandle) {
+    clearInterval(challengeState.timerHandle);
+    challengeState.timerHandle = null;
+  }
+}
+
+function paintChallengeTimer() {
+  if (!challengeTimerEl) return;
+  const total = challengeState.remainingSeconds;
+  const m = Math.floor(total / 60).toString().padStart(2, '0');
+  const s = (total % 60).toString().padStart(2, '0');
+  challengeTimerEl.textContent = `${m}:${s}`;
+  // High-pressure cue under 30s.
+  challengeTimerEl.classList.toggle('admin-status-missing', total <= 30);
+}
+
+async function handleChallengeTimedOutClient() {
+  // Client-side timer hit zero; ask the server for the authoritative
+  // settlement (which will mark the session timed-out and return the
+  // final score). Don't trust the client clock for the outcome.
+  if (!challengeState.session) return;
+  try {
+    const res = await fetch(
+      `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}`
+    );
+    if (res.ok) {
+      const json = await res.json();
+      challengeState.session = json.session;
+      enterChallengeSummary();
+    }
+  } catch (_err) {
+    // ignore — next user action will retry
+  }
+}
+
+function activePuzzle() {
+  if (!challengeState.session) return null;
+  const idx = challengeState.session.activePuzzleIndex;
+  if (idx === null || idx === undefined) return null;
+  return challengeState.session.puzzles.find((p) => p.index === idx) || null;
+}
+
+function renderChallengeBoard() {
+  if (!challengeBoardEl) return;
+  challengeBoardEl.innerHTML = '';
+  const session = challengeState.session;
+  const challenge = challengeState.activeChallenge;
+  if (!session || !challenge) return;
+  const active = activePuzzle();
+  if (!active) return;
+  // Surface puzzle-of-N progress and a running solved/score line so
+  // the player knows where they are without scrolling.
+  if (challengePlayMetaEl) {
+    challengePlayMetaEl.textContent = `Puzzle ${active.index + 1} of ${challenge.puzzleCount}`;
+  }
+  if (challengeScoreLineEl) {
+    const solved = session.puzzles.filter((p) => p.solved).length;
+    challengeScoreLineEl.textContent = `${solved}/${challenge.puzzleCount} solved`;
+  }
+  const length = active.length || (challenge.wordLength || 5);
+  const maxGuesses = challenge.maxGuesses;
+  // The server projection includes a `feedbacks` array (one row per
+  // historical guess, each row is an array of "correct" / "present" /
+  // "absent" strings). The active puzzle's word is hidden so the
+  // client can't compute these locally — render them server-side.
+  const feedbacks = Array.isArray(active.feedbacks) ? active.feedbacks : [];
+  for (let r = 0; r < maxGuesses; r++) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'row';
+    let guessForRow = active.guesses[r] || '';
+    let rowFeedback = null;
+    if (r < active.guesses.length) {
+      rowFeedback = feedbacks[r] || null;
+    } else if (r === active.guesses.length) {
+      guessForRow = challengeState.pendingGuess;
+    }
+    for (let c = 0; c < length; c++) {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      const letter = guessForRow[c] || '';
+      tile.textContent = letter;
+      if (rowFeedback && rowFeedback[c]) {
+        // Reuse the same color classes as the daily/created play UI
+        // (.absent, .present, .correct) so the styling is unified
+        // and inherits any operator theme overrides.
+        tile.classList.add(rowFeedback[c]);
+      }
+      rowEl.appendChild(tile);
+    }
+    challengeBoardEl.appendChild(rowEl);
+  }
+}
+
+function renderChallengeKeyboard() {
+  if (!challengeKeyboardEl) return;
+  challengeKeyboardEl.innerHTML = '';
+  const rows = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
+  for (let r = 0; r < rows.length; r++) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'kb-row';
+    if (r === rows.length - 1) {
+      rowEl.appendChild(makeKbKey('Enter', 'Enter', 'wide'));
+    }
+    for (const ch of rows[r]) rowEl.appendChild(makeKbKey(ch, ch));
+    if (r === rows.length - 1) {
+      rowEl.appendChild(makeKbKey('⌫', 'Backspace', 'wide'));
+    }
+    challengeKeyboardEl.appendChild(rowEl);
+  }
+}
+
+function makeKbKey(label, key, extraClass) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'kb-key' + (extraClass ? ` ${extraClass}` : '');
+  btn.textContent = label;
+  btn.addEventListener('click', () => onChallengeKey(key));
+  return btn;
+}
+
+function onChallengeKey(key) {
+  if (!challengeState.session || challengeState.session.status !== 'in-progress') return;
+  const active = activePuzzle();
+  if (!active) return;
+  const length = active.length || (challengeState.activeChallenge?.wordLength || 5);
+  if (key === 'Enter') {
+    if (challengeState.pendingGuess.length !== length) {
+      setChallengePlayStatus(`Guess must be ${length} letters.`, 'admin-status-missing');
+      return;
+    }
+    submitChallengeGuess();
+    return;
+  }
+  if (key === 'Backspace') {
+    challengeState.pendingGuess = challengeState.pendingGuess.slice(0, -1);
+    renderChallengeBoard();
+    return;
+  }
+  if (/^[A-Z]$/.test(key) && challengeState.pendingGuess.length < length) {
+    challengeState.pendingGuess += key;
+    renderChallengeBoard();
+  }
+}
+
+document.addEventListener('keydown', (event) => {
+  if (challengePlayPanelEl?.classList.contains('hidden')) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const k = event.key;
+  if (k === 'Enter') {
+    event.preventDefault();
+    onChallengeKey('Enter');
+  } else if (k === 'Backspace') {
+    event.preventDefault();
+    onChallengeKey('Backspace');
+  } else if (/^[a-zA-Z]$/.test(k)) {
+    event.preventDefault();
+    onChallengeKey(k.toUpperCase());
+  }
+});
+
+async function submitChallengeGuess() {
+  const guess = challengeState.pendingGuess;
+  challengeState.pendingGuess = '';
+  setChallengePlayStatus('Submitting…');
+  try {
+    const res = await fetch(
+      `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/guess`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guess })
+      }
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setChallengePlayStatus(json.error || `Guess rejected (HTTP ${res.status})`, 'admin-status-missing');
+      return;
+    }
+    challengeState.session = json.session;
+    challengeState.remainingSeconds = json.session.remainingSeconds;
+    paintChallengeTimer();
+    renderChallengeBoard();
+    if (challengeState.session.status !== 'in-progress' && challengeState.session.status !== 'pending') {
+      stopChallengeTimer();
+      enterChallengeSummary();
+      return;
+    }
+    setChallengePlayStatus('');
+  } catch (err) {
+    setChallengePlayStatus(`Could not submit guess: ${err.message}`, 'admin-status-missing');
+  }
+}
+
+function enterChallengeSummary() {
+  showChallengePanelOnly('challengeSummaryPanel');
+  if (!challengeSummaryBodyEl) return;
+  const s = challengeState.session;
+  const c = challengeState.activeChallenge;
+  if (!s || !c) {
+    challengeSummaryBodyEl.textContent = 'No session data.';
+    return;
+  }
+  const solved = s.puzzles.filter((p) => p.solved).length;
+  const status = s.status === 'completed' ? 'Completed!'
+    : s.status === 'timed-out' ? 'Time up!'
+    : s.status === 'abandoned' ? 'Quit'
+    : s.status;
+  challengeSummaryBodyEl.innerHTML = '';
+  const head = document.createElement('p');
+  head.innerHTML = `<strong>${status}</strong> · Score: <strong>${s.score ?? 0}</strong> · Solved ${solved}/${c.puzzleCount} · Time: ${s.elapsedSeconds ?? 0}s`;
+  challengeSummaryBodyEl.appendChild(head);
+  const list = document.createElement('ol');
+  list.className = 'summary-list';
+  for (const p of s.puzzles) {
+    const li = document.createElement('li');
+    const word = p.word || '???';
+    const tries = p.guesses?.length || 0;
+    li.textContent = `${p.solved ? '✅' : '❌'} ${word} — ${tries} guess${tries === 1 ? '' : 'es'}`;
+    list.appendChild(li);
+  }
+  challengeSummaryBodyEl.appendChild(list);
+  challengeState.lastLeaderboardChallengeId = c.id;
+}
+
+if (challengeBackToListBtnEl) {
+  challengeBackToListBtnEl.addEventListener('click', () => {
+    challengeState.session = null;
+    challengeState.activeChallenge = null;
+    showChallengePanelOnly('challengeListPanel');
+    loadChallengeList().then(renderChallengeList);
+  });
+}
+
+if (challengeBackToListFromBoardBtnEl) {
+  challengeBackToListFromBoardBtnEl.addEventListener('click', () => {
+    showChallengePanelOnly('challengeListPanel');
+  });
+}
+
+if (challengeViewLeaderboardBtnEl) {
+  challengeViewLeaderboardBtnEl.addEventListener('click', () => {
+    if (challengeState.lastLeaderboardChallengeId) {
+      showChallengeLeaderboard(challengeState.lastLeaderboardChallengeId);
+    }
+  });
+}
+
+if (challengeQuitBtnEl) {
+  challengeQuitBtnEl.addEventListener('click', async () => {
+    if (!challengeState.session) return;
+    if (!confirm('Quit this challenge? Your progress so far will be saved as abandoned.')) return;
+    try {
+      const res = await fetch(
+        `/api/challenges/${encodeURIComponent(challengeState.session.challengeId)}/sessions/${encodeURIComponent(challengeState.session.id)}/finish`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (json.session) {
+        challengeState.session = json.session;
+        stopChallengeTimer();
+        enterChallengeSummary();
+      }
+    } catch (err) {
+      setChallengePlayStatus(`Quit failed: ${err.message}`, 'admin-status-missing');
+    }
+  });
+}
+
+async function showChallengeLeaderboard(challengeId) {
+  showChallengePanelOnly('challengeLeaderboardPanel');
+  if (!challengeLeaderboardTbodyEl) return;
+  challengeLeaderboardTbodyEl.innerHTML = '';
+  if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Loading…';
+  try {
+    const res = await fetch(`/api/challenges/${encodeURIComponent(challengeId)}/leaderboard`);
+    if (!res.ok) {
+      if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = 'Leaderboard unavailable.';
+      return;
+    }
+    const json = await res.json();
+    if (challengeLeaderboardNameEl) {
+      challengeLeaderboardNameEl.textContent = `${json.challenge?.name || 'Challenge'} · ${json.challenge?.replayPolicy || ''} replay`;
+    }
+    if (!Array.isArray(json.rows) || json.rows.length === 0) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.textContent = 'No completed sessions yet.';
+      tr.appendChild(td);
+      challengeLeaderboardTbodyEl.appendChild(tr);
+      return;
+    }
+    let rank = 1;
+    for (const row of json.rows) {
+      const tr = document.createElement('tr');
+      tr.appendChild(td(`#${rank}`));
+      tr.appendChild(td(row.profileName || row.profileId));
+      tr.appendChild(td(String(row.score)));
+      tr.appendChild(td(`${row.solvedCount}/${row.totalPuzzles}`));
+      tr.appendChild(td(`${row.elapsedSeconds}s`));
+      challengeLeaderboardTbodyEl.appendChild(tr);
+      rank += 1;
+    }
+  } catch (err) {
+    if (challengeLeaderboardNameEl) challengeLeaderboardNameEl.textContent = `Error: ${err.message}`;
+  }
+  function td(text) { const c = document.createElement('td'); c.textContent = text; return c; }
+}
+
+// Route the player to the challenge list when /challenges is in the URL,
+// or surface the nav link otherwise. This intentionally keeps the
+// existing hash-routing model and just hides/shows panels.
+function initChallengesUI() {
+  loadChallengeList().then(() => {
+    renderChallengeList();
+    if (location.pathname === '/challenges') {
+      // Hide the rest of the UI panels and show the list.
+      const otherPanels = document.querySelectorAll('main > section.panel');
+      for (const el of otherPanels) {
+        if (
+          el.id !== 'challengeListPanel'
+          && el.id !== 'challengePlayPanel'
+          && el.id !== 'challengeSummaryPanel'
+          && el.id !== 'challengeLeaderboardPanel'
+        ) {
+          el.classList.add('hidden');
+        }
+      }
+      showChallengePanelOnly('challengeListPanel');
+    }
+  });
+}
+
+initChallengesUI();

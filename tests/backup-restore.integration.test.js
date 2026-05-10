@@ -40,6 +40,8 @@ function makeTempState() {
     "data/webhooks.schema.json",
     "data/webhook-deliveries.schema.json",
     "data/push-subscriptions.schema.json",
+    "data/challenges.schema.json",
+    "data/challenge-results.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     const dest = path.join(projectRoot, rel);
@@ -153,9 +155,30 @@ function makeTempState() {
     }, null, 2)}\n`,
     "utf8"
   );
+  const challengesPath = path.join(dir, "challenges.json");
+  fs.writeFileSync(
+    challengesPath,
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      challenges: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  const challengeResultsPath = path.join(dir, "challenge-results.json");
+  fs.writeFileSync(
+    challengeResultsPath,
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+      sessions: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
   return {
     statsPath, classesPath, adminJobsPath, appConfigPath, schedulePath,
-    webhooksPath, webhookDeliveriesPath, pushSubscriptionsPath, projectRoot
+    webhooksPath, webhookDeliveriesPath, pushSubscriptionsPath,
+    challengesPath, challengeResultsPath, projectRoot
   };
 }
 
@@ -171,6 +194,8 @@ function loadFreshApp(adminKey, paths, extraEnv = {}) {
   if (paths.webhooksPath) process.env.WEBHOOKS_STORE_PATH = paths.webhooksPath;
   if (paths.webhookDeliveriesPath) process.env.WEBHOOK_DELIVERIES_STORE_PATH = paths.webhookDeliveriesPath;
   if (paths.pushSubscriptionsPath) process.env.PUSH_SUBSCRIPTIONS_STORE_PATH = paths.pushSubscriptionsPath;
+  if (paths.challengesPath) process.env.CHALLENGE_STORE_PATH = paths.challengesPath;
+  if (paths.challengeResultsPath) process.env.CHALLENGE_RESULTS_STORE_PATH = paths.challengeResultsPath;
   process.env.RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_RATE_LIMIT_MAX = "1000";
   process.env.ADMIN_WRITE_RATE_LIMIT_MAX = "1000";

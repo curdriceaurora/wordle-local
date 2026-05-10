@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wordle-local/challenges.schema.json",
+  "title": "Timed challenges",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "updatedAt", "challenges"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "challenges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "lang",
+          "puzzleCount",
+          "timeBudgetSeconds",
+          "maxGuesses",
+          "speedBonusFactor",
+          "perPuzzleScore",
+          "replayPolicy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "lang": { "type": "string", "minLength": 1, "maxLength": 16, "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+          "puzzleCount": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "timeBudgetSeconds": { "type": "integer", "minimum": 30, "maximum": 7200 },
+          "maxGuesses": { "type": "integer", "minimum": 1, "maximum": 12 },
+          "wordLength": { "type": "integer", "minimum": 3, "maximum": 12 },
+          "speedBonusFactor": { "type": "number", "minimum": 0, "maximum": 100 },
+          "perPuzzleScore": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "replayPolicy": {
+            "type": "string",
+            "enum": ["best", "first-only", "unlimited"]
+          },
+          "startTime": { "type": "string", "format": "date-time" },
+          "endTime": { "type": "string", "format": "date-time" },
+          "deleted": { "type": "boolean" },
+          "deletedAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

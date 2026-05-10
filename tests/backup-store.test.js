@@ -44,6 +44,8 @@ async function makeProjectRoot() {
     "data/webhooks.schema.json",
     "data/webhook-deliveries.schema.json",
     "data/push-subscriptions.schema.json",
+    "data/challenges.schema.json",
+    "data/challenge-results.schema.json",
     "data/backup-manifest.schema.json"
   ]) {
     await copyFileFromRepo(rel, dir);
@@ -132,6 +134,24 @@ async function makeProjectRoot() {
       lastBroadcastAt: null,
       lastDailyFireAt: null,
       subscriptions: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await fsp.writeFile(
+    path.join(dir, "data", "challenges.json"),
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      challenges: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await fsp.writeFile(
+    path.join(dir, "data", "challenge-results.json"),
+    `${JSON.stringify({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sessions: []
     }, null, 2)}\n`,
     "utf8"
   );
