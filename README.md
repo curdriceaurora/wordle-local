@@ -58,7 +58,7 @@ curl -X POST http://localhost:3000/api/word \
   -d '{"word":"CRANE","lang":"en"}'
 ```
 
-If you locked the server down, add `-H 'x-admin-key: YOUR_ADMIN_KEY'` to the request. Details: [Locking it down](#locking-it-down).
+If you locked the server down — including the Docker path above, which loads `.env` and so honors the `REQUIRE_ADMIN_KEY=true` default in `.env.example` — add `-H 'x-admin-key: YOUR_ADMIN_KEY'` to the request. Details: [Locking it down](#locking-it-down).
 
 Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
 
@@ -117,7 +117,7 @@ docker compose up --build
 node --env-file=.env server.js
 ```
 
-The gate covers `/api/admin/*` (the API the admin console talks to). The `/admin` HTML page itself is served unauthenticated — so an unauthenticated visitor can see the unlock form, but every read or write the form makes goes through the gate.
+The gate covers `/api/admin/*` (the API the admin console talks to) **and** `GET`/`POST /api/word` (the daily-word read/write — the `/daily` page itself is unauthenticated and reads through cached state). The `/admin` HTML page is served unauthenticated — so an unauthenticated visitor can see the unlock form, but every read or write the form makes goes through the gate.
 
 Once locked down, requests to admin endpoints need the header:
 
