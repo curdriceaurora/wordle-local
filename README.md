@@ -5,6 +5,7 @@ Local, privacy-first Wordle you can run anywhere.
 For families, classrooms, and friend groups who want a simple, self-hosted Wordle — with daily words, classroom rosters, timed challenges, opt-in notifications, and UI in English or Spanish.
 
 ## How To Use
+
 1. Open the site in your browser.
 2. Create a puzzle, play the daily word, or join a timed challenge.
 3. Share the link.
@@ -67,6 +68,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](advanced-settings.md).
 
 ## Highlights
+
 - **Custom puzzles**: create-and-share links, no login.
 - **Daily word** with optional admin-managed schedule + auto-rotate from the active answer pool.
 - **Timed challenges** — solve N puzzles inside a server-authoritative time budget; per-challenge leaderboard.
@@ -78,16 +80,19 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **UI internationalization** — English + Spanish at strict per-key parity, switchable from the header ([docs/i18n.md](docs/i18n.md)).
 
 ## Other Goodies (Optional)
+
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 - Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
 - Hosting behind a proxy or running with admin features? See [advanced-settings.md](advanced-settings.md).
 
 ## Admin Console
+
 - Visit `/admin` for the operator console.
 - Unlock uses `x-admin-key` semantics and keeps the key session-scoped in memory (no browser storage persistence).
 - Admin platform architecture contracts (schemas, config precedence, queue semantics): [docs/admin-platform-architecture-contract.md](docs/admin-platform-architecture-contract.md).
 
 ### Provider workflows
+
 - import/re-import (`en-GB`, `en-US`, `en-CA`, `en-AU`, `en-ZA`) via either remote fetch (pinned commit + required SHA-256 checksums) or manual `.dic` + `.aff` upload fallback.
 - async import queue with persisted job history under `data/admin-jobs.json`.
 - check upstream updates on demand with status outcomes (`up-to-date`, `update-available`, `unknown`, `error`).
@@ -95,6 +100,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - Import uses `denylist-only` (default) or `allowlist-required` family filter modes.
 
 ### Tabs
+
 - **Providers** — provider/dictionary lifecycle (above).
 - **Import Queue** — live status of async import jobs.
 - **Runtime Settings** — edits only hot-refresh-safe overrides (`data/app-config.json`); env-defined security/infrastructure values remain read-only.
@@ -108,6 +114,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **Challenges** — define timed challenges (puzzle count, word length, time budget, max guesses, replay policy, scoring) and inspect per-challenge leaderboards ([docs/challenge-mode.md](docs/challenge-mode.md)).
 
 ## Daily Word (API)
+
 Daily word endpoints remain available:
 
 - `GET /api/word` — read current daily word config
@@ -117,6 +124,7 @@ Daily word endpoints remain available:
 - The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. To stop the scheduler from acting on `word.json`, delete `data/schedule.json` — the store recreates an empty default file but the reconciler then no-ops every tick (there's no separate "off" mode in v1). See [docs/scheduler.md](docs/scheduler.md) for the full contract.
 
 ## Languages & Dictionaries
+
 - English dictionary is baked in (`en`).
 - English meanings are baked in locally (`data/dictionaries/en-definitions.json`).
 - Language registry state is persisted in `data/languages.json`; missing/invalid registry data auto-recovers to baked defaults.
@@ -130,10 +138,12 @@ Daily word endpoints remain available:
 - For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see [advanced-settings.md](advanced-settings.md)).
 
 ## Daily Link
+
 - Visit `/daily` to play the configured daily word.
 - If no daily word is set (or the date doesn’t match today), a friendly error page is shown.
 
 ## Family Profiles & Leaderboards
+
 - Daily mode prompts for a player name (no password; honor system for families).
 - Profiles and leaderboard stats are stored on the server in `data/leaderboard.json` and shared across devices on the same host.
 - Server retention limits are applied for performance:
@@ -150,6 +160,7 @@ Daily word endpoints remain available:
 - Data contract details: [docs/leaderboard-data-contract.md](docs/leaderboard-data-contract.md)
 
 ## Timed Challenges
+
 - Visit `/challenges` to see the active list (the link is hidden until at least one challenge is configured).
 - Each challenge defines a fixed puzzle count, word length, time budget, max guesses per puzzle, and a replay policy (`unlimited`, `best`, or `first-only`).
 - The timer is **server-authoritative** — switching tabs, sleeping the device, or reloading does not pause the budget. The server settles a session if it expires before the player finishes.
@@ -159,6 +170,7 @@ Daily word endpoints remain available:
 - Operator-facing details + replay policy mechanics: [docs/challenge-mode.md](docs/challenge-mode.md).
 
 ## Daily Puzzle Notifications
+
 - Optional opt-in browser push for the daily puzzle. Toggle in the header settings strip — the toggle is hidden if your browser doesn't support `PushManager` / Service Worker, or if the page is loaded over plain HTTP (notifications need HTTPS or `localhost`).
 - The daily fire is server-scheduled at the operator's configured local time (default `00:00`).
 - Subscriptions are pruned on `404`/`410` from the push service so dead endpoints don't accumulate.
@@ -166,18 +178,21 @@ Daily word endpoints remain available:
 - Operator runbook: [docs/notifications.md](docs/notifications.md).
 
 ## UI Languages
+
 - The header has a language switcher (English, Spanish). Selection persists per device.
 - Both the player and admin shells are translated; `npm run i18n:check` enforces strict per-key parity between locales in CI.
 - HTTP error JSON is also localized for the small set of routes wired through `lib/server-i18n.js` (`Accept-Language` aware).
 - Adding a new locale: drop a JSON file under `public/locales/` and update the small list of allowlists documented in [docs/i18n.md](docs/i18n.md).
 
 ## Security Notes
+
 - Rate limiting is enabled by default.
 - `TRUST_PROXY=true` is recommended behind proxies or Tailscale (`TRUST_PROXY_HOPS` defaults to `1`).
 - Container runs as a non-root user and includes `/api/health`.
 - For provider/admin releases, use [docs/admin-security-checklist.md](docs/admin-security-checklist.md) in addition to release gates.
 
 ## Troubleshooting
+
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
 - Daily link says no puzzle set: set one via `POST /api/word`.
 - Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
@@ -197,19 +212,24 @@ The two original exploratory tracks shipped:
 Current priorities remain stability, low operational overhead, and a simple local-hosted gameplay experience. Contributions for additional UI locales (drop a JSON file under `public/locales/` per [docs/i18n.md](docs/i18n.md)) and additional language variants are welcome.
 
 ## License
+
 CC0-1.0 public domain dedication. See `LICENSE`.
 Third-party assets (notably the English dictionary) are licensed separately. See `THIRD_PARTY_NOTICES.md`.
 
 ## Contributing
+
 See `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 Release maintainers should also use [docs/release-checklist.md](docs/release-checklist.md).
 Provider/admin release changes should additionally follow [docs/provider-rollout-checklist.md](docs/provider-rollout-checklist.md).
 
 ## Disclaimer
+
 This project is provided “as is”, without warranty of any kind. See `DISCLAIMER.md`.
 
 ## Support
+
 No support or SLAs. See `SUPPORT.md`.
 
 ## Trademark
+
 Wordle is a trademark of The New York Times Company. This project is not affiliated with or endorsed by The New York Times.
