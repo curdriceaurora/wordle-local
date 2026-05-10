@@ -27,8 +27,15 @@ npm run guardrails:nits
 #     operator with conflict markers and a kept stash even though
 #     markdownlint hadn't modified anything. Avoiding stash
 #     entirely sidesteps this.
-#  4. Cross-platform. No GNU-only flags (grep -z, xargs -0, -r).
-#     Pure `sh` works on macOS BSD userland.
+#  4. Cross-platform. No GNU-only flags (grep -z, xargs -0, -r);
+#     `mktemp -d` uses an explicit template so BSD/macOS mktemp
+#     accepts it. Pure `sh` works on macOS BSD userland.
+#  5. Config consistency. Both the linted files AND the
+#     `.markdownlint.json` config are extracted from the index, and
+#     the config is passed to markdownlint via `--config` so its
+#     directory-walking config discovery (which keys off cwd, not
+#     the linted file's tree) doesn't pick up the worktree config
+#     and override the staged one.
 #
 # Caveat: error messages from markdownlint will reference the temp
 # paths rather than the original repo paths. Acceptable trade-off:
@@ -43,11 +50,14 @@ if [ -z "$STAGED_MD" ]; then
   exit 0
 fi
 
-# Temp dir mirrored to the repo's structure so config discovery
-# (markdownlint walks from each linted file upward looking for
-# `.markdownlint.json`) finds the config we copy into the temp root.
+# Temp dir mirrored to the repo's structure. We pass the staged
+# config to markdownlint via `--config` (see below) — directory-
+# walk-based config discovery isn't reliable when the lint is
+# invoked from a different cwd than the linted files. Use an
+# explicit template so `mktemp -d` is portable across GNU coreutils
+# and BSD/macOS userland (BSD mktemp without a template fails).
 # Cleaned on exit.
-TMPDIR_LINT="$(mktemp -d)"
+TMPDIR_LINT="$(mktemp -d "${TMPDIR:-/tmp}/wordle-md-lint.XXXXXXXXXX")"
 # shellcheck disable=SC2064
 trap "rm -rf '$TMPDIR_LINT'" EXIT
 
@@ -84,6 +94,16 @@ $STAGED_MD
 HEREDOC
 
 LINT_STATUS=0
-npx --no-install markdownlint-cli2 -- "$@" || LINT_STATUS=$?
+# Pass the staged config explicitly. markdownlint-cli2's directory-
+# walking config discovery uses the cwd's tree, not the linted
+# file's tree — so even though we put `.markdownlint.json` in the
+# temp tree, a lint invoked from the repo root would skip it and
+# read the worktree config instead. `--config` short-circuits the
+# walk and pins the rule set to the staged snapshot.
+if [ -f "$TMPDIR_LINT/.markdownlint.json" ]; then
+  npx --no-install markdownlint-cli2 --config "$TMPDIR_LINT/.markdownlint.json" -- "$@" || LINT_STATUS=$?
+else
+  npx --no-install markdownlint-cli2 -- "$@" || LINT_STATUS=$?
+fi
 
 exit "$LINT_STATUS"
