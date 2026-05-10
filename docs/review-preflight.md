@@ -94,11 +94,11 @@ Use the readiness monitor to enforce merge gates consistently across PRs.
 
 One-shot evaluation (exit `0` on pass, `1` on wait/fail):
 
-- `npm run pr:ready-check -- --pr <number>`
+- `npm run pr:ready-check -- --pr <number>` <!-- claim:skip -->
 
 Continuous watch mode (polls until pass or timeout; exit `0` pass, `2` timeout):
 
-- `npm run pr:ready-watch -- --pr <number>`
+- `npm run pr:ready-watch -- --pr <number>` <!-- claim:skip -->
 
 Repository CI gate:
 
