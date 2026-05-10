@@ -80,17 +80,18 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
     // overwrites the others — typically only 1–3 entries survive
     // out of N. With the queue, all N land.
     //
-    // parallelismMax: 26 because entryForIndex(i) cycles A..Z words
-    // (i % 26) — at i=26 we'd push duplicate (date, lang, word)
-    // triples that the schedule schema rejects as duplicates within
-    // the same date. The date side caps at 31 (May has 31 days),
-    // but 26 is the tighter cap. This is a correctness ceiling, not
-    // a contention dial; env CONCURRENCY_PARALLELISM stress mode
-    // can't push it higher without breaking the test premise.
+    // parallelismMax: 99 because entryForIndex(i) generates dates
+    // `2026-05-${pad(i+1, 2)}` — at i=99 the day becomes "100" which
+    // breaks the YYYY-MM-DD `\d{2}` regex and the test would fail
+    // with INVALID_DATE for reasons unrelated to the concurrency
+    // invariant. Word duplicates across distinct dates are NOT a
+    // schema violation (uniqueness is keyed on (date, lang) only —
+    // Copilot caught this on PR #109 round 2; the prior cap of 26
+    // unnecessarily limited stress).
     await runConcurrencyScenario({
       name: "schedule-store: parallel addEntry (distinct keys)",
       parallelism: 20,
-      parallelismMax: 26,
+      parallelismMax: 99,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ScheduleStore({ filePath, now: frozenNow() });
@@ -128,7 +129,7 @@ describe("schedule-store: commitQueue serializes parallel writers", () => {
     await runConcurrencyScenario({
       name: "schedule-store: mixed addEntry + setConfig",
       parallelism: 20,
-      parallelismMax: 26, // same A..Z cycle constraint as the prior test
+      parallelismMax: 99, // same day-format constraint as the prior test
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ScheduleStore({ filePath, now: frozenNow() });

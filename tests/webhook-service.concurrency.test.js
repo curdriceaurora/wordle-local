@@ -110,15 +110,27 @@ async function buildService(extra = {}) {
 // but already-in-flight executeOnce promises are not awaited. Without
 // this, a subsequent teardown can race the file-write of the in-flight
 // markSuccess/markFailure commit and rmdir trips ENOTEMPTY.
+//
+// Throws if `activeCount` never reaches 0 before the deadline so a
+// leaked in-flight worker fails the test deterministically rather
+// than silently letting teardown race a still-writing commit (which
+// would surface as flaky ENOTEMPTY in CI). Copilot caught the silent-
+// timeout bug on PR #109 round 2.
 async function waitForWebhookDrain(svc, timeoutMs = 5000) {
   svc.shutdown?.();
   const deadline = Date.now() + timeoutMs;
   while (svc.activeCount > 0 && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5));
   }
-  // Also drain any pending deliveryStore commits. Reading getSnapshot
-  // (or commitQueue.then) doesn't block on disk fsync so a small final
-  // sleep covers the rename window.
+  if (svc.activeCount > 0) {
+    throw new Error(
+      `waitForWebhookDrain: ${svc.activeCount} executeOnce worker(s) still in-flight after ${timeoutMs}ms ` +
+        `— teardown would race the in-flight commit. Either bump the timeout or fix the leak.`
+    );
+  }
+  // Drain any pending deliveryStore commits. Reading getSnapshot (or
+  // commitQueue.then) doesn't block on disk fsync so a small final
+  // microtask flush covers the rename window.
   await new Promise((r) => setImmediate(r));
 }
 
