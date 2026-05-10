@@ -72,7 +72,7 @@ curl -X POST http://localhost:3000/api/word \
   -d '{"word":"CRANE","lang":"en"}'
 ```
 
-The same gate also covers the admin console at `/admin`.
+The same gate covers all `/api/admin/*` API routes that the admin console talks to. The `/admin` HTML page itself is served unauthenticated — the gate fires on the API calls the unlock form makes, so an unauthenticated visitor sees the unlock form but can't read or change anything until they enter the right key.
 
 Visit `http://localhost:3000/daily`. The first time a player plays the daily word, they pick a profile name; results show on the family leaderboard automatically — no account or password.
 
@@ -140,7 +140,7 @@ Daily word endpoints remain available:
 - `POST /api/word` — set daily word
   - Body: `{ "word": "CRANE", "lang": "en", "date": "YYYY-MM-DD" }`
   - If `date` is provided, it is interpreted in server local time.
-- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. To stop the scheduler from acting on `word.json`, delete `data/schedule.json` — the store recreates an empty default file but the reconciler then no-ops every tick (there's no separate "off" mode in v1). See [docs/scheduler.md](docs/scheduler.md) for the full contract.
+- The **scheduler** owns `data/word.json` at each local-midnight rollover when `data/schedule.json` exists. A manual `POST /api/word` overrides the schedule for the rest of the day; the next day the schedule wins again. To stop the scheduler from acting on `word.json`, delete `data/schedule.json` **and restart the server** — the in-memory schedule cache is loaded once at boot and is not invalidated by filesystem deletes, so the running process will keep reconciling against the cached schedule until restart. After restart, the store recreates an empty default file and the reconciler no-ops every tick (there's no separate "off" mode in v1). See [docs/scheduler.md](docs/scheduler.md) for the full contract.
 
 ## Languages & Dictionaries
 
