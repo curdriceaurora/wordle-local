@@ -168,6 +168,16 @@
   }
 
   async function loadLocale(locale) {
+    // Enforce the allowlist BEFORE the cache early-return: otherwise a
+    // preloaded but unsupported locale (e.g. one injected via the
+    // _setMessages test seam, or stuffed into loadedMessages by some
+    // future caller) could be activated despite not being in
+    // `availableLocales`. The contract is "only locales we ship can
+    // become current", and skipping the check on a cache hit would
+    // silently break it.
+    if (availableLocales.indexOf(locale) === -1) {
+      throw new Error("[i18n] unsupported locale: " + locale);
+    }
     if (loadedMessages[locale]) {
       currentLocale = locale;
       writeStoredLocale(locale);
@@ -177,9 +187,6 @@
       // the documented contract.
       updateDOM();
       return;
-    }
-    if (availableLocales.indexOf(locale) === -1) {
-      throw new Error("[i18n] unsupported locale: " + locale);
     }
     var json = await fetchLocale(locale);
     if (!isPlainObject(json)) {

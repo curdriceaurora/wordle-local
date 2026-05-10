@@ -166,7 +166,7 @@
     "workspaceTitle": "Provider Workspace",
     "workspaceUnlockedNote": "Session unlocked for this tab only.",
     "unlock": "Unlock",
-    "unlockHint": "Enter the admin key to manage providers, runtime settings, and stats.",
+    "unlockHint": "Enter the admin key to manage providers, runtime settings, and stats. The key is session-scoped and never saved in browser storage.",
     "lockSession": "Lock session",
     "tabs": {
       "providers": "Providers",

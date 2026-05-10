@@ -166,7 +166,7 @@
     "workspaceTitle": "Espacio de proveedores",
     "workspaceUnlockedNote": "Sesión desbloqueada solo en esta pestaña.",
     "unlock": "Desbloquear",
-    "unlockHint": "Introduce la clave de administración para gestionar proveedores, ajustes de ejecución y estadísticas.",
+    "unlockHint": "Introduce la clave de administración para gestionar proveedores, ajustes de ejecución y estadísticas. La clave es válida solo para esta sesión y no se guarda en el almacenamiento del navegador.",
     "lockSession": "Bloquear sesión",
     "tabs": {
       "providers": "Proveedores",

@@ -27,8 +27,9 @@ describe("parseAcceptLanguage", () => {
   });
 
   test("clamps q above 1 to 1", () => {
-    // q=2 over-saturates → clamped to 1 → es and en tie at q=1, so
-    // order resolves by header position (es comes second).
+    // q=2 over-saturates → parser clamps it to 1.0. The header is
+    // then en@0.5 vs es@1.0, so es wins on q-factor (no tie here —
+    // 1.0 strictly > 0.5).
     expect(parseAcceptLanguage("en;q=0.5,es;q=2")).toBe("es");
   });
 

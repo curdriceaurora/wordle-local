@@ -198,9 +198,15 @@ function showErrorPanel(message) {
   errorPanel.classList.remove("hidden");
   // The link-failure message is owned by JS (it's never in markup),
   // so localize it here at render time. Callers pass `null` for the
-  // generic case so this function can pick the localized default;
-  // only pass an explicit string when forwarding a server-supplied
-  // (already-localized) message such as result.message.
+  // generic case so this function can pick the localized default.
+  // The only callers passing an explicit string forward a
+  // server-supplied `data.error` from /api/puzzle (initPlay's
+  // result.message). Today /api/puzzle still returns English error
+  // strings — it isn't wired through translateForRequest yet, so the
+  // forwarded text is English regardless of UI locale. That gap is
+  // tracked separately; when that route is migrated, no change is
+  // needed here because the forwarded string will already be
+  // localized at the source.
   const fallbackMsg = "That link doesn't work. Let's make a new puzzle.";
   errorMessageEl.textContent = message
     || (window.i18n ? window.i18n.t("error.linkFailed") : fallbackMsg);
