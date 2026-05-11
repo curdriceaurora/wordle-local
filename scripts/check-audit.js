@@ -29,7 +29,15 @@
 // was triaged for. If the same GHSA later affects a different
 // package — say the dev-only ReDoS finds its way into a runtime
 // dependency — the gate still fails until the new occurrence is
-// triaged separately (Codex P2 on PR #139).
+// triaged separately (Codex P2 on PR #139, round 1).
+//
+// Optional `nodes` field on a baseline entry pins the dependency
+// path(s) the bless applies to. When `nodes` is set on a baseline
+// entry, the current audit's `nodes` for that advisory must be a
+// subset of the listed paths; any new node (e.g., the same
+// vulnerable package surfacing through a runtime dep chain instead
+// of the original dev-only chain) fails the gate until the new
+// occurrence is re-triaged. Codex P2 on PR #139, round 2.
 //
 // What this file does NOT do:
 //   - Override the npm-audit severity classification.
@@ -76,14 +84,25 @@ function loadBaseline(filePath = baselinePath) {
   }
   const acceptedList = Array.isArray(parsed.accepted) ? parsed.accepted : [];
   const acceptedKeys = new Set();
+  // acceptedByKey holds the per-entry detail (e.g., `nodes`) needed
+  // at diff time. The Set above is kept for cheap membership probes.
+  const acceptedByKey = new Map();
   for (const entry of acceptedList) {
     if (!entry || typeof entry !== "object") continue;
     const ghsa = canonicalGhsa(entry.ghsa);
     const pkg = typeof entry.package === "string" ? entry.package : null;
     if (!ghsa || !pkg) continue;
-    acceptedKeys.add(makeBaselineKey(ghsa, pkg));
+    const key = makeBaselineKey(ghsa, pkg);
+    acceptedKeys.add(key);
+    // `nodes` is optional. If present and an array, it scopes the
+    // bless to those dependency paths. If absent, the entry blesses
+    // the (GHSA, package) pair regardless of node — backward compat
+    // for older baseline entries authored before the nodes check
+    // landed.
+    const nodes = Array.isArray(entry.nodes) ? entry.nodes.filter((n) => typeof n === "string") : null;
+    acceptedByKey.set(key, { nodes });
   }
-  return { acceptedList, acceptedKeys };
+  return { acceptedList, acceptedKeys, acceptedByKey };
 }
 
 function runNpmAudit() {
@@ -170,6 +189,9 @@ function extractAdvisoriesFromAudit(auditJson) {
   const vulns = auditJson?.vulnerabilities || {};
   for (const [pkgName, info] of Object.entries(vulns)) {
     if (!info || !Array.isArray(info.via)) continue;
+    const nodes = Array.isArray(info.nodes)
+      ? info.nodes.filter((n) => typeof n === "string")
+      : [];
     for (const via of info.via) {
       if (typeof via !== "object" || !via) continue;
       const ghsa = canonicalGhsa(via.url);
@@ -178,7 +200,10 @@ function extractAdvisoriesFromAudit(auditJson) {
         ghsa,
         package: pkgName,
         severity: info.severity || "unknown",
-        title: via.title || "(no title)"
+        title: via.title || "(no title)",
+        // Carries the audit's `nodes` array so the gate can compare
+        // dependency paths against the baseline entry's pinned set.
+        nodes
       });
     }
   }
@@ -190,17 +215,38 @@ function extractAdvisoriesFromAudit(auditJson) {
 // `uniqueKeys` tracks every (GHSA, package) pair seen (drives the
 // OK-path total), `seenUnexpected` dedupes the failure list across
 // multiple via entries.
-function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys) {
+//
+// `acceptedByKey` (optional, Map) carries per-entry detail. When
+// present and the entry has `nodes` set, the current audit's nodes
+// for that advisory must be a subset of the baseline's nodes —
+// otherwise the advisory is flagged as unexpected with reason
+// "new dependency path". Backward-compatible: when
+// `acceptedByKey` is omitted or an entry has no `nodes`, the
+// (GHSA, package) match alone suffices.
+function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey) {
   const seenUnexpected = new Set();
   const uniqueKeys = new Set();
   const unexpected = [];
   for (const a of advisories) {
     const key = makeBaselineKey(a.ghsa, a.package);
     uniqueKeys.add(key);
-    if (acceptedKeys.has(key)) continue;
+    let accepted = acceptedKeys.has(key);
+    let reason = null;
+    if (accepted && acceptedByKey instanceof Map) {
+      const entry = acceptedByKey.get(key);
+      if (entry && Array.isArray(entry.nodes) && entry.nodes.length > 0) {
+        const allowed = new Set(entry.nodes);
+        const newNodes = Array.isArray(a.nodes) ? a.nodes.filter((n) => !allowed.has(n)) : [];
+        if (newNodes.length > 0) {
+          accepted = false;
+          reason = `new dependency path(s): ${newNodes.join(", ")}`;
+        }
+      }
+    }
+    if (accepted) continue;
     if (seenUnexpected.has(key)) continue;
     seenUnexpected.add(key);
-    unexpected.push(a);
+    unexpected.push(reason ? { ...a, reason } : a);
   }
   return { unexpected, uniqueCount: uniqueKeys.size };
 }
@@ -216,19 +262,24 @@ function formatRemediationHint() {
     '      "package": "<package>",',
     '      "severity": "<severity>",',
     '      "title": "<title>",',
+    '      "nodes": ["node_modules/<path>"],',
     '      "rationale": "<why this is acceptable risk>"',
     "    }",
     "",
     "[check-audit] Baseline matches by (ghsa, package) pair — the same GHSA",
-    "              against a different package requires its own entry."
+    "              against a different package requires its own entry.",
+    "[check-audit] When `nodes` is set, the current audit's `nodes` for this",
+    "              advisory must be a subset; a new dependency path (e.g.,",
+    "              dev-only → runtime escalation) fails the gate."
   ].join("\n");
 }
 
 function main() {
   let acceptedKeys;
+  let acceptedByKey;
   let auditRaw;
   try {
-    ({ acceptedKeys } = loadBaseline());
+    ({ acceptedKeys, acceptedByKey } = loadBaseline());
     auditRaw = runNpmAudit();
   } catch (err) {
     // Top-level handler — print a concise message instead of a
@@ -247,7 +298,11 @@ function main() {
   }
 
   const advisories = extractAdvisoriesFromAudit(auditJson);
-  const { unexpected, uniqueCount } = diffAdvisoriesAgainstBaseline(advisories, acceptedKeys);
+  const { unexpected, uniqueCount } = diffAdvisoriesAgainstBaseline(
+    advisories,
+    acceptedKeys,
+    acceptedByKey
+  );
 
   if (unexpected.length === 0) {
     if (uniqueCount === 0) {
@@ -265,6 +320,9 @@ function main() {
   for (const a of unexpected) {
     console.error(`  ${a.ghsa} × ${a.package}  [${a.severity}]`);
     console.error(`    ${a.title}`);
+    if (a.reason) {
+      console.error(`    reason: ${a.reason}`);
+    }
   }
   console.error(formatRemediationHint());
   process.exit(1);

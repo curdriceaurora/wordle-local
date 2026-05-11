@@ -128,10 +128,11 @@ describe("canonicalGhsa", () => {
 // ---------- extractAdvisoriesFromAudit ----------
 
 describe("extractAdvisoriesFromAudit", () => {
-  test("extracts (ghsa, package) pairs from object-via entries", () => {
+  test("extracts (ghsa, package) pairs from object-via entries including `nodes`", () => {
     const audit = fixtureAuditWith({
       lodash: {
         severity: "high",
+        nodes: ["node_modules/lodash"],
         via: [makeViaObject({ ghsa: "GHSA-aaaa-1111-cccc", title: "Prototype pollution" })]
       }
     });
@@ -141,9 +142,21 @@ describe("extractAdvisoriesFromAudit", () => {
         ghsa: "GHSA-AAAA-1111-CCCC",
         package: "lodash",
         severity: "high",
-        title: "Prototype pollution"
+        title: "Prototype pollution",
+        nodes: ["node_modules/lodash"]
       }
     ]);
+  });
+
+  test("defaults `nodes` to [] when missing from audit info", () => {
+    const audit = fixtureAuditWith({
+      lodash: {
+        severity: "high",
+        via: [makeViaObject({ ghsa: "GHSA-aaaa-1111-cccc" })]
+      }
+    });
+    const out = extractAdvisoriesFromAudit(audit);
+    expect(out[0].nodes).toEqual([]);
   });
 
   test("skips string/number via entries (transitive cross-refs)", () => {
@@ -257,16 +270,72 @@ describe("diffAdvisoriesAgainstBaseline", () => {
     expect(unexpected).toEqual([]);
     expect(uniqueCount).toBe(2);
   });
+
+  test("baseline with `nodes` blesses subset, rejects new node (Codex P2 round 2)", () => {
+    // Baseline pinned a dev-only path. A new node appearing (e.g.,
+    // brace-expansion escalates from dev-only to runtime) must
+    // fail the gate even though (GHSA, package) match.
+    const key = makeBaselineKey("GHSA-W", "brace-expansion");
+    const acceptedKeys = new Set([key]);
+    const acceptedByKey = new Map([
+      [key, { nodes: ["node_modules/brace-expansion"] }]
+    ]);
+    const subsetAdvisories = [
+      {
+        ghsa: "GHSA-W",
+        package: "brace-expansion",
+        severity: "moderate",
+        title: "",
+        nodes: ["node_modules/brace-expansion"]
+      }
+    ];
+    const newNodeAdvisories = [
+      {
+        ghsa: "GHSA-W",
+        package: "brace-expansion",
+        severity: "moderate",
+        title: "",
+        nodes: [
+          "node_modules/brace-expansion",
+          "node_modules/express/node_modules/brace-expansion"
+        ]
+      }
+    ];
+    expect(diffAdvisoriesAgainstBaseline(subsetAdvisories, acceptedKeys, acceptedByKey).unexpected).toEqual([]);
+    const failed = diffAdvisoriesAgainstBaseline(newNodeAdvisories, acceptedKeys, acceptedByKey);
+    expect(failed.unexpected).toHaveLength(1);
+    expect(failed.unexpected[0].reason).toMatch(/new dependency path/);
+    expect(failed.unexpected[0].reason).toMatch(/express/);
+  });
+
+  test("baseline entry without `nodes` blesses regardless of node (backward compat)", () => {
+    const key = makeBaselineKey("GHSA-V", "old-pkg");
+    const acceptedKeys = new Set([key]);
+    const acceptedByKey = new Map([[key, { nodes: null }]]);
+    const advisories = [
+      {
+        ghsa: "GHSA-V",
+        package: "old-pkg",
+        severity: "low",
+        title: "",
+        nodes: ["node_modules/anywhere", "node_modules/elsewhere"]
+      }
+    ];
+    expect(diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey).unexpected).toEqual([]);
+  });
 });
 
 // ---------- loadBaseline (file integration) ----------
 
 describe("loadBaseline", () => {
-  test("loads the repo's baseline file with the canonical keys", () => {
-    const { acceptedKeys } = loadBaseline();
-    // The shipped baseline lists 3 advisories. Check the set is
-    // non-empty and uses canonical (uppercase) keys.
-    expect(acceptedKeys.size).toBeGreaterThanOrEqual(1);
+  test("loads the repo's baseline file and returns canonical keys", () => {
+    // No non-empty assertion — if the dep tree is fully patched and
+    // the baseline legitimately becomes empty, this test should
+    // still pass. The shape is what matters: a Set of canonical
+    // GHSA|pkg keys.
+    const { acceptedKeys, acceptedByKey } = loadBaseline();
+    expect(acceptedKeys).toBeInstanceOf(Set);
+    expect(acceptedByKey).toBeInstanceOf(Map);
     for (const key of acceptedKeys) {
       expect(key).toMatch(/^GHSA-[A-Z0-9-]+\|.+/);
     }
@@ -284,8 +353,16 @@ describe("loadBaseline", () => {
 // diff + exit code + stderr/stdout). `npm` is shimmed via PATH so
 // the test is hermetic — no registry, no network, no dependence on
 // what advisories happen to be live today.
+//
+// The shim is a POSIX shell script (`#!/bin/sh`, `chmod +x`,
+// PATH-prepend with `:`), so the smoke is skipped on win32 — the
+// gate itself still works on Windows; only this offline smoke
+// pathway is platform-specific. Contributors on Windows still get
+// the 18 fixture-based unit tests above.
 
-describe("scripts/check-audit.js end-to-end (shimmed npm)", () => {
+const describeSmoke = process.platform === "win32" ? describe.skip : describe;
+
+describeSmoke("scripts/check-audit.js end-to-end (shimmed npm)", () => {
   test("exits 0 when shimmed audit matches the baseline", () => {
     const auditFixture = fixtureAuditWith({
       lodash: {

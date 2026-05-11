@@ -42,7 +42,7 @@ Renovate/Dependabot isn't currently wired up; manual quarterly refresh is suffic
 When CI surfaces a new advisory, you have two paths:
 
 - **Fix it.** `npm update <pkg>`, `npm audit fix`, or pin a different package. CI clears once the GHSA disappears from `npm audit --json`.
-- **Bless it.** Add a new entry to `.audit-baseline.json` with `ghsa`, `package`, `severity`, `title`, and a written `rationale` for why the risk is acceptable here (transitive-only, dev-only, not exposed to untrusted input, etc.). Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
+- **Bless it.** Add a new entry to `.audit-baseline.json` with `ghsa`, `package`, `severity`, `title`, `nodes` (the current dependency paths from `npm audit --json`'s `vulnerabilities.<pkg>.nodes`), and a written `rationale` for why the risk is acceptable here (transitive-only, dev-only, not exposed to untrusted input, etc.). The `nodes` field pins the dependency-path scope of the bless: if the same GHSA later appears on a new path (e.g., a runtime dep adopts it), the gate fails and re-triage is required. Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
 
 When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
 
