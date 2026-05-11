@@ -26,9 +26,14 @@
 //     observes the worst-case state. Cleanup is suite-end only.
 //   - A baseline GET on a fresh server instance still returns 200
 //     (post-matrix sanity check that the test infrastructure
-//     itself is healthy — NOT a process-level survival assertion;
-//     every fuzz test re-requires server.js via loadApp(), so
-//     each one runs against a fresh process anyway).
+//     itself is healthy — NOT a process-level survival assertion).
+//     `loadApp()` calls `jest.resetModules()` + re-requires
+//     server.js, which gives a fresh MODULE GRAPH in the same
+//     Jest worker process; it does NOT spawn a new OS process.
+//     Genuine process-wide side effects (e.g., a hypothetical
+//     fuzz that polluted Object.prototype) would persist across
+//     loadApp boundaries — that's why the post-matrix
+//     prototype-pollution sentinel still earns its keep.
 //
 // What we fuzz (each route gets cross-matrix coverage):
 //   - empty / null body
@@ -327,7 +332,16 @@ describe("admin route input fuzz: every route × every payload survives malforme
             /\/Users\/|\/home\/|\/private\/|\/tmp\/|node_modules/
           );
           expect(haystack).not.toMatch(/test-key/);
-          expect(haystack).not.toMatch(/at\s+[A-Za-z]+\s+\(.*:\d+:\d+\)/);
+          // V8 stack-frame patterns:
+          //   - `at funcName (path:line:col)`            — basic
+          //   - `at Layer.handle [as handle_request] (path:line:col)` — Express
+          //   - `at node:internal/process/...:line:col`  — Node internals
+          //   - `at async funcName (path:line:col)`       — async frames
+          // Match any line starting with `at ` followed by anything,
+          // ending in `:digits:digits)?`. Copilot caught the prior
+          // narrow regex missing `Layer.handle [as ...]` and
+          // `node:internal/...` on PR #136 round 5.
+          expect(haystack).not.toMatch(/\bat\s+\S+.*:\d+:\d+\)?/);
 
           // Contract (3): no pollution. We only assert at suite-end
           // (post-matrix sentinel below) rather than per-payload —
