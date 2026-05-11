@@ -169,7 +169,11 @@ const PROTO_INJECT_NESTED = JSON.parse(
 //     supertest's write/end path so Node doesn't re-encode it
 const PAYLOADS = [
   { name: "empty body", body: {} },
-  { name: "null body", body: null },
+  // superagent.send(null) actually sends NO body (it early-returns
+  // before serialization), so the prior `body: null` was a duplicate
+  // of "empty body". To exercise the literal JSON `null` path, send
+  // the string "null" as raw JSON. CodeRabbit caught this on PR #136.
+  { name: "literal JSON null", raw: true, body: "null" },
   { name: "depth-bomb (object, 500 levels)", body: depthBombObject(500) },
   { name: "depth-bomb (array, 500 levels)", body: depthBombArray(500) },
   { name: "__proto__ injection at top", body: PROTO_INJECT_TOP },
@@ -269,7 +273,7 @@ function objectPrototypeIsClean() {
 // ---------- The matrix ----------
 
 describe("admin route input fuzz: every route × every payload survives malformed input", () => {
-  for (const route of ROUTES_TO_FUZZE_NAME_GUARD(ROUTES_TO_FUZZ)) {
+  for (const route of requireRoutes(ROUTES_TO_FUZZ)) {
     describe(`${route.method.toUpperCase()} ${route.path} (${route.label})`, () => {
       for (const payload of PAYLOADS) {
         test(`payload: ${payload.name}`, async () => {
@@ -301,18 +305,37 @@ describe("admin route input fuzz: every route × every payload survives malforme
             typeof response.body === "string" ? response.body : JSON.stringify(response.body || {}),
             response.text || ""
           ].join("\n");
-          expect(haystack).not.toMatch(/\/Users\/|\/home\/|\/private\/|node_modules/);
+          // Include `/tmp/` (the Linux/CI tempdir) — CodeRabbit
+          // caught the prior pattern only covering macOS-style
+          // `/private/var/folders` + repo-style `/Users` and
+          // `/home` paths. On the GitHub Actions Linux runner,
+          // `os.tmpdir()` resolves to `/tmp`, so a path-style leak
+          // through there would have been missed.
+          expect(haystack).not.toMatch(
+            /\/Users\/|\/home\/|\/private\/|\/tmp\/|node_modules/
+          );
           expect(haystack).not.toMatch(/test-key/);
           expect(haystack).not.toMatch(/at\s+[A-Za-z]+\s+\(.*:\d+:\d+\)/);
 
-          // Contract (3): no pollution from THIS payload.
-          // Asserted here (in the loop) AND once at the very end
-          // so a payload-specific pollution gets attributed to
-          // its payload.
-          expect(objectPrototypeIsClean()).toBe(true);
+          // Contract (3): no pollution. We only assert at suite-end
+          // (post-matrix sentinel below) rather than per-payload —
+          // CodeRabbit caught that the per-payload check would
+          // cascade failures across every subsequent test once any
+          // single payload pollutes, making the polluter harder to
+          // identify in the test output. The single end-of-suite
+          // check still catches the worst-case outcome with cleaner
+          // diagnostics.
         });
       }
-      test("server survives the matrix: subsequent GET still works", async () => {
+      // The per-payload tests above each call loadApp() which
+      // jest.resetModules() + re-requires server.js, so each fuzz
+      // already exercises a fresh process-level server. The
+      // survival test ALSO uses a fresh app — which means it's
+      // really "fresh app handles a sane GET", not "the process
+      // survived the malformed inputs above" (CodeRabbit caught
+      // the doc-vs-test mismatch on PR #136). Renamed to reflect
+      // what it actually verifies: a clean post-fuzz baseline.
+      test("baseline GET on a fresh app returns 200 (post-matrix sanity)", async () => {
         const app = loadApp("test-key");
         const res = await supertest(app)
           .get("/api/admin/schedule")
@@ -325,7 +348,9 @@ describe("admin route input fuzz: every route × every payload survives malforme
 
 // Tiny guard that surfaces an obvious error if someone removes
 // ROUTES_TO_FUZZ entries without re-checking the matrix iteration.
-function ROUTES_TO_FUZZE_NAME_GUARD(routes) {
+// (Originally named ROUTES_TO_FUZZE_NAME_GUARD with a typo +
+// SCREAMING_SNAKE_CASE; CodeRabbit caught both on PR #136.)
+function requireRoutes(routes) {
   if (!Array.isArray(routes) || routes.length === 0) {
     throw new Error("ROUTES_TO_FUZZ must be a non-empty array");
   }
