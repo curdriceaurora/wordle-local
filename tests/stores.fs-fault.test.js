@@ -355,25 +355,19 @@ describe("push-subscription-store: fault-injection", () => {
 });
 
 describe("admin-jobs-store: fault-injection", () => {
-  test("ENOSPC (sync) during enqueue surfaces typed error; finding: in-memory state leaks", async () => {
-    // admin-jobs-store persists via `fs.writeFileSync` (not the async
-    // `fsp.writeFile` other stores use). The harness's sync-method
-    // support covers this — the fault fires on the SYNC writeFileSync
-    // call inside the store's #persist path.
+  test("ENOSPC (sync) during enqueue surfaces typed error; on-disk state preserved", async () => {
+    // admin-jobs-store persists via `fs.writeFileSync` (not the
+    // async `fsp.writeFile` other stores use). The harness's
+    // sync-method support covers this — the fault fires on the
+    // SYNC writeFileSync call inside the store's #persist path.
     //
-    // FINDING discovered by C3 — admin-jobs-store's `#enqueueWrite`
-    // lacks the snapshot-restore wrapper that `classes-store.js` has
-    // (lines 614-641). When `writeJsonAtomicSync` throws, the
-    // already-pushed in-memory job stays in `this.state.jobs` even
-    // though disk wasn't updated. Other stores either:
-    //   - Use a draft + assign-after-persist pattern (leaderboard).
-    //   - Wrap with clone-snapshot try/catch (classes).
+    // Pins the parts of the contract that hold TODAY:
+    //  - rejection surfaces the typed STORE_WRITE_FAILED error
+    //  - on-disk state is preserved (atomic-rename means the .tmp
+    //    write failed and the destination is untouched)
     //
-    // This test asserts the CURRENT behavior (jobs leak to in-memory)
-    // and a follow-up task is filed to apply the classes-store
-    // rollback pattern to admin-jobs-store. Once that lands, this
-    // test's last assertion will need to change from
-    // `toHaveLength(2)` back to `toHaveLength(1)`.
+    // The in-memory rollback assertion lives in the separate
+    // `test.failing` below — see that block for why.
     const { dir, filePath } = tempFilePath("admin-jobs.json");
     try {
       const store = new AdminJobsStore({ filePath, now: frozenNow() });
@@ -394,18 +388,56 @@ describe("admin-jobs-store: fault-injection", () => {
         fault.restore();
       }
 
-      // ON-DISK state preserved (the atomic-rename means the .tmp
-      // write failed, so the destination file still reflects the
-      // prior commit).
       const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
       expect(reloaded.jobs).toHaveLength(1);
       expect(reloaded.jobs[0].request.language).toBe("en");
+    } finally {
+      await cleanup(dir);
+    }
+  });
 
-      // IN-MEMORY state LEAKS — known issue, pending rollback fix.
-      // The 2nd job was already pushed to `this.state.jobs` before
-      // #persist failed; no snapshot-restore wrapper recovers it.
+  // FINDING discovered by C3 — admin-jobs-store's `#enqueueWrite`
+  // lacks the snapshot-restore wrapper that `classes-store.js`
+  // has. When `writeJsonAtomicSync` throws, the already-pushed
+  // in-memory job stays in `this.state.jobs` even though disk
+  // wasn't updated. A follow-up task is filed to apply the
+  // classes-store rollback pattern to admin-jobs-store.
+  //
+  // We use `test.failing` here to TRACK the bug: today this
+  // assertion fails (jobs.length === 2, not 1), which jest
+  // treats as the expected outcome. When the rollback fix lands,
+  // the assertion will pass, jest will fail this test for
+  // "unexpected passing", and CI will surface the test needs to
+  // be promoted to a plain `test()`. That ratchets the bug
+  // closed automatically. Codex caught the prior approach of
+  // asserting `toHaveLength(2)` directly on PR #135 — that would
+  // have masked the fix.
+  test.failing("[pending rollback fix] in-memory state preserved on persist failure", async () => {
+    const { dir, filePath } = tempFilePath("admin-jobs.json");
+    try {
+      const store = new AdminJobsStore({ filePath, now: frozenNow() });
+      await store.load();
+      await store.enqueueProviderImportJob({ provider: "test", language: "en" });
+
+      const fault = installFaultyFs({
+        writeFileSync: {
+          failOnce: { code: "ENOSPC", message: "disk full (synthetic)" }
+        }
+      });
+      try {
+        await expect(
+          store.enqueueProviderImportJob({ provider: "test", language: "es" })
+        ).rejects.toMatchObject({ code: "STORE_WRITE_FAILED" });
+      } finally {
+        fault.restore();
+      }
+
+      // EXPECTED post-rollback-fix: in-memory jobs.length === 1.
+      // Today this fails (length === 2 because the push happened
+      // before the throw). `test.failing` makes the failing
+      // assertion the "expected outcome" until the fix lands.
       const inMemory = await store.getSnapshot();
-      expect(inMemory.jobs).toHaveLength(2);
+      expect(inMemory.jobs).toHaveLength(1);
     } finally {
       await cleanup(dir);
     }
