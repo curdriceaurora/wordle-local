@@ -11,9 +11,9 @@ const { defineConfig } = require("@playwright/test");
 //   2. `.toggle` buttons had no `background-color`, exposing the
 //      webkit UA default #c0c0c0 and dropping contrast against
 //      `--muted` below WCAG AA — fixed in public/styles.css.
-// Plus a Playwright 1.49 → 1.60 upgrade resolved older webkit
-// anchor-click navigation bugs. Full suite is now 192/192 across
-// all 3 browsers.
+// Plus a Playwright upgrade (package.json range `^1.49.1` → `^1.60.0`;
+// lockfile pin 1.58.2 → 1.60.0) resolved older webkit anchor-click
+// navigation bugs. Full suite is now 192/192 across all 3 browsers.
 const ALL_BROWSERS = ["chromium", "firefox", "webkit"];
 const DEFAULT_BROWSERS = ["chromium", "firefox", "webkit"];
 const requestedBrowsers = process.env.PLAYWRIGHT_BROWSERS
