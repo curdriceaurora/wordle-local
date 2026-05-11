@@ -185,7 +185,7 @@ test("language selection updates minimum length", async ({ page }) => {
   await waitForLanguages(page);
   await page.selectOption("#langSelect", "en");
   await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
-  await expect(page.locator(".hint")).toContainText("3-12");
+  await expect(page.locator('[data-i18n="create.wordHint"]')).toContainText("3-12");
 });
 
 test("share link info modal opens and closes", async ({ page, browserName }) => {
@@ -203,7 +203,7 @@ test("share link info modal opens and closes", async ({ page, browserName }) => 
   await infoButton.click();
   await expect(modal).toHaveClass(/is-open/);
   await expect(modal).toHaveAttribute("aria-hidden", "false");
-  await expect(page.locator("#shareModalDesc")).toContainText("not secure");
+  await expect(page.locator("#shareModalDesc")).toContainText("puzzle word");
   await expect(closeButton).toBeVisible();
 
   await page.keyboard.press("Escape");

@@ -7,6 +7,7 @@ on:
       - "**/*.md"
   schedule:
     - cron: "0 9 * * *"
+  workflow_dispatch:
 
 # Explicit minimum-required permissions so this workflow's
 # `GITHUB_TOKEN` only carries the scopes the steps actually need
@@ -72,15 +73,15 @@ jobs:
         run: npm run test:provider:ui
 
       - name: Install Playwright Browsers
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: npx playwright install --with-deps
 
       - name: Run UI Tests
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: npm run test:ui
 
       - name: Upload UI Coverage Report
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ui-coverage
