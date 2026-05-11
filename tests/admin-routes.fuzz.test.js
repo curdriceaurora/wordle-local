@@ -276,8 +276,13 @@ describe("admin route input fuzz: every route × every payload survives malforme
 
           let response;
           if (payload.rawBytes) {
-            // Raw bytes — set the type and send the Buffer verbatim.
-            req.set("Content-Type", "application/octet-stream");
+            // Raw bytes — set Content-Type to application/json so
+            // express.json() actually attempts to parse them
+            // (Codex P2 caught on PR #136 round 3: an
+            // octet-stream Content-Type made the middleware skip
+            // parsing entirely, so the bytes never traversed the
+            // JSON-decode path we wanted to fuzz).
+            req.set("Content-Type", "application/json");
             response = await req.send(payload.rawBytes);
           } else if (payload.raw) {
             req.set("Content-Type", "application/json");
