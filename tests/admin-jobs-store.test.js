@@ -520,3 +520,52 @@ describe("admin-jobs-store: pruning", () => {
     expect(ids).not.toContain(succeededIds[1]);
   });
 });
+
+describe("admin-jobs-store: in-memory rollback on persist failure", () => {
+  // Pins the rollback contract introduced alongside the C3 fault-injection
+  // harness (PR #135): a write whose persist throws must not leave dirty
+  // in-memory state — the push of the new job and the prune pass that ran
+  // before the throw both need to be undone, so subsequent reads can't
+  // observe a job that never reached disk.
+  test("enqueueProviderImportJob: failed persist rolls back the pushed job", async () => {
+    const filePath = tempFilePath();
+    const store = new AdminJobsStore({ filePath, logger: silentLogger() });
+
+    const first = await store.enqueueProviderImportJob(buildRequest({ variant: "en-US" }));
+    expect((await store.getSnapshot()).jobs).toHaveLength(1);
+
+    // Fail the next renameSync — atomic-write's commit step. This forces
+    // writeJsonAtomicSync to throw STORE_WRITE_FAILED after the in-memory
+    // push has already happened, exercising the rollback path.
+    const renameSpy = jest.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      const err = new Error("simulated disk failure");
+      err.code = "EIO";
+      throw err;
+    });
+
+    await expect(
+      store.enqueueProviderImportJob(buildRequest({ variant: "en-GB" }))
+    ).rejects.toMatchObject({ code: "STORE_WRITE_FAILED" });
+
+    renameSpy.mockRestore();
+
+    // The rollback must have restored this.state. In-memory view shows
+    // only the first job; on-disk file is unchanged from the prior
+    // successful commit.
+    const inMemory = await store.getSnapshot();
+    expect(inMemory.jobs).toHaveLength(1);
+    expect(inMemory.jobs[0].id).toBe(first.id);
+
+    const onDisk = readState(filePath);
+    expect(onDisk.jobs).toHaveLength(1);
+    expect(onDisk.jobs[0].id).toBe(first.id);
+
+    // Sanity: the store is still usable — the next write lands cleanly.
+    const second = await store.enqueueProviderImportJob(buildRequest({ variant: "en-CA" }));
+    const afterRecovery = await store.getSnapshot();
+    expect(afterRecovery.jobs).toHaveLength(2);
+    expect(afterRecovery.jobs.map((j) => j.id)).toEqual(
+      expect.arrayContaining([first.id, second.id])
+    );
+  });
+});
