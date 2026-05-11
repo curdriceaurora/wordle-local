@@ -50,6 +50,7 @@
     "acorn": "^8.16.0",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.0",
+    "fast-check": "^3.23.2",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
     "istanbul-lib-coverage": "^3.2.2",
