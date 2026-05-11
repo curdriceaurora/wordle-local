@@ -229,6 +229,7 @@ function run() {
   checkProviderWorkflowCiGate(errors);
   checkProviderUpdateCheckSemantics(errors);
   checkManualUploadGuardrails(errors);
+  checkClientSideHtmlInjectionSurface(errors);
 
   if (errors.length > 0) {
     console.error("[nit:guardrails] Failed:");
@@ -239,6 +240,68 @@ function run() {
   }
 
   console.log("[nit:guardrails] OK: critical anti-regression guardrails are in place.");
+}
+
+// A1 / #114: keep client-side HTML-injection surface small. The
+// current admin shell uses `textContent =` and DOM-construction APIs
+// (createElement + appendChild) for every dynamic-content path, so
+// the XSS surface is already minimal. This guard flags any future
+// `innerHTML = <expression>` / `outerHTML = <expression>` /
+// `insertAdjacentHTML(...)` site in the watched files (which cover
+// `public/app.js`, `public/admin/app.js`, and the inline <script>
+// blocks in `public/admin/classroom-report.html`) where the
+// right-hand side isn't an empty-string literal.
+//
+// Policy: an entry in `auditedAllowlist` MAY contain interpolated
+// segments only if every non-constant segment is passed through
+// `window.escapeHtml` (loaded from `/js/escape-html.js`). New plain
+// dynamic HTML must route through `window.escapeHtml` AND add a
+// signature to the allowlist below. The signature is a substring
+// of the actual line content (not a file:line tuple) so unrelated
+// edits above the sink don't break this guard and a different
+// future sink can't silently steal an allowlisted line number.
+function checkClientSideHtmlInjectionSurface(errors) {
+  const watchedFiles = [
+    "public/app.js",
+    "public/admin/app.js",
+    // Inline <script> blocks inside this HTML file. The guard treats
+    // the whole file as JS for grep purposes — false positives on
+    // attribute-named "innerHTML" would have to start with a literal
+    // dot, which never happens in HTML attribute syntax.
+    "public/admin/classroom-report.html"
+  ];
+  // Substrings of audited sink lines. Each entry must uniquely match
+  // ONE current line in the watched files; the matched line must be a
+  // constant string literal (no `${}`, no identifier interpolation)
+  // OR every interpolated segment must be passed through
+  // `window.escapeHtml`. Update this list when you intentionally
+  // introduce or remove a sink.
+  const auditedAllowlist = [
+    // public/app.js: constant fallback row for empty leaderboard.
+    'row.innerHTML = \'<td class="leaderboard-empty"'
+  ];
+  // Match `.innerHTML =`, `.outerHTML =`, `.insertAdjacentHTML(`.
+  const sinkPattern = /\.(innerHTML|outerHTML)\s*=|\.insertAdjacentHTML\s*\(/;
+  // Empty-string literal (the dominant safe pattern: clear-and-rebuild
+  // before DOM construction). Permits "" or ''.
+  const emptyStringRhs = /\.(innerHTML|outerHTML)\s*=\s*['"]['"]\s*;?\s*$/;
+  for (const relPath of watchedFiles) {
+    const source = readFile(relPath);
+    const lines = source.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!sinkPattern.test(line)) continue;
+      if (emptyStringRhs.test(line.trim())) continue;
+      if (auditedAllowlist.some((sig) => line.includes(sig))) continue;
+      errors.push(
+        `${relPath}:${i + 1} introduces an HTML-injection sink — route ` +
+          "the value through `window.escapeHtml` (loaded from " +
+          "/js/escape-html.js) and add a substring signature for this " +
+          "line to the audited allowlist in scripts/nit-guardrails.js " +
+          "(A1 / #114)."
+      );
+    }
+  }
 }
 
 run();

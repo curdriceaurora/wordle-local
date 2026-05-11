@@ -50,6 +50,12 @@ When CI surfaces a new advisory, you have two paths:
 
 When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
 
+### Client-side HTML rendering
+
+The admin and player shells render all dynamic content via `node.textContent = value` (or DOM-construction APIs — `createElement` + `appendChild`). Bare `element.innerHTML = value` is prohibited when `value` is anything other than an empty-string literal.
+
+A guardrail in `scripts/nit-guardrails.js` flags new `innerHTML =`/`outerHTML =`/`insertAdjacentHTML(...)` sinks in `public/admin/app.js` and `public/app.js`. If a future feature genuinely needs HTML insertion (e.g., styled markup with embedded tags), route the value through `window.escapeHtml` (loaded from `/js/escape-html.js`, source at `public/js/escape-html.js`) AND add the call site to the audited allowlist in `nit-guardrails.js`. The Playwright `tests/ui/xss-lockin.spec.js` spec covers the helper and the `?word=` URL-param path; extend it whenever you add a new user-controlled render path.
+
 ## License and Rights
 
 By submitting a contribution, you agree to dedicate your work to the public domain under CC0‑1.0. You represent that you have the right to do so and that your contribution does not infringe on third‑party rights.

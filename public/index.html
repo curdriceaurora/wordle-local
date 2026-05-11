@@ -44,6 +44,11 @@
     </script>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/js/i18n.js" defer></script>
+    <!-- Defensive escape-html helper (A1 / #114). Loaded uniformly
+         so window.escapeHtml exists for any future dynamic-HTML
+         site. Today's player shell uses textContent + DOM APIs and
+         doesn't reference it. -->
+    <script src="/js/escape-html.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main" data-i18n="common.skipToMain">Skip to main content</a>
