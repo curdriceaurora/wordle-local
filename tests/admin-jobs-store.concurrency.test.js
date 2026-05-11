@@ -154,7 +154,13 @@ describe("admin-jobs-store: claimNextQueuedJob is exclusive", () => {
               throw new Error(`claimed job ${job.id} has unexpected status ${job.status}`);
             }
           }
-          // (5) Store snapshot: SEEDED_JOBS running, 0 queued.
+          // (5) Store snapshot: `expectedClaimed` running, the rest
+          // (SEEDED_JOBS - expectedClaimed) still queued. When
+          // parallelism >= SEEDED_JOBS this collapses to "all
+          // running, 0 queued"; when env CONCURRENCY_PARALLELISM
+          // is set below SEEDED_JOBS the unclaimed remainder
+          // stays queued (Codex P2 + Copilot caught the prior
+          // hardcoded `queued.length === 0` on PR #134 round 2).
           const snap = await store.getSnapshot();
           const running = snap.jobs.filter((j) => j.status === "running");
           const queued = snap.jobs.filter((j) => j.status === "queued");
@@ -163,9 +169,10 @@ describe("admin-jobs-store: claimNextQueuedJob is exclusive", () => {
               `expected ${expectedClaimed} running jobs in store; got ${running.length}`
             );
           }
-          if (queued.length !== 0) {
+          const expectedQueued = SEEDED_JOBS - expectedClaimed;
+          if (queued.length !== expectedQueued) {
             throw new Error(
-              `expected 0 queued jobs after exhausting via parallel claims; got ${queued.length}`
+              `expected ${expectedQueued} queued jobs after parallel claims; got ${queued.length}`
             );
           }
         }
