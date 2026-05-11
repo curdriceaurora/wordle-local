@@ -2979,7 +2979,20 @@ app.use(helmet({
       objectSrc: ["'none'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
       scriptSrcAttr: ["'none'"],
-      styleSrc: ["'self'", "https:", "'unsafe-inline'"]
+      styleSrc: ["'self'", "https:", "'unsafe-inline'"],
+      // Explicitly disable Helmet's default `upgrade-insecure-requests`.
+      // The directive instructs the browser to rewrite every HTTP
+      // subresource URL to HTTPS before fetching. Chromium and
+      // Firefox exempt loopback (`localhost`, `127.0.0.1`) from this
+      // upgrade per the W3C "Secure Contexts" spec, but webkit does
+      // NOT — it tries https://localhost:3000/<asset> and fails the
+      // TLS handshake, killing every subresource on an HTTP-only
+      // local-hosted deployment. This broke 17 mobile.spec.js tests
+      // on webkit and led to webkit being parked from the default
+      // matrix in #141. If you run this app behind HTTPS termination,
+      // either add `upgrade-insecure-requests` at the reverse-proxy
+      // layer or re-enable here under a NODE_ENV gate.
+      upgradeInsecureRequests: null
     }
   }
 }));

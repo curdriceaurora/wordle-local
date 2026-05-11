@@ -188,6 +188,14 @@ p {
   gap: 0.4rem;
   font-size: 0.9rem;
   color: var(--muted);
+  /* Explicit transparent background — without this, webkit/Safari
+     renders <button class="toggle"> with the UA default #c0c0c0
+     background, which drops text contrast against `--muted` below
+     WCAG AA 4.5:1 and fails axe a11y on webkit. Chromium and
+     Firefox auto-strip button defaults, masking the bug. Caught
+     in #142. */
+  background: transparent;
+  border: none;
   padding: 0.2rem 0.4rem;
   border-radius: 999px;
   cursor: pointer;

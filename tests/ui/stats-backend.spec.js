@@ -1,5 +1,15 @@
 const { test, expect } = require("./fixtures");
 
+// These specs orchestrate 2-3 isolated browser contexts in parallel
+// (`createIsolatedPage` × multiple, plus the default `page` fixture)
+// to exercise concurrent-client server semantics. On CI with a single
+// Playwright worker, the multi-context choreography can run up
+// against the default 30s test timeout — especially the firefox
+// project, which lacks chromium's tab-process batching optimizations.
+// Bump to 120s so the suite doesn't intermittently flake on the
+// concurrent-clients tests (caught while validating #142 / PR #143).
+test.describe.configure({ timeout: 120000 });
+
 const gotoOptions = { waitUntil: "commit" };
 const DAILY_WORD_CODE = "yfrqp"; // CRANE
 const DAILY_LANG = "en";
@@ -47,7 +57,22 @@ function dailyLink(day) {
 
 async function openDaily(page, day, options = {}) {
   const expectProfilePanel = options.expectProfilePanel !== false;
-  await page.goto(dailyLink(day), gotoOptions);
+  const target = dailyLink(day);
+  const targetUrl = new URL(target, "http://localhost:3000").toString();
+  // If the page is already on the target URL, navigate via page.reload()
+  // instead of page.goto(sameUrl). On CI firefox, same-URL goto
+  // sometimes elides the reload and waitForSelector hangs against
+  // stale DOM (caught in #142 / PR #143). Otherwise navigate normally.
+  if (page.url() === targetUrl) {
+    await page.reload(gotoOptions);
+  } else {
+    await page.goto(target, gotoOptions);
+  }
+  // After goto/reload with waitUntil: "commit", JS hasn't run yet.
+  // The `.hidden` class is removed by app.js once URL params resolve.
+  // Wait for `domcontentloaded` so bootstrap has had a chance to run
+  // before we probe for `#playPanel`.
+  await page.waitForLoadState("domcontentloaded");
   await page.waitForSelector("#playPanel:not(.hidden)");
   if (expectProfilePanel) {
     await expect(page.locator("#profilePanel")).toBeVisible();
