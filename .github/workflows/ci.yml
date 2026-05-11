@@ -8,10 +8,10 @@ on:
   schedule:
     - cron: "0 9 * * *"
 
-# Default-deny — explicit read-only contents is all the test job
-# needs. Without this, jobs default to write on most scopes (the
-# repo's old default before GitHub introduced per-workflow
-# permissions).
+# Explicit minimum-required permissions so this workflow's
+# `GITHUB_TOKEN` only carries read-on-contents — regardless of
+# the repo/org-level default. Stays correct if a future admin
+# change widens the org-default token permissions.
 permissions:
   contents: read
 
