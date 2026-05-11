@@ -442,10 +442,31 @@ const pushSubscriptionStore = fc
 //   - name: 1-64 chars (className $def)
 //   - memberProfileIds: array of profileIds (NOT nested profile objects;
 //     the prior version had the shape wrong — Copilot caught on PR #133)
+//
+// Additionally `lib/classes-store.js#normalizeClassName` rejects any
+// class name that's whitespace-only or contains a control character
+// (code < 0x20 or 0x7f DEL). A class with a rejected name is silently
+// pruned by `normalizeClassesState`. If the arbitrary generated such
+// names, idempotence + schema-validity would still pass (drop-and-drop-
+// again is idempotent) but the test wouldn't actually exercise class-
+// record normalization on retained entries. Codex P2 caught this on
+// PR #133 round 2 — we now build names from printable, trim-safe chars.
+const PRINTABLE_NON_SPACE = [
+  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
+];
+const PRINTABLE_WITH_SPACE = [...PRINTABLE_NON_SPACE, " "];
+const className = fc
+  .tuple(
+    fc.constantFrom(...PRINTABLE_NON_SPACE),
+    stringFromPool(PRINTABLE_WITH_SPACE, 0, 62),
+    fc.constantFrom(...PRINTABLE_NON_SPACE)
+  )
+  .map(([first, middle, last]) => `${first}${middle}${last}`);
+
 const classEntry = fc.record(
   {
     id: classId,
-    name: fc.string({ minLength: 1, maxLength: 64 }),
+    name: className,
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp,
     memberProfileIds: fc
@@ -489,8 +510,11 @@ const classesState = fc
 //   - name pattern `^[A-Za-z][A-Za-z '\\-]*$`, max 24 chars
 //   - resultsByProfile is a map of profileId -> { dateKey -> result }
 //
-// Keep resultsByProfile empty here to bound the generator; per-result
-// shrinking is a follow-up.
+// Each per-date result entry must satisfy the schema's allOf
+// conditional: when `won === true` then `attempts: integer >= 1`;
+// when `won === false` then `attempts: null`. Copilot PR #133 r2
+// asked us to actually exercise this branch rather than always
+// shipping `resultsByProfile: {}`.
 const leaderboardProfile = fc.record(
   {
     id: profileId,
@@ -501,31 +525,74 @@ const leaderboardProfile = fc.record(
   { requiredKeys: ["id", "name", "createdAt", "updatedAt"] }
 );
 
+const leaderboardResultEntry = fc.boolean().chain((won) =>
+  fc.record(
+    {
+      date: isoDate,
+      won: fc.constant(won),
+      attempts: won ? fc.integer({ min: 1, max: 12 }) : fc.constant(null),
+      maxGuesses: fc.integer({ min: 1, max: 12 }),
+      submissionCount: fc.integer({ min: 1, max: 50 }),
+      updatedAt: isoTimestamp
+    },
+    {
+      requiredKeys: [
+        "date",
+        "won",
+        "attempts",
+        "maxGuesses",
+        "submissionCount",
+        "updatedAt"
+      ]
+    }
+  )
+);
+
 const leaderboardState = fc
   .record(
     {
       version: fc.constant(1),
       updatedAt: isoTimestamp,
       profiles: fc.array(leaderboardProfile, { minLength: 0, maxLength: 3 }),
+      // Populated by the .map below from the retained profile ids;
+      // a fc.constant({}) placeholder keeps the record shape stable.
       resultsByProfile: fc.constant({})
     },
     { requiredKeys: ["version", "updatedAt", "profiles", "resultsByProfile"] }
   )
-  .map((s) => {
+  .chain((s) => {
+    // Dedup profiles by id first so the resultsByProfile map keys
+    // match exactly one profile each.
     const seen = new Set();
-    s.profiles = s.profiles.filter((p) => {
+    const profiles = s.profiles.filter((p) => {
       if (seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
     });
-    // Build resultsByProfile keyed by retained profile ids (empty map
-    // per profile for now — see follow-up note above).
-    const map = {};
-    for (const p of s.profiles) {
-      map[p.id] = {};
+    // For each retained profile, generate 0-3 result entries keyed
+    // by their date string. Use fc.array → reduce to map so we
+    // pull a deterministic generator chain per profile.
+    if (profiles.length === 0) {
+      return fc.constant({ ...s, profiles, resultsByProfile: {} });
     }
-    s.resultsByProfile = map;
-    return s;
+    return fc
+      .tuple(
+        ...profiles.map(() => fc.array(leaderboardResultEntry, { minLength: 0, maxLength: 3 }))
+      )
+      .map((entriesPerProfile) => {
+        const resultsByProfile = {};
+        profiles.forEach((p, i) => {
+          const seenDates = new Set();
+          const dailyMap = {};
+          for (const entry of entriesPerProfile[i]) {
+            if (seenDates.has(entry.date)) continue;
+            seenDates.add(entry.date);
+            dailyMap[entry.date] = entry;
+          }
+          resultsByProfile[p.id] = dailyMap;
+        });
+        return { ...s, profiles, resultsByProfile };
+      });
   });
 
 module.exports = {

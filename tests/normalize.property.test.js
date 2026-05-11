@@ -17,8 +17,11 @@
 // Filed as #127 (Epic C: Test Coverage & Fault Injection).
 // See `tests/helpers/arbitraries.js` for input generators.
 //
-// fast-check defaults: 100 runs per property × 2 properties × N stores
-// = ~1600 runs/test-run. Total runtime budget < 5s in practice.
+// Configured: `{ numRuns: 50 }` per property × 2 properties × 8 stores
+// = 800 normalize invocations / test run. Runtime < 1s in practice.
+// 50 was chosen as a balance between coverage and run cost; raise via
+// CONCURRENCY_REPEAT-style env-tuning if a follow-up wants more
+// thorough sampling.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -32,8 +35,12 @@ const arbitraries = require("./helpers/arbitraries");
 const REPO_ROOT = path.resolve(__dirname, "..");
 
 // Shared Ajv instance. addFormats supplies date-time / uri / etc.
-// every schema in this repo expects.
-const ajv = new Ajv2020({ strict: false, allErrors: true });
+// every schema in this repo expects. `strict: true` mirrors what
+// `scripts/validate-schemas.js` enforces under `npm run schema:check`
+// — using a different strictness here would let the property tests
+// validate a slightly different interpretation of the schema than
+// the repo's schema gate (Copilot caught the divergence on PR #133).
+const ajv = new Ajv2020({ strict: true, allErrors: true });
 addFormats(ajv);
 
 function loadSchema(relativePath) {
