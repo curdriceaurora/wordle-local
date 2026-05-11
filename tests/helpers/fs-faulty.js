@@ -1,14 +1,19 @@
 "use strict";
 
-// Fault-injection harness for `node:fs/promises` (#129 — Epic C: Test
-// Coverage & Fault Injection).
+// Fault-injection harness for `node:fs/promises` and sync `node:fs`
+// (#129 — Epic C: Test Coverage & Fault Injection).
 //
-// The stores in `lib/` import `fs/promises` directly and don't accept
-// an injectable fs option. To test their behavior under filesystem
-// failures (ENOSPC, EACCES, partial reads, slow disk) without
-// refactoring every store, this helper installs jest spies on the
-// module-level fsp methods. The spies live for the duration of one
-// scenario and are torn down by the returned `restore()`.
+// The stores in `lib/` import `fs`/`fs/promises` directly and don't
+// accept an injectable fs option. To test their behavior under
+// filesystem failures (ENOSPC, EACCES, partial reads, slow disk)
+// without refactoring every store, this helper monkey-patches the
+// module-level methods on the cached node:fs and node:fs/promises
+// exports — replacing each target fn with a closure that consults
+// the fault config, then delegating to the saved original. The
+// patches live for the duration of one scenario and are torn down
+// by the returned `restore()`. (Originally drafted as "jest spies"
+// but we use direct assignment for simpler restore semantics —
+// Copilot caught the doc-vs-code mismatch on PR #135.)
 //
 // Usage:
 //   const fsp = require("node:fs/promises");
@@ -77,6 +82,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// `RegExp.prototype.test` advances `lastIndex` when the regex carries
+// the `g` or `y` flag — calling it twice on the same regex with the
+// same input can yield different answers (Copilot caught the
+// statefulness on PR #135). Reset lastIndex defensively before each
+// check so config regexes with sticky/global flags don't make the
+// harness behave inconsistently across calls.
+function matchesPath(regex, target) {
+  if (regex.global || regex.sticky) {
+    regex.lastIndex = 0;
+  }
+  return regex.test(target);
+}
+
 function buildAsyncSpyImpl(originalFn, owner, faultConfig) {
   // Closure-local state so each install gets its own "failOnce" gate.
   let onceFired = false;
@@ -86,7 +104,7 @@ function buildAsyncSpyImpl(originalFn, owner, faultConfig) {
     }
     if (faultConfig.failIfPath) {
       const target = String(args[0] || "");
-      if (faultConfig.failIfPath.match.test(target)) {
+      if (matchesPath(faultConfig.failIfPath.match, target)) {
         throw makeError(faultConfig.failIfPath.error);
       }
     }
@@ -108,7 +126,7 @@ function buildSyncSpyImpl(originalFn, owner, faultConfig) {
   return function spyImpl(...args) {
     if (faultConfig.failIfPath) {
       const target = String(args[0] || "");
-      if (faultConfig.failIfPath.match.test(target)) {
+      if (matchesPath(faultConfig.failIfPath.match, target)) {
         throw makeError(faultConfig.failIfPath.error);
       }
     }
@@ -124,6 +142,29 @@ function buildSyncSpyImpl(originalFn, owner, faultConfig) {
 }
 
 function installFaultyFs(faults) {
+  // Reject obviously bad input loudly rather than letting a typo'd
+  // call (`installFaultyFs()` with no args, or with `null`) fail
+  // deep inside the property loop with a confusing TypeError —
+  // Copilot caught this on PR #135.
+  if (faults === null || typeof faults !== "object") {
+    throw new TypeError(
+      `[fs-faulty] installFaultyFs(faults): expected an object, got ${
+        faults === null ? "null" : typeof faults
+      }`
+    );
+  }
+  // Warn on unknown keys so a typo like `writefile` (lowercase 'f')
+  // doesn't silently no-op — CodeRabbit caught this on PR #135.
+  const allKnown = new Set([...SUPPORTED_METHODS, ...SUPPORTED_SYNC_METHODS]);
+  for (const key of Object.keys(faults)) {
+    if (!allKnown.has(key)) {
+      throw new Error(
+        `[fs-faulty] unknown method '${key}' in fault config. Supported: ${
+          [...allKnown].join(", ")
+        }`
+      );
+    }
+  }
   const restores = [];
   // Async fsp methods.
   for (const method of SUPPORTED_METHODS) {

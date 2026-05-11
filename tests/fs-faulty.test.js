@@ -134,6 +134,50 @@ describe("fs-faulty: install/restore semantics", () => {
     }
   });
 
+  test("rejects null/undefined/non-object input loudly", () => {
+    expect(() => installFaultyFs(null)).toThrow(/expected an object, got null/);
+    expect(() => installFaultyFs(undefined)).toThrow(/expected an object, got undefined/);
+    expect(() => installFaultyFs("oops")).toThrow(/expected an object, got string/);
+  });
+
+  test("rejects unknown method names in the fault config", () => {
+    // Typo'd method name would otherwise silently no-op — Codex/
+    // CodeRabbit asked for explicit validation on PR #135.
+    expect(() => installFaultyFs({ writefile: { failAll: { code: "X" } } }))
+      .toThrow(/unknown method 'writefile'/);
+  });
+
+  test("failIfPath with /g flag stays consistent across calls (no lastIndex drift)", async () => {
+    const { dir } = tempPath();
+    const blockedPath = path.join(dir, "blocked.txt");
+    try {
+      // A `/g`-flagged regex's `.test()` is stateful unless lastIndex
+      // is reset between calls. The harness defensively resets so
+      // multiple operations against the same path consistently
+      // match — without the guard, every other call would unexpectedly
+      // succeed because lastIndex would have rolled past the match.
+      const fault = installFaultyFs({
+        writeFile: {
+          failIfPath: {
+            match: /blocked\.txt$/g,
+            error: { code: "EACCES" }
+          }
+        }
+      });
+      try {
+        for (let i = 0; i < 5; i += 1) {
+          await expect(fsp.writeFile(blockedPath, "x")).rejects.toMatchObject({
+            code: "EACCES"
+          });
+        }
+      } finally {
+        fault.restore();
+      }
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("real Error objects pass through unchanged", async () => {
     const { dir, filePath } = tempPath();
     try {

@@ -73,10 +73,14 @@ describe("schedule-store: fault-injection", () => {
         }
       });
       try {
-        // The store throws the underlying error (it doesn't wrap
-        // every writeFile failure into a ScheduleStoreError) — we
-        // assert the original code surfaces so observability stays
-        // intact.
+        // ScheduleStore's `writeJsonAtomic` catches fs-level errors
+        // and rethrows as a `ScheduleStoreError` with code
+        // `STORE_WRITE_FAILED` (preserving the original under
+        // `.cause`). Callers branch on the typed code; the raw
+        // ENOSPC stays available via `.cause.code` if observability
+        // needs it. (Copilot + CodeRabbit caught the prior comment
+        // that incorrectly claimed the underlying error surfaced
+        // directly — PR #135.)
         await expect(
           store.addEntry({ date: "2026-05-09", word: "BETAS", lang: "en" })
         ).rejects.toMatchObject({ code: "STORE_WRITE_FAILED" });
