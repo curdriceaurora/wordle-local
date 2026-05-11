@@ -45,10 +45,12 @@ describe("escapeHtml", () => {
     );
   });
 
-  test("idempotent on already-escaped content (re-escaping & is the only side effect)", () => {
-    // This is the documented gotcha: don't escape-then-escape. The
-    // helper is for the FINAL HTML serialization step; intermediate
-    // string-handling code should stay raw.
+  test("double-escaping is destructive — call escapeHtml exactly once at the HTML serialization boundary", () => {
+    // Documented gotcha: this helper is NOT idempotent. Re-escaping
+    // already-escaped content turns `&lt;` into `&amp;lt;`, which
+    // renders the literal text `&lt;` in the browser instead of `<`.
+    // The helper is for the FINAL HTML serialization step;
+    // intermediate string-handling code must stay raw.
     const once = escapeHtml("<");
     const twice = escapeHtml(once);
     expect(once).toBe("&lt;");
