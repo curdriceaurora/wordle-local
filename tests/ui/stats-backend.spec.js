@@ -1,5 +1,15 @@
 const { test, expect } = require("./fixtures");
 
+// These specs orchestrate 2-3 isolated browser contexts in parallel
+// (`createIsolatedPage` × multiple, plus the default `page` fixture)
+// to exercise concurrent-client server semantics. On CI with a single
+// Playwright worker, the multi-context choreography can run up
+// against the default 30s test timeout — especially the firefox
+// project, which lacks chromium's tab-process batching optimizations.
+// Bump to 60s so the suite doesn't intermittently flake on the
+// concurrent-clients tests (caught while validating #142 / PR #143).
+test.describe.configure({ timeout: 60000 });
+
 const gotoOptions = { waitUntil: "commit" };
 const DAILY_WORD_CODE = "yfrqp"; // CRANE
 const DAILY_LANG = "en";
