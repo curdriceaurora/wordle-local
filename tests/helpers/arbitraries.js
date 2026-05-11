@@ -525,28 +525,52 @@ const leaderboardProfile = fc.record(
   { requiredKeys: ["id", "name", "createdAt", "updatedAt"] }
 );
 
-const leaderboardResultEntry = fc.boolean().chain((won) =>
-  fc.record(
-    {
-      date: isoDate,
-      won: fc.constant(won),
-      attempts: won ? fc.integer({ min: 1, max: 12 }) : fc.constant(null),
-      maxGuesses: fc.integer({ min: 1, max: 12 }),
-      submissionCount: fc.integer({ min: 1, max: 50 }),
-      updatedAt: isoTimestamp
-    },
-    {
-      requiredKeys: [
-        "date",
-        "won",
-        "attempts",
-        "maxGuesses",
-        "submissionCount",
-        "updatedAt"
-      ]
-    }
-  )
+// Leaderboard result key format from lib/leaderboard-store.js:
+//   DAILY_KEY_PATTERN = /^(\d{4}-\d{2}-\d{2})\|([^|]+)\|([^|]+)$/
+// The key has 3 segments: date, lang, code. `code` is opaque to the
+// store (a non-pipe string identifying the result source — daily vs
+// challenge etc.). `normalizeResultEntry` requires the entry's
+// `date` to equal the key's date part — Codex P2 caught the
+// bare-date-key bug on PR #133 round 3.
+const leaderboardResultLang = fc.constantFrom("en", "es", "fr", "de", "en-US");
+const leaderboardResultCode = stringFromPool(
+  [..."abcdefghijklmnopqrstuvwxyz0123456789-"],
+  3,
+  16
 );
+
+const leaderboardResultEntry = fc
+  .boolean()
+  .chain((won) =>
+    fc.record(
+      {
+        date: isoDate,
+        won: fc.constant(won),
+        attempts: won ? fc.integer({ min: 1, max: 12 }) : fc.constant(null),
+        maxGuesses: fc.integer({ min: 1, max: 12 }),
+        submissionCount: fc.integer({ min: 1, max: 50 }),
+        updatedAt: isoTimestamp
+      },
+      {
+        requiredKeys: [
+          "date",
+          "won",
+          "attempts",
+          "maxGuesses",
+          "submissionCount",
+          "updatedAt"
+        ]
+      }
+    )
+  )
+  .chain((entry) =>
+    fc
+      .tuple(leaderboardResultLang, leaderboardResultCode)
+      .map(([lang, code]) => ({
+        entry,
+        dailyKey: `${entry.date}|${lang}|${code}`
+      }))
+  );
 
 const leaderboardState = fc
   .record(
@@ -582,12 +606,12 @@ const leaderboardState = fc
       .map((entriesPerProfile) => {
         const resultsByProfile = {};
         profiles.forEach((p, i) => {
-          const seenDates = new Set();
+          const seenKeys = new Set();
           const dailyMap = {};
-          for (const entry of entriesPerProfile[i]) {
-            if (seenDates.has(entry.date)) continue;
-            seenDates.add(entry.date);
-            dailyMap[entry.date] = entry;
+          for (const { entry, dailyKey } of entriesPerProfile[i]) {
+            if (seenKeys.has(dailyKey)) continue;
+            seenKeys.add(dailyKey);
+            dailyMap[dailyKey] = entry;
           }
           resultsByProfile[p.id] = dailyMap;
         });
