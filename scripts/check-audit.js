@@ -77,6 +77,14 @@ const baselinePath =
 // Canonicalize a GHSA id (uppercase + trim). Some sources use
 // lowercase, some uppercase; the baseline normalizes both sides so
 // comparison stays stable. Copilot caught this on PR #139.
+//
+// The regex is intentionally permissive — GitHub's canonical format
+// is `GHSA(-[23456789cfghjmpqrvwx]{4}){3}` but we don't enforce it
+// here. A typo in `.audit-baseline.json` like `GHSA-foo-bar-baz`
+// just becomes a dead baseline entry (it matches no current
+// advisory), while the actual advisory it tried to bless surfaces
+// as an "unexpected" gate failure. The fail-noisy behavior makes
+// strict validation redundant; loose matching keeps tests readable.
 function canonicalGhsa(raw) {
   if (typeof raw !== "string") return null;
   const m = raw.trim().match(/GHSA-[a-z0-9-]+/i);
@@ -212,7 +220,14 @@ function parseAuditOutput(raw) {
     throw new Error("[check-audit] npm audit output is not a JSON object");
   }
   if (parsed.error) {
-    const msg = parsed.error?.summary || parsed.error?.detail || JSON.stringify(parsed.error);
+    // npm can return either a structured envelope ({summary, detail})
+    // or a bare string ({error: "ENETUNREACH"}). Short-circuit the
+    // string case so the rendered message doesn't carry extra
+    // JSON-quoting (CodeRabbit nit on PR #139 round 4).
+    const msg =
+      typeof parsed.error === "string"
+        ? parsed.error
+        : parsed.error?.summary || parsed.error?.detail || JSON.stringify(parsed.error);
     throw new Error(`[check-audit] npm audit reported an error: ${msg}`);
   }
   // Real audit reports include a `vulnerabilities` map (even when
@@ -283,6 +298,17 @@ function extractAdvisoriesFromAudit(auditJson) {
 // is considered "prod" scope if its (ghsa, package) pair appears in
 // the prod-only audit (i.e., npm audit --omit=dev still reports it).
 // Otherwise it's "dev" scope — only reached through dev dependencies.
+//
+// Invariant: `prodAdvisories ⊆ fullAdvisories`. `npm audit --json`
+// (the full run) returns the union of dev + prod vulnerabilities;
+// `npm audit --json --omit=dev` returns a strict subset. We populate
+// `scopeByKey` only from the full audit because the diff loop
+// downstream iterates full advisories. A prod-only-not-in-full entry
+// would indicate a bug in npm-audit (e.g., a cache race between the
+// two execFileSync calls) and is not defensively handled here —
+// the gate would simply fail to attach a scope to that advisory,
+// which falls through to the (GHSA, package) match and is still
+// safer than silently blessing.
 function computeScopeMap(fullAdvisories, prodAdvisories) {
   const prodKeys = new Set();
   for (const a of prodAdvisories) {
