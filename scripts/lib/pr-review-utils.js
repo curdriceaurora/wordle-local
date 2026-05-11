@@ -28,7 +28,17 @@ function buildReviewThreads(comments) {
 function listActionableThreads(threads, viewerLogin) {
   const actionable = [];
 
-  threads.forEach(({ root, replies }) => {
+  threads.forEach(({ root, replies, isResolved }) => {
+    // Skip threads the reviewer (or owner) has explicitly marked
+    // resolved on the GitHub UI. The REST `/pulls/N/comments`
+    // endpoint that `buildReviewThreads` consumes does not surface
+    // this flag, so older callers won't set it — pr-nits-report.js
+    // populates it from the GraphQL `reviewThreads { isResolved }`
+    // path. Default `undefined` is falsy → behavior unchanged for
+    // existing REST callers.
+    if (isResolved) {
+      return;
+    }
     const threadComments = [root, ...replies].sort(
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     );
