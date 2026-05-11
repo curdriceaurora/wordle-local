@@ -22,7 +22,9 @@ const {
   loadBaseline,
   parseAuditOutput,
   extractAdvisoriesFromAudit,
-  diffAdvisoriesAgainstBaseline
+  computeScopeMap,
+  diffAdvisoriesAgainstBaseline,
+  scopeAllows
 } = require("../scripts/check-audit");
 
 const SCRIPT = path.resolve(__dirname, "..", "scripts", "check-audit.js");
@@ -48,20 +50,28 @@ function makeViaObject({ ghsa, title = "(fixture)" }) {
   };
 }
 
-// Drop a POSIX shell `npm` shim in `shimDir` that responds to
-// `npm audit --json` with `auditFixture` and rejects any other
-// invocation. We prepend `shimDir` to PATH so the script-under-test
-// finds the shim instead of the real npm. Linux/macOS only — those
-// are the platforms this repo's CI + dev environments target.
-function installNpmShim(shimDir, auditFixture) {
-  const fixturePath = path.join(shimDir, "audit-fixture.json");
-  fs.writeFileSync(fixturePath, JSON.stringify(auditFixture));
+// Drop a POSIX shell `npm` shim in `shimDir` that responds to:
+//   - `npm audit --json`              → auditFixture
+//   - `npm audit --json --omit=dev`   → prodAuditFixture
+// and rejects any other invocation. We prepend `shimDir` to PATH so
+// the script-under-test finds the shim instead of the real npm.
+// Linux/macOS only — those are the platforms this repo's CI + dev
+// environments target.
+function installNpmShim(shimDir, { auditFixture, prodAuditFixture }) {
+  const fullFixturePath = path.join(shimDir, "audit-fixture.json");
+  const prodFixturePath = path.join(shimDir, "audit-fixture-prod.json");
+  fs.writeFileSync(fullFixturePath, JSON.stringify(auditFixture));
+  fs.writeFileSync(prodFixturePath, JSON.stringify(prodAuditFixture));
   const shimPath = path.join(shimDir, "npm");
   fs.writeFileSync(
     shimPath,
     `#!/bin/sh
 if [ "$1" = "audit" ] && [ "$2" = "--json" ]; then
-  cat "${fixturePath}"
+  if [ "$3" = "--omit=dev" ]; then
+    cat "${prodFixturePath}"
+  else
+    cat "${fullFixturePath}"
+  fi
   exit 0
 fi
 echo "test npm shim: unexpected args: $*" >&2
@@ -72,19 +82,25 @@ exit 99
 }
 
 // Run the script binary with a tmp baseline AND a shimmed npm that
-// returns `auditFixture`. Used for the end-to-end smoke tests at
-// the bottom; the rest of the suite imports the helpers directly.
+// returns `auditFixture` for the full audit and `prodAuditFixture`
+// for the `--omit=dev` audit. Used for the end-to-end smoke tests
+// at the bottom; the rest of the suite imports helpers directly.
 //
 // We never write to the real `.audit-baseline.json` — the script
 // reads `CHECK_AUDIT_BASELINE` env var instead. This means a
 // crashed test (SIGINT/SIGKILL mid-run) can't leave the repo's
 // baseline corrupted (CodeRabbit nit, PR #139 round 2).
-function runScriptWith({ baselineJson, auditFixture }) {
+function runScriptWith({ baselineJson, auditFixture, prodAuditFixture }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "check-audit-"));
   try {
     const baselineTmpPath = path.join(tmpDir, "baseline.json");
     fs.writeFileSync(baselineTmpPath, JSON.stringify(baselineJson, null, 2));
-    installNpmShim(tmpDir, auditFixture);
+    // Default the prod fixture to an empty audit if not provided —
+    // matches the common case where blessed advisories are dev-only.
+    installNpmShim(tmpDir, {
+      auditFixture,
+      prodAuditFixture: prodAuditFixture ?? fixtureAuditWith({})
+    });
     const stdout = execFileSync("node", [SCRIPT], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -148,10 +164,22 @@ describe("extractAdvisoriesFromAudit", () => {
     ]);
   });
 
-  test("defaults `nodes` to [] when missing from audit info", () => {
+  test("sets `nodes` to null when audit info omits the field (fail-closed signal)", () => {
     const audit = fixtureAuditWith({
       lodash: {
         severity: "high",
+        via: [makeViaObject({ ghsa: "GHSA-aaaa-1111-cccc" })]
+      }
+    });
+    const out = extractAdvisoriesFromAudit(audit);
+    expect(out[0].nodes).toBeNull();
+  });
+
+  test("sets `nodes` to [] when audit info has explicit empty array", () => {
+    const audit = fixtureAuditWith({
+      lodash: {
+        severity: "high",
+        nodes: [],
         via: [makeViaObject({ ghsa: "GHSA-aaaa-1111-cccc" })]
       }
     });
@@ -278,7 +306,7 @@ describe("diffAdvisoriesAgainstBaseline", () => {
     const key = makeBaselineKey("GHSA-W", "brace-expansion");
     const acceptedKeys = new Set([key]);
     const acceptedByKey = new Map([
-      [key, { nodes: ["node_modules/brace-expansion"] }]
+      [key, { nodes: ["node_modules/brace-expansion"], scope: "both" }]
     ]);
     const subsetAdvisories = [
       {
@@ -308,20 +336,110 @@ describe("diffAdvisoriesAgainstBaseline", () => {
     expect(failed.unexpected[0].reason).toMatch(/express/);
   });
 
-  test("baseline entry without `nodes` blesses regardless of node (backward compat)", () => {
-    const key = makeBaselineKey("GHSA-V", "old-pkg");
+  test("audit `nodes: null` fails closed when baseline entry has nodes (CR Major round 3)", () => {
+    // npm-audit can omit `nodes` (Arborist drops empty node sets).
+    // If a baseline entry pins nodes, the gate must REFUSE to bless
+    // when current nodes is null — we can't verify subset.
+    const key = makeBaselineKey("GHSA-N", "somepkg");
     const acceptedKeys = new Set([key]);
-    const acceptedByKey = new Map([[key, { nodes: null }]]);
+    const acceptedByKey = new Map([
+      [key, { nodes: ["node_modules/somepkg"], scope: "both" }]
+    ]);
     const advisories = [
-      {
-        ghsa: "GHSA-V",
-        package: "old-pkg",
-        severity: "low",
-        title: "",
-        nodes: ["node_modules/anywhere", "node_modules/elsewhere"]
-      }
+      { ghsa: "GHSA-N", package: "somepkg", severity: "moderate", title: "", nodes: null }
     ];
-    expect(diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey).unexpected).toEqual([]);
+    const failed = diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey);
+    expect(failed.unexpected).toHaveLength(1);
+    expect(failed.unexpected[0].reason).toMatch(/omitted `nodes`/);
+  });
+
+  test("scope check: baseline 'dev' rejects current 'prod' (Codex P2 round 3)", () => {
+    const key = makeBaselineKey("GHSA-S", "lib");
+    const acceptedKeys = new Set([key]);
+    const acceptedByKey = new Map([
+      [key, { nodes: ["node_modules/lib"], scope: "dev" }]
+    ]);
+    const advisories = [
+      { ghsa: "GHSA-S", package: "lib", severity: "low", title: "", nodes: ["node_modules/lib"] }
+    ];
+    const scopeByKey = new Map([[key, "prod"]]);
+    const failed = diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey, scopeByKey);
+    expect(failed.unexpected).toHaveLength(1);
+    expect(failed.unexpected[0].reason).toMatch(/scope escalation/);
+    expect(failed.unexpected[0].reason).toMatch(/dev/);
+    expect(failed.unexpected[0].reason).toMatch(/prod/);
+  });
+
+  test("scope check: baseline 'dev' accepts current 'dev'", () => {
+    const key = makeBaselineKey("GHSA-S", "lib");
+    const acceptedKeys = new Set([key]);
+    const acceptedByKey = new Map([
+      [key, { nodes: ["node_modules/lib"], scope: "dev" }]
+    ]);
+    const advisories = [
+      { ghsa: "GHSA-S", package: "lib", severity: "low", title: "", nodes: ["node_modules/lib"] }
+    ];
+    const scopeByKey = new Map([[key, "dev"]]);
+    expect(
+      diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey, scopeByKey).unexpected
+    ).toEqual([]);
+  });
+
+  test("scope check: baseline 'both' accepts any current scope", () => {
+    const key = makeBaselineKey("GHSA-B", "lib");
+    const acceptedKeys = new Set([key]);
+    const acceptedByKey = new Map([
+      [key, { nodes: ["node_modules/lib"], scope: "both" }]
+    ]);
+    const advisories = [
+      { ghsa: "GHSA-B", package: "lib", severity: "low", title: "", nodes: ["node_modules/lib"] }
+    ];
+    expect(
+      diffAdvisoriesAgainstBaseline(
+        advisories,
+        acceptedKeys,
+        acceptedByKey,
+        new Map([[key, "prod"]])
+      ).unexpected
+    ).toEqual([]);
+    expect(
+      diffAdvisoriesAgainstBaseline(
+        advisories,
+        acceptedKeys,
+        acceptedByKey,
+        new Map([[key, "dev"]])
+      ).unexpected
+    ).toEqual([]);
+  });
+});
+
+// ---------- computeScopeMap / scopeAllows (pure helpers) ----------
+
+describe("computeScopeMap", () => {
+  test('marks "prod" for advisories present in the prod-only audit', () => {
+    const full = [
+      { ghsa: "GHSA-A", package: "x", severity: "low", title: "", nodes: [] },
+      { ghsa: "GHSA-B", package: "y", severity: "low", title: "", nodes: [] }
+    ];
+    const prod = [{ ghsa: "GHSA-A", package: "x", severity: "low", title: "", nodes: [] }];
+    const map = computeScopeMap(full, prod);
+    expect(map.get(makeBaselineKey("GHSA-A", "x"))).toBe("prod");
+    expect(map.get(makeBaselineKey("GHSA-B", "y"))).toBe("dev");
+  });
+});
+
+describe("scopeAllows", () => {
+  test("dev baseline only allows dev current", () => {
+    expect(scopeAllows("dev", "dev")).toBe(true);
+    expect(scopeAllows("dev", "prod")).toBe(false);
+  });
+  test("prod baseline allows both", () => {
+    expect(scopeAllows("prod", "dev")).toBe(true);
+    expect(scopeAllows("prod", "prod")).toBe(true);
+  });
+  test("both baseline allows everything", () => {
+    expect(scopeAllows("both", "dev")).toBe(true);
+    expect(scopeAllows("both", "prod")).toBe(true);
   });
 });
 
@@ -332,17 +450,69 @@ describe("loadBaseline", () => {
     // No non-empty assertion — if the dep tree is fully patched and
     // the baseline legitimately becomes empty, this test should
     // still pass. The shape is what matters: a Set of canonical
-    // GHSA|pkg keys.
+    // GHSA|pkg keys + per-entry detail in a Map.
     const { acceptedKeys, acceptedByKey } = loadBaseline();
     expect(acceptedKeys).toBeInstanceOf(Set);
     expect(acceptedByKey).toBeInstanceOf(Map);
     for (const key of acceptedKeys) {
       expect(key).toMatch(/^GHSA-[A-Z0-9-]+\|.+/);
+      const entry = acceptedByKey.get(key);
+      expect(entry).toBeDefined();
+      expect(Array.isArray(entry.nodes)).toBe(true);
+      expect(entry.nodes.length).toBeGreaterThan(0);
+      expect(["dev", "prod", "both"]).toContain(entry.scope);
     }
   });
 
   test("missing baseline file throws", () => {
     expect(() => loadBaseline("/no/such/file.json")).toThrow(/missing baseline file/);
+  });
+
+  test("strict validation: rejects partial entries (CR Major round 3)", () => {
+    // Each missing-field case should throw with a specific message
+    // so contributors get a clear pointer to what they forgot.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "loadBaseline-strict-"));
+    function writeBaseline(json) {
+      const p = path.join(tmpDir, "baseline.json");
+      fs.writeFileSync(p, JSON.stringify(json));
+      return p;
+    }
+    const fullEntry = {
+      ghsa: "GHSA-aaaa-bbbb-cccc",
+      package: "lib",
+      severity: "moderate",
+      title: "x",
+      nodes: ["node_modules/lib"],
+      scope: "dev",
+      rationale: "x"
+    };
+    try {
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, ghsa: "bad" }] }))).toThrow(
+        /invalid `ghsa`/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, package: "" }] }))).toThrow(
+        /missing `package`/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, severity: "" }] }))).toThrow(
+        /missing `severity`/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, title: "" }] }))).toThrow(
+        /missing `title`/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, rationale: "" }] }))).toThrow(
+        /missing `rationale`/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, nodes: [] }] }))).toThrow(
+        /requires a non-empty `nodes` array/
+      );
+      expect(() => loadBaseline(writeBaseline({ accepted: [{ ...fullEntry, scope: "foo" }] }))).toThrow(
+        /invalid `scope`/
+      );
+      // Full entry should load cleanly.
+      expect(() => loadBaseline(writeBaseline({ accepted: [fullEntry] }))).not.toThrow();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -363,52 +533,77 @@ describe("loadBaseline", () => {
 const describeSmoke = process.platform === "win32" ? describe.skip : describe;
 
 describeSmoke("scripts/check-audit.js end-to-end (shimmed npm)", () => {
-  test("exits 0 when shimmed audit matches the baseline", () => {
-    const auditFixture = fixtureAuditWith({
+  function makeFullBaselineEntry(overrides) {
+    return {
+      ghsa: "GHSA-AAAA-BBBB-CCCC",
+      package: "lodash",
+      severity: "high",
+      title: "Prototype pollution",
+      nodes: ["node_modules/lodash"],
+      scope: "dev",
+      rationale: "test fixture — dev-only",
+      ...overrides
+    };
+  }
+
+  function makeFullAudit() {
+    return fixtureAuditWith({
       lodash: {
         severity: "high",
+        nodes: ["node_modules/lodash"],
         via: [makeViaObject({ ghsa: "GHSA-aaaa-bbbb-cccc", title: "Prototype pollution" })]
       }
     });
-    const baselineJson = {
-      accepted: [
-        {
-          ghsa: "GHSA-AAAA-BBBB-CCCC",
-          package: "lodash",
-          severity: "high",
-          title: "Prototype pollution",
-          rationale: "test fixture"
-        }
-      ]
-    };
-    const result = runScriptWith({ baselineJson, auditFixture });
+  }
+
+  test("exits 0 when shimmed audit matches the baseline (dev-only scope)", () => {
+    const result = runScriptWith({
+      baselineJson: { accepted: [makeFullBaselineEntry()] },
+      auditFixture: makeFullAudit(),
+      prodAuditFixture: fixtureAuditWith({})
+    });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/OK/);
   });
 
   test("exits 1 when shimmed audit has advisories not in baseline", () => {
-    const auditFixture = fixtureAuditWith({
-      lodash: {
-        severity: "high",
-        via: [makeViaObject({ ghsa: "GHSA-aaaa-bbbb-cccc", title: "Prototype pollution" })]
-      }
+    const result = runScriptWith({
+      baselineJson: { accepted: [] },
+      auditFixture: makeFullAudit(),
+      prodAuditFixture: fixtureAuditWith({})
     });
-    const result = runScriptWith({ baselineJson: { accepted: [] }, auditFixture });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/FAIL — new advisories not in/);
     expect(result.stderr).toMatch(/GHSA-AAAA-BBBB-CCCC/);
     expect(result.stderr).toMatch(/baseline entry with rationale/);
-    expect(result.stderr).toMatch(/Baseline matches by .ghsa, package. pair/);
+    expect(result.stderr).toMatch(/All fields are required/);
+    expect(result.stderr).toMatch(/scope/);
   });
 
   test("exits 1 (fail-closed) when shimmed audit returns a transport-error payload", () => {
-    // Simulates npm-audit returning {statusCode: 403, message: "forbidden"}
-    // — the exact failure mode that motivated the parseAuditOutput
-    // hardening. Should NOT print OK.
-    const auditFixture = { statusCode: 403, message: "forbidden" };
-    const result = runScriptWith({ baselineJson: { accepted: [] }, auditFixture });
+    // Simulates npm-audit returning {statusCode: 403, message: "forbidden"}.
+    const result = runScriptWith({
+      baselineJson: { accepted: [] },
+      auditFixture: { statusCode: 403, message: "forbidden" },
+      prodAuditFixture: fixtureAuditWith({})
+    });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/missing `vulnerabilities` map/);
     expect(result.stderr).not.toMatch(/\bOK\b/);
+  });
+
+  test("exits 1 on scope escalation: baseline says dev-only but advisory in prod audit (Codex P2 round 3)", () => {
+    // Same advisory, but the prod audit ALSO reports it — so current
+    // scope is "prod" — even though baseline blesses only dev. Gate
+    // must fail with a clear scope-escalation message.
+    const result = runScriptWith({
+      baselineJson: { accepted: [makeFullBaselineEntry({ scope: "dev" })] },
+      auditFixture: makeFullAudit(),
+      prodAuditFixture: makeFullAudit() // same advisory in prod
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/scope escalation/);
+    expect(result.stderr).toMatch(/dev/);
+    expect(result.stderr).toMatch(/prod/);
   });
 });

@@ -42,7 +42,11 @@ Renovate/Dependabot isn't currently wired up; manual quarterly refresh is suffic
 When CI surfaces a new advisory, you have two paths:
 
 - **Fix it.** `npm update <pkg>`, `npm audit fix`, or pin a different package. CI clears once the GHSA disappears from `npm audit --json`.
-- **Bless it.** Add a new entry to `.audit-baseline.json` with `ghsa`, `package`, `severity`, `title`, `nodes` (the current dependency paths from `npm audit --json`'s `vulnerabilities.<pkg>.nodes`), and a written `rationale` for why the risk is acceptable here (transitive-only, dev-only, not exposed to untrusted input, etc.). The `nodes` field pins the dependency-path scope of the bless: if the same GHSA later appears on a new path (e.g., a runtime dep adopts it), the gate fails and re-triage is required. Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
+- **Bless it.** Add a new entry to `.audit-baseline.json` with the full triage context (every field is required; the gate refuses to load a partial entry):
+  - `ghsa`, `package`, `severity`, `title` — identification fields.
+  - `nodes` — the current dependency paths from `npm audit --json`'s `vulnerabilities.<pkg>.nodes`. Non-empty. The gate requires the current audit's `nodes` for this advisory to be a subset of the listed paths; a new path fails the gate.
+  - `scope` — one of `"dev"`, `"prod"`, or `"both"`. The dependency-tree context the bless applies to. The gate runs `npm audit --omit=dev` and infers current scope (`prod` if the advisory still appears, else `dev`). If a baseline says `"dev"` but the advisory now reaches us via a runtime dep, the gate fails with a "scope escalation" error and re-triage is required. Verify with `npm audit --omit=dev` before adding the entry.
+  - `rationale` — why this is acceptable risk (transitive-only, dev-only, not exposed to untrusted input, etc.). Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
 
 When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
 

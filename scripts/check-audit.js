@@ -31,13 +31,31 @@
 // dependency — the gate still fails until the new occurrence is
 // triaged separately (Codex P2 on PR #139, round 1).
 //
-// Optional `nodes` field on a baseline entry pins the dependency
-// path(s) the bless applies to. When `nodes` is set on a baseline
-// entry, the current audit's `nodes` for that advisory must be a
-// subset of the listed paths; any new node (e.g., the same
-// vulnerable package surfacing through a runtime dep chain instead
-// of the original dev-only chain) fails the gate until the new
-// occurrence is re-triaged. Codex P2 on PR #139, round 2.
+// Each baseline entry pins dependency-path AND dev/prod scope:
+//
+//   `nodes` (required, non-empty): the current audit's `nodes` for
+//     that advisory must be a subset of the listed paths; any new
+//     node fails the gate. If npm-audit omits `nodes` for a
+//     scoped advisory (npm can do this for empty node sets), the
+//     gate FAILS — we can't verify subset, so we refuse to bless
+//     (CodeRabbit Major on PR #139, round 3).
+//
+//   `scope` ("dev" | "prod" | "both", required): the dependency-tree
+//     context the bless applies to. The gate runs npm audit twice —
+//     `--omit=dev` for prod scope, then the full audit. If a baseline
+//     entry says `scope: "dev"` but the advisory appears in the
+//     `--omit=dev` audit, the gate FAILS with a "scope escalation"
+//     error: the same vulnerable package now reaches us through a
+//     runtime chain and needs fresh triage (Codex P2 on PR #139,
+//     round 3 — addresses npm-hoisting blind spot where a top-level
+//     `node_modules/<pkg>` path can be shared by dev AND prod deps).
+//
+// `severity`, `title`, `rationale` (all required strings, non-empty):
+//   triage hygiene. Reviewers gate baseline additions on the
+//   written rationale; the script refuses to load a baseline entry
+//   that lacks any of these fields (CodeRabbit Major on PR #139,
+//   round 3 — prevents `{ghsa, package}` entries from silently
+//   weakening the gate).
 //
 // What this file does NOT do:
 //   - Override the npm-audit severity classification.
@@ -69,6 +87,9 @@ function makeBaselineKey(ghsa, pkg) {
   return `${ghsa}|${pkg}`;
 }
 
+// Allowed values for the `scope` field on a baseline entry.
+const VALID_SCOPES = new Set(["dev", "prod", "both"]);
+
 function loadBaseline(filePath = baselinePath) {
   if (!fs.existsSync(filePath)) {
     throw new Error(
@@ -84,31 +105,75 @@ function loadBaseline(filePath = baselinePath) {
   }
   const acceptedList = Array.isArray(parsed.accepted) ? parsed.accepted : [];
   const acceptedKeys = new Set();
-  // acceptedByKey holds the per-entry detail (e.g., `nodes`) needed
-  // at diff time. The Set above is kept for cheap membership probes.
+  // acceptedByKey holds the per-entry detail (`nodes`, `scope`)
+  // needed at diff time. The Set above is kept for cheap membership
+  // probes.
   const acceptedByKey = new Map();
   for (const entry of acceptedList) {
-    if (!entry || typeof entry !== "object") continue;
+    if (!entry || typeof entry !== "object") {
+      throw new Error("[check-audit] baseline `accepted` contains a non-object entry");
+    }
+    // Strict validation — every entry must carry the full triage
+    // context. Partial entries silently weaken the gate (CodeRabbit
+    // Major on PR #139, round 3).
     const ghsa = canonicalGhsa(entry.ghsa);
-    const pkg = typeof entry.package === "string" ? entry.package : null;
-    if (!ghsa || !pkg) continue;
+    if (!ghsa) {
+      throw new Error(`[check-audit] baseline entry has invalid \`ghsa\`: ${JSON.stringify(entry.ghsa)}`);
+    }
+    const pkg = typeof entry.package === "string" && entry.package.trim() ? entry.package : null;
+    if (!pkg) {
+      throw new Error(`[check-audit] baseline entry for ${ghsa} missing \`package\``);
+    }
+    const severity = typeof entry.severity === "string" && entry.severity.trim() ? entry.severity : null;
+    if (!severity) {
+      throw new Error(`[check-audit] baseline entry for ${ghsa}|${pkg} missing \`severity\``);
+    }
+    const title = typeof entry.title === "string" && entry.title.trim() ? entry.title : null;
+    if (!title) {
+      throw new Error(`[check-audit] baseline entry for ${ghsa}|${pkg} missing \`title\``);
+    }
+    const rationale =
+      typeof entry.rationale === "string" && entry.rationale.trim() ? entry.rationale : null;
+    if (!rationale) {
+      throw new Error(
+        `[check-audit] baseline entry for ${ghsa}|${pkg} missing \`rationale\` ` +
+          "(baseline blesses are security decisions — write it down)"
+      );
+    }
+    const nodes = Array.isArray(entry.nodes)
+      ? entry.nodes.filter((n) => typeof n === "string" && n.trim())
+      : null;
+    if (!nodes || nodes.length === 0) {
+      throw new Error(
+        `[check-audit] baseline entry for ${ghsa}|${pkg} requires a non-empty \`nodes\` array ` +
+          "(pins the dependency-path scope of the bless)"
+      );
+    }
+    const scope = typeof entry.scope === "string" ? entry.scope : null;
+    if (!scope || !VALID_SCOPES.has(scope)) {
+      throw new Error(
+        `[check-audit] baseline entry for ${ghsa}|${pkg} has invalid \`scope\` ` +
+          `(${JSON.stringify(entry.scope)}); expected one of: dev, prod, both`
+      );
+    }
     const key = makeBaselineKey(ghsa, pkg);
     acceptedKeys.add(key);
-    // `nodes` is optional. If present and an array, it scopes the
-    // bless to those dependency paths. If absent, the entry blesses
-    // the (GHSA, package) pair regardless of node — backward compat
-    // for older baseline entries authored before the nodes check
-    // landed.
-    const nodes = Array.isArray(entry.nodes) ? entry.nodes.filter((n) => typeof n === "string") : null;
-    acceptedByKey.set(key, { nodes });
+    acceptedByKey.set(key, { nodes, scope });
   }
   return { acceptedList, acceptedKeys, acceptedByKey };
 }
 
-function runNpmAudit() {
+function runNpmAudit({ prodOnly = false } = {}) {
+  const args = ["audit", "--json"];
+  if (prodOnly) {
+    // `--omit=dev` runs the audit against production deps only,
+    // giving us the dev/prod scope signal needed for scope-aware
+    // baseline matching (Codex P2 on PR #139, round 3).
+    args.push("--omit=dev");
+  }
   let raw;
   try {
-    raw = execFileSync("npm", ["audit", "--json"], {
+    raw = execFileSync("npm", args, {
       cwd: projectRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -189,9 +254,15 @@ function extractAdvisoriesFromAudit(auditJson) {
   const vulns = auditJson?.vulnerabilities || {};
   for (const [pkgName, info] of Object.entries(vulns)) {
     if (!info || !Array.isArray(info.via)) continue;
+    // Fail-closed: distinguish "audit omitted nodes" (null) from
+    // "audit reported empty nodes" ([]). The diff step refuses to
+    // bless a scoped baseline entry when nodes is null — npm can
+    // legitimately omit the field for empty node sets, so a missing
+    // `nodes` is ambiguous and we don't trust ambiguity here
+    // (CodeRabbit Major on PR #139, round 3).
     const nodes = Array.isArray(info.nodes)
       ? info.nodes.filter((n) => typeof n === "string")
-      : [];
+      : null;
     for (const via of info.via) {
       if (typeof via !== "object" || !via) continue;
       const ghsa = canonicalGhsa(via.url);
@@ -201,13 +272,28 @@ function extractAdvisoriesFromAudit(auditJson) {
         package: pkgName,
         severity: info.severity || "unknown",
         title: via.title || "(no title)",
-        // Carries the audit's `nodes` array so the gate can compare
-        // dependency paths against the baseline entry's pinned set.
         nodes
       });
     }
   }
   return advisories;
+}
+
+// Compute the dev/prod scope per (GHSA, package) pair. An advisory
+// is considered "prod" scope if its (ghsa, package) pair appears in
+// the prod-only audit (i.e., npm audit --omit=dev still reports it).
+// Otherwise it's "dev" scope — only reached through dev dependencies.
+function computeScopeMap(fullAdvisories, prodAdvisories) {
+  const prodKeys = new Set();
+  for (const a of prodAdvisories) {
+    prodKeys.add(makeBaselineKey(a.ghsa, a.package));
+  }
+  const scopeByKey = new Map();
+  for (const a of fullAdvisories) {
+    const key = makeBaselineKey(a.ghsa, a.package);
+    scopeByKey.set(key, prodKeys.has(key) ? "prod" : "dev");
+  }
+  return scopeByKey;
 }
 
 // Pure logic — exported for unit tests. Determines which advisories
@@ -216,14 +302,17 @@ function extractAdvisoriesFromAudit(auditJson) {
 // OK-path total), `seenUnexpected` dedupes the failure list across
 // multiple via entries.
 //
-// `acceptedByKey` (optional, Map) carries per-entry detail. When
-// present and the entry has `nodes` set, the current audit's nodes
-// for that advisory must be a subset of the baseline's nodes —
-// otherwise the advisory is flagged as unexpected with reason
-// "new dependency path". Backward-compatible: when
-// `acceptedByKey` is omitted or an entry has no `nodes`, the
-// (GHSA, package) match alone suffices.
-function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey) {
+// `acceptedByKey` (Map of key → {nodes, scope}) carries per-entry
+// detail. The diff enforces:
+//   - (GHSA, package) match — same as before.
+//   - `nodes` subset — current audit's nodes for that advisory
+//     must be a subset of the baseline's pinned `nodes`. If audit
+//     omits `nodes` (a === null), the entry fails closed.
+//   - scope match — `scopeByKey` (if provided) gives the current
+//     scope per advisory ("dev" or "prod"). The baseline's `scope`
+//     value scopes the bless: "dev" rejects current "prod" (scope
+//     escalation), "prod" accepts either, "both" always accepts.
+function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey, scopeByKey) {
   const seenUnexpected = new Set();
   const uniqueKeys = new Set();
   const unexpected = [];
@@ -235,11 +324,25 @@ function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey) 
     if (accepted && acceptedByKey instanceof Map) {
       const entry = acceptedByKey.get(key);
       if (entry && Array.isArray(entry.nodes) && entry.nodes.length > 0) {
-        const allowed = new Set(entry.nodes);
-        const newNodes = Array.isArray(a.nodes) ? a.nodes.filter((n) => !allowed.has(n)) : [];
-        if (newNodes.length > 0) {
+        if (!Array.isArray(a.nodes)) {
           accepted = false;
-          reason = `new dependency path(s): ${newNodes.join(", ")}`;
+          reason =
+            "audit output omitted `nodes`; cannot verify dependency-path scope " +
+            "(scoped baseline entry refused fail-closed)";
+        } else {
+          const allowed = new Set(entry.nodes);
+          const newNodes = a.nodes.filter((n) => !allowed.has(n));
+          if (newNodes.length > 0) {
+            accepted = false;
+            reason = `new dependency path(s): ${newNodes.join(", ")}`;
+          }
+        }
+      }
+      if (accepted && entry && entry.scope && scopeByKey instanceof Map) {
+        const currentScope = scopeByKey.get(key);
+        if (currentScope && !scopeAllows(entry.scope, currentScope)) {
+          accepted = false;
+          reason = `scope escalation: baseline blesses "${entry.scope}", current is "${currentScope}"`;
         }
       }
     }
@@ -249,6 +352,18 @@ function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys, acceptedByKey) 
     unexpected.push(reason ? { ...a, reason } : a);
   }
   return { unexpected, uniqueCount: uniqueKeys.size };
+}
+
+// Does a baseline scope value allow a current scope?
+//   - baseline "both" — always.
+//   - baseline "prod" — accepts "prod" or "dev" (weaker scope is fine).
+//   - baseline "dev"  — accepts only "dev" (current "prod" is an
+//                       escalation that requires re-triage).
+function scopeAllows(baselineScope, currentScope) {
+  if (baselineScope === "both") return true;
+  if (baselineScope === "prod") return true;
+  if (baselineScope === "dev") return currentScope === "dev";
+  return false;
 }
 
 function formatRemediationHint() {
@@ -263,14 +378,13 @@ function formatRemediationHint() {
     '      "severity": "<severity>",',
     '      "title": "<title>",',
     '      "nodes": ["node_modules/<path>"],',
+    '      "scope": "dev" | "prod" | "both",',
     '      "rationale": "<why this is acceptable risk>"',
     "    }",
     "",
-    "[check-audit] Baseline matches by (ghsa, package) pair — the same GHSA",
-    "              against a different package requires its own entry.",
-    "[check-audit] When `nodes` is set, the current audit's `nodes` for this",
-    "              advisory must be a subset; a new dependency path (e.g.,",
-    "              dev-only → runtime escalation) fails the gate."
+    "[check-audit] All fields are required. Baseline matches by (ghsa, package)",
+    "              pair AND nodes-subset AND scope: a new dependency path or a",
+    "              dev→prod escalation fails the gate until re-triaged."
   ].join("\n");
 }
 
@@ -278,9 +392,11 @@ function main() {
   let acceptedKeys;
   let acceptedByKey;
   let auditRaw;
+  let auditProdRaw;
   try {
     ({ acceptedKeys, acceptedByKey } = loadBaseline());
     auditRaw = runNpmAudit();
+    auditProdRaw = runNpmAudit({ prodOnly: true });
   } catch (err) {
     // Top-level handler — print a concise message instead of a
     // stack trace so CI output stays readable (Copilot caught the
@@ -290,18 +406,23 @@ function main() {
   }
 
   let auditJson;
+  let auditProdJson;
   try {
     auditJson = parseAuditOutput(auditRaw);
+    auditProdJson = parseAuditOutput(auditProdRaw);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
   }
 
   const advisories = extractAdvisoriesFromAudit(auditJson);
+  const prodAdvisories = extractAdvisoriesFromAudit(auditProdJson);
+  const scopeByKey = computeScopeMap(advisories, prodAdvisories);
   const { unexpected, uniqueCount } = diffAdvisoriesAgainstBaseline(
     advisories,
     acceptedKeys,
-    acceptedByKey
+    acceptedByKey,
+    scopeByKey
   );
 
   if (unexpected.length === 0) {
@@ -335,7 +456,9 @@ module.exports = {
   loadBaseline,
   parseAuditOutput,
   extractAdvisoriesFromAudit,
-  diffAdvisoriesAgainstBaseline
+  computeScopeMap,
+  diffAdvisoriesAgainstBaseline,
+  scopeAllows
 };
 
 // Run main only when invoked directly, not when require()'d by tests.

@@ -2,19 +2,28 @@
   "$comment": [
     "Accepted-risk npm-audit advisories. The CI gate in",
     "scripts/check-audit.js compares current audit output against this",
-    "file: advisories whose (GHSA id, package) pair is NOT listed here",
-    "cause CI to fail. Each entry blesses one advisory against ONE",
-    "package — the same GHSA appearing on a different package requires",
-    "its own entry. If `nodes` is present on an entry, the gate also",
-    "requires the current audit's `nodes` for that advisory to be a",
-    "subset of the listed nodes; a new dependency path (e.g., the",
-    "advisory escalates from a dev-only chain to a runtime chain)",
-    "fails the gate until re-triaged.",
+    "file. An entry blesses ONE advisory (by GHSA id) against ONE",
+    "package — same GHSA on a different package needs its own entry.",
+    "Every entry is required to carry the full triage context; the",
+    "gate refuses to load a partial entry.",
+    "",
+    "Required fields:",
+    "  - ghsa, package, severity, title  (identification + triage)",
+    "  - rationale  (why this is acceptable risk; security decision)",
+    "  - nodes      (non-empty array of `node_modules/...` paths;",
+    "                the gate requires the current audit's `nodes`",
+    "                for this advisory to be a subset; a new path",
+    "                fails the gate)",
+    "  - scope      (\"dev\" | \"prod\" | \"both\"; the dependency-tree",
+    "                context the bless applies to. The gate runs",
+    "                `npm audit --omit=dev` to compute current scope;",
+    "                if a baseline says \"dev\" but the advisory now",
+    "                appears in the prod-only audit, the gate fails",
+    "                with a \"scope escalation\" error.)",
     "",
     "Adding entries: only when the advisory has been triaged and the",
     "risk is understood (e.g., a moderate ReDoS in a dev-only",
-    "markdown linter that runs on trusted internal markdown). Include",
-    "`nodes` so a future dependency-path change can't slide through.",
+    "markdown linter that runs on trusted internal markdown).",
     "Removing entries: when the advisory is actually fixed in our deps",
     "(then the gate flips to clean, the entry becomes dead, and we",
     "delete it).",
@@ -30,7 +39,8 @@
       "severity": "moderate",
       "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
       "nodes": ["node_modules/brace-expansion"],
-      "rationale": "Transitive dev-only. brace-expansion@1.x reaches us via the minimatch@3.x → glob@7.x chain used by jest tooling and markdownlint-cli2. The vulnerable path is only exercised against trusted glob patterns hard-coded in package.json scripts (`markdownlint-cli2 \"**/*.md\"` and jest's test discovery), never against untrusted brace strings. Production server doesn't depend on brace-expansion. Accepted until the jest + markdownlint chains publish updates that pull in a fixed brace-expansion. If a runtime dep later pulls in brace-expansion, `nodes` will grow and the gate will fail until the new occurrence is re-triaged."
+      "scope": "dev",
+      "rationale": "Transitive dev-only. brace-expansion@1.x reaches us via the minimatch@3.x → glob@7.x chain used by jest tooling and markdownlint-cli2. The vulnerable path is only exercised against trusted glob patterns hard-coded in package.json scripts (`markdownlint-cli2 \"**/*.md\"` and jest's test discovery), never against untrusted brace strings. Production server doesn't depend on brace-expansion. Verified dev-only by `npm audit --omit=dev` returning zero advisories for this package. Accepted until the jest + markdownlint chains publish updates that pull in a fixed brace-expansion. If a runtime dep later pulls in brace-expansion, the prod-only audit will flag it and the gate's scope check will fail until re-triaged."
     },
     {
       "ghsa": "GHSA-mh29-5h37-fv8m",
@@ -38,7 +48,8 @@
       "severity": "moderate",
       "title": "js-yaml has prototype pollution in merge (<<)",
       "nodes": ["node_modules/markdownlint-cli2/node_modules/js-yaml"],
-      "rationale": "Transitive dev-only via markdownlint-cli2. js-yaml only loads .markdownlint.json/.yaml in dev, never user-supplied YAML at runtime. Production server doesn't import js-yaml. Accepted until markdownlint-cli2 upgrades. `nodes` pins the dev-only path; any new node (e.g., a runtime dep adopting js-yaml) fails the gate."
+      "scope": "dev",
+      "rationale": "Transitive dev-only via markdownlint-cli2. js-yaml only loads .markdownlint.json/.yaml in dev, never user-supplied YAML at runtime. Production server doesn't import js-yaml. Verified dev-only by `npm audit --omit=dev`. Accepted until markdownlint-cli2 upgrades."
     },
     {
       "ghsa": "GHSA-38c4-r59v-3vqw",
@@ -46,7 +57,8 @@
       "severity": "moderate",
       "title": "markdown-it has a Regular Expression Denial of Service (ReDoS)",
       "nodes": ["node_modules/markdown-it"],
-      "rationale": "Transitive dev-only via markdownlint-cli2 → markdownlint → markdown-it. Only parses repo-local trusted markdown during lint. Production server doesn't render markdown. `nodes` pins the dev-only path; any new occurrence (e.g., a runtime dep using markdown-it) fails the gate."
+      "scope": "dev",
+      "rationale": "Transitive dev-only via markdownlint-cli2 → markdownlint → markdown-it. Only parses repo-local trusted markdown during lint. Production server doesn't render markdown. Verified dev-only by `npm audit --omit=dev`. Accepted until markdownlint upgrades."
     }
   ]
 }
