@@ -1,12 +1,18 @@
 "use strict";
 
-// Self-tests for scripts/check-audit.js — exercises the pure
-// extraction + comparison helpers using fixture JSON, so tests stay
-// fast and offline-friendly. The real `npm audit` shell-out path is
-// exercised once via an end-to-end smoke at the bottom so we know
-// `main()` actually wires together; everything else uses fixtures.
+// Self-tests for scripts/check-audit.js. The pure helpers are
+// imported directly and exercised against fixture JSON; the
+// end-to-end smoke tests at the bottom run the real script binary
+// against a SHIMMED `npm` (PATH-injected fake) so they verify the
+// full wiring without depending on the npm registry or network.
+//
+// Codex P2 (PR #139, round 2) flagged that the previous smoke
+// approach — shelling out to the real `npm audit` — broke in
+// offline / proxied / registry-outage environments. The shim makes
+// the smoke deterministic.
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
@@ -43,16 +49,42 @@ function makeViaObject({ ghsa, title = "(fixture)" }) {
   };
 }
 
-// Run the actual script binary with a temporary baseline. Used for
-// the end-to-end smoke test only; the rest of the suite imports the
-// helpers directly.
-function runScriptWithBaseline(baselineJson) {
-  const original = fs.readFileSync(BASELINE_PATH, "utf8");
+// Drop a POSIX shell `npm` shim in `shimDir` that responds to
+// `npm audit --json` with `auditFixture` and rejects any other
+// invocation. We prepend `shimDir` to PATH so the script-under-test
+// finds the shim instead of the real npm. Linux/macOS only — those
+// are the platforms this repo's CI + dev environments target.
+function installNpmShim(shimDir, auditFixture) {
+  const fixturePath = path.join(shimDir, "audit-fixture.json");
+  fs.writeFileSync(fixturePath, JSON.stringify(auditFixture));
+  const shimPath = path.join(shimDir, "npm");
+  fs.writeFileSync(
+    shimPath,
+    `#!/bin/sh
+if [ "$1" = "audit" ] && [ "$2" = "--json" ]; then
+  cat "${fixturePath}"
+  exit 0
+fi
+echo "test npm shim: unexpected args: $*" >&2
+exit 99
+`
+  );
+  fs.chmodSync(shimPath, 0o755);
+}
+
+// Run the script binary with a temporary baseline AND a shimmed npm
+// that returns `auditFixture`. Used for the end-to-end smoke tests
+// at the bottom; the rest of the suite imports the helpers directly.
+function runScriptWith({ baselineJson, auditFixture }) {
+  const originalBaseline = fs.readFileSync(BASELINE_PATH, "utf8");
   fs.writeFileSync(BASELINE_PATH, JSON.stringify(baselineJson, null, 2));
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "check-audit-shim-"));
   try {
+    installNpmShim(shimDir, auditFixture);
     const stdout = execFileSync("node", [SCRIPT], {
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}` }
     });
     return { exitCode: 0, stdout, stderr: "" };
   } catch (err) {
@@ -62,7 +94,8 @@ function runScriptWithBaseline(baselineJson) {
       stderr: err.stderr?.toString() || ""
     };
   } finally {
-    fs.writeFileSync(BASELINE_PATH, original);
+    fs.writeFileSync(BASELINE_PATH, originalBaseline);
+    fs.rmSync(shimDir, { recursive: true, force: true });
   }
 }
 
@@ -237,26 +270,61 @@ describe("loadBaseline", () => {
   });
 });
 
-// ---------- End-to-end smoke (shells out to real npm audit) ----------
+// ---------- End-to-end smoke (shimmed npm; fully offline) ----------
 //
-// Just one test that runs the actual script binary so we catch any
-// regression in how the pieces wire together. The fixture-based tests
-// above cover every code branch without network/npm dependence.
+// Runs the actual script binary so we catch any regression in how
+// the pieces wire together (loadBaseline + runNpmAudit + parse +
+// diff + exit code + stderr/stdout). `npm` is shimmed via PATH so
+// the test is hermetic — no registry, no network, no dependence on
+// what advisories happen to be live today.
 
-describe("scripts/check-audit.js end-to-end", () => {
-  test("exits 0 when baseline matches the current npm audit state", () => {
-    const baseline = JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8"));
-    const result = runScriptWithBaseline(baseline);
+describe("scripts/check-audit.js end-to-end (shimmed npm)", () => {
+  test("exits 0 when shimmed audit matches the baseline", () => {
+    const auditFixture = fixtureAuditWith({
+      lodash: {
+        severity: "high",
+        via: [makeViaObject({ ghsa: "GHSA-aaaa-bbbb-cccc", title: "Prototype pollution" })]
+      }
+    });
+    const baselineJson = {
+      accepted: [
+        {
+          ghsa: "GHSA-AAAA-BBBB-CCCC",
+          package: "lodash",
+          severity: "high",
+          title: "Prototype pollution",
+          rationale: "test fixture"
+        }
+      ]
+    };
+    const result = runScriptWith({ baselineJson, auditFixture });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/OK/);
   });
 
-  test("exits 1 when current advisories aren't in the baseline", () => {
-    const result = runScriptWithBaseline({ accepted: [] });
+  test("exits 1 when shimmed audit has advisories not in baseline", () => {
+    const auditFixture = fixtureAuditWith({
+      lodash: {
+        severity: "high",
+        via: [makeViaObject({ ghsa: "GHSA-aaaa-bbbb-cccc", title: "Prototype pollution" })]
+      }
+    });
+    const result = runScriptWith({ baselineJson: { accepted: [] }, auditFixture });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/FAIL — new advisories not in/);
-    expect(result.stderr).toMatch(/GHSA-/i);
+    expect(result.stderr).toMatch(/GHSA-AAAA-BBBB-CCCC/);
     expect(result.stderr).toMatch(/baseline entry with rationale/);
     expect(result.stderr).toMatch(/Baseline matches by .ghsa, package. pair/);
+  });
+
+  test("exits 1 (fail-closed) when shimmed audit returns a transport-error payload", () => {
+    // Simulates npm-audit returning {statusCode: 403, message: "forbidden"}
+    // — the exact failure mode that motivated the parseAuditOutput
+    // hardening. Should NOT print OK.
+    const auditFixture = { statusCode: 403, message: "forbidden" };
+    const result = runScriptWith({ baselineJson: { accepted: [] }, auditFixture });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/missing `vulnerabilities` map/);
+    expect(result.stderr).not.toMatch(/\bOK\b/);
   });
 });
