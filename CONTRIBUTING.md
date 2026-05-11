@@ -35,6 +35,21 @@ Refresh cadence: **quarterly, or sooner if a security advisory affects a pinned 
 
 Renovate/Dependabot isn't currently wired up; manual quarterly refresh is sufficient for this repo's scale. If pinning churn becomes annoying, file a follow-up to add a Dependabot config restricted to GH Actions + Dockerfile.
 
+### npm audit baseline
+
+`npm run check` (via `audit:check`) fails CI on any new `npm audit` advisory that isn't listed in `.audit-baseline.json`. The baseline is a list of accepted-risk advisories keyed by `(GHSA id, package)` pair, plus rationale for each — the same GHSA against a different package requires its own entry.
+
+When CI surfaces a new advisory, you have two paths:
+
+- **Fix it.** `npm update <pkg>`, `npm audit fix`, or pin a different package. CI clears once the GHSA disappears from `npm audit --json`.
+- **Bless it.** Add a new entry to `.audit-baseline.json` with the full triage context (every field is required; the gate refuses to load a partial entry):
+  - `ghsa`, `package`, `severity`, `title` — identification fields.
+  - `nodes` — the current dependency paths from `npm audit --json`'s `vulnerabilities.<pkg>.nodes`. Non-empty. The gate requires the current audit's `nodes` for this advisory to be a subset of the listed paths; a new path fails the gate.
+  - `scope` — one of `"dev"`, `"prod"`, or `"both"`. The dependency-tree context the bless applies to. The gate runs `npm audit --omit=dev` and infers current scope (`prod` if the advisory still appears, else `dev`). If a baseline says `"dev"` but the advisory now reaches us via a runtime dep, the gate fails with a "scope escalation" error and re-triage is required. Verify with `npm audit --omit=dev` before adding the entry.
+  - `rationale` — why this is acceptable risk (transitive-only, dev-only, not exposed to untrusted input, etc.). Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
+
+When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
+
 ## License and Rights
 
 By submitting a contribution, you agree to dedicate your work to the public domain under CC0‑1.0. You represent that you have the right to do so and that your contribution does not infringe on third‑party rights.
