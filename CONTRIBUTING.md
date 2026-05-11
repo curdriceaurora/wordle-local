@@ -35,6 +35,17 @@ Refresh cadence: **quarterly, or sooner if a security advisory affects a pinned 
 
 Renovate/Dependabot isn't currently wired up; manual quarterly refresh is sufficient for this repo's scale. If pinning churn becomes annoying, file a follow-up to add a Dependabot config restricted to GH Actions + Dockerfile.
 
+### npm audit baseline
+
+`npm run check` (via `audit:check`) fails CI on any new `npm audit` advisory that isn't listed in `.audit-baseline.json`. The baseline is a list of accepted-risk advisories (by GHSA id) plus rationale for each.
+
+When CI surfaces a new advisory, you have two paths:
+
+- **Fix it.** `npm update <pkg>`, `npm audit fix`, or pin a different package. CI clears once the GHSA disappears from `npm audit --json`.
+- **Bless it.** Add a new entry to `.audit-baseline.json` with `ghsa`, `package`, `severity`, `title`, and a written `rationale` for why the risk is acceptable here (transitive-only, dev-only, not exposed to untrusted input, etc.). Reviewers should treat baseline additions as security decisions — comment on the PR with the threat model.
+
+When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
+
 ## License and Rights
 
 By submitting a contribution, you agree to dedicate your work to the public domain under CC0‑1.0. You represent that you have the right to do so and that your contribution does not infringe on third‑party rights.

@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "Accepted-risk npm-audit advisories. The CI gate in",
+    "scripts/check-audit.js compares current audit output against this",
+    "file: ADVISORIES not listed here (by GHSA id) cause CI to fail.",
+    "",
+    "Adding entries: only when the advisory has been triaged and the",
+    "risk is understood (e.g., a moderate ReDoS in a dev-only",
+    "markdown linter that runs on trusted internal markdown).",
+    "Removing entries: when the advisory is actually fixed in our deps",
+    "(then the gate flips to clean, the entry becomes dead, and we",
+    "delete it).",
+    "",
+    "Baseline established 2026-05-11 alongside the gate's introduction.",
+    "Refresh process documented in CONTRIBUTING.md > Supply-Chain",
+    "Pinning > npm audit baseline."
+  ],
+  "accepted": [
+    {
+      "ghsa": "GHSA-f886-m6hf-6m8v",
+      "package": "brace-expansion",
+      "severity": "moderate",
+      "title": "brace-expansion: Zero-step sequence causes process hang and memory exhaustion",
+      "rationale": "Transitive dev-only via markdownlint-cli2 → js-yaml. Only runs against repo-local trusted markdown during `npm run markdown:check`. No untrusted brace-expansion inputs flow through the production server. Accepted until markdownlint-cli2 publishes a fix that resolves the upstream pin."
+    },
+    {
+      "ghsa": "GHSA-mh29-5h37-fv8m",
+      "package": "js-yaml",
+      "severity": "moderate",
+      "title": "js-yaml has prototype pollution in merge (<<)",
+      "rationale": "Transitive dev-only via markdownlint-cli2. js-yaml only loads .markdownlint.json/.yaml in dev, never user-supplied YAML at runtime. Production server doesn't import js-yaml. Accepted until markdownlint-cli2 upgrades."
+    },
+    {
+      "ghsa": "GHSA-38c4-r59v-3vqw",
+      "package": "markdown-it",
+      "severity": "moderate",
+      "title": "markdown-it has a Regular Expression Denial of Service (ReDoS)",
+      "rationale": "Transitive dev-only via markdownlint-cli2 → markdownlint → markdown-it. Only parses repo-local trusted markdown during lint. Production server doesn't render markdown."
+    }
+  ]
+}
