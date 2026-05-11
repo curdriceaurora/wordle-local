@@ -2675,7 +2675,15 @@ describe("Stats API", () => {
     }
   });
 
-  test("PUT runtime-config returns 503 when post-cap-lower normalize fails", async () => {
+  // chmod-based write denial is ineffective against uid 0 (root bypasses
+  // POSIX perms), so on root this test would observe a 200 instead of
+  // the expected 503. CI runs as a non-root user; local dev inside a
+  // root container skips this one case. The runtime-config-revert
+  // contract is still exercised by every non-root run.
+  const isRootUid =
+    typeof process.getuid === "function" && process.getuid() === 0;
+  const testUnlessRoot = isRootUid ? test.skip : test;
+  testUnlessRoot("PUT runtime-config returns 503 when post-cap-lower normalize fails", async () => {
     const tempStore = createTempStatsStore();
     const tempAdminState = createTempAdminState();
     try {
