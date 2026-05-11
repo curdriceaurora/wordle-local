@@ -57,13 +57,21 @@ function dailyLink(day) {
 
 async function openDaily(page, day, options = {}) {
   const expectProfilePanel = options.expectProfilePanel !== false;
-  await page.goto(dailyLink(day), gotoOptions);
-  // After goto with waitUntil: "commit", JS hasn't run yet. The
-  // `.hidden` class is removed by app.js once URL params resolve.
-  // Wait for `domcontentloaded` so the bootstrap script has had a
-  // chance to set up before we probe for `#playPanel`. On CI's
-  // single-worker firefox under concurrent-context load, this
-  // settled-state wait avoids racing against a still-hidden panel.
+  const target = dailyLink(day);
+  const targetUrl = new URL(target, "http://localhost:3000").toString();
+  // If the page is already on the target URL, navigate via page.reload()
+  // instead of page.goto(sameUrl). On CI firefox, same-URL goto
+  // sometimes elides the reload and waitForSelector hangs against
+  // stale DOM (caught in #142 / PR #143). Otherwise navigate normally.
+  if (page.url() === targetUrl) {
+    await page.reload(gotoOptions);
+  } else {
+    await page.goto(target, gotoOptions);
+  }
+  // After goto/reload with waitUntil: "commit", JS hasn't run yet.
+  // The `.hidden` class is removed by app.js once URL params resolve.
+  // Wait for `domcontentloaded` so bootstrap has had a chance to run
+  // before we probe for `#playPanel`.
   await page.waitForLoadState("domcontentloaded");
   await page.waitForSelector("#playPanel:not(.hidden)");
   if (expectProfilePanel) {
