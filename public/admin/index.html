@@ -1372,6 +1372,13 @@
          by deferring both in the same source order — defer preserves
          the ordering of deferred scripts. -->
     <script src="/dist/vendor/chart.umd.min.js" defer></script>
+    <!-- Loaded BEFORE admin/app.js so window.escapeHtml is available
+         to any future dynamic-HTML rendering path. The current admin
+         shell uses textContent + DOM-construction APIs, so escapeHtml
+         is unused today — it's defensive infrastructure for the A1
+         (#114) sweep, paired with a guardrail in nit-guardrails.js
+         that flags new bare innerHTML= sinks. -->
+    <script src="/js/escape-html.js" defer></script>
     <script src="/admin/app.js" defer></script>
   </body>
 </html>

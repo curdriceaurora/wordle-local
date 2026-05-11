@@ -229,6 +229,7 @@ function run() {
   checkProviderWorkflowCiGate(errors);
   checkProviderUpdateCheckSemantics(errors);
   checkManualUploadGuardrails(errors);
+  checkClientSideHtmlInjectionSurface(errors);
 
   if (errors.length > 0) {
     console.error("[nit:guardrails] Failed:");
@@ -239,6 +240,51 @@ function run() {
   }
 
   console.log("[nit:guardrails] OK: critical anti-regression guardrails are in place.");
+}
+
+// A1 / #114: keep client-side HTML-injection surface small. The
+// current admin shell uses `textContent =` and DOM-construction APIs
+// (createElement + appendChild) for every dynamic-content path, so
+// the XSS surface is already minimal. This guard flags any future
+// `innerHTML = <expression>` / `outerHTML = <expression>` /
+// `insertAdjacentHTML(...)` site in `public/admin/` or `public/app.js`
+// where the right-hand side isn't an empty string literal. New
+// dynamic HTML must route the value through `lib/escape-html.js` AND
+// list itself in the allowlist below.
+function checkClientSideHtmlInjectionSurface(errors) {
+  const watchedFiles = [
+    "public/app.js",
+    "public/admin/app.js"
+  ];
+  // (file, line0) pairs already audited as static-literal-only.
+  // Inspect each line manually if you add to this list — the only
+  // safe additions are constant string literals with no `${}` or
+  // identifier interpolation.
+  const auditedAllowlist = new Set([
+    "public/app.js:509"
+  ]);
+  // Match `.innerHTML =`, `.outerHTML =`, `.insertAdjacentHTML(`.
+  const sinkPattern = /\.(innerHTML|outerHTML)\s*=|\.insertAdjacentHTML\s*\(/;
+  // Empty-string literal (the dominant safe pattern: clear-and-rebuild
+  // before DOM construction). Permits "" or ''.
+  const emptyStringRhs = /\.(innerHTML|outerHTML)\s*=\s*['"]['"]\s*;?\s*$/;
+  for (const relPath of watchedFiles) {
+    const source = readFile(relPath);
+    const lines = source.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!sinkPattern.test(line)) continue;
+      if (emptyStringRhs.test(line.trim())) continue;
+      const key = `${relPath}:${i + 1}`;
+      if (auditedAllowlist.has(key)) continue;
+      errors.push(
+        `${key} introduces an HTML-injection sink — route the value through ` +
+          "`window.escapeHtml` (loaded from /js/escape-html.js) and add the " +
+          "call site to the audited allowlist in scripts/nit-guardrails.js " +
+          "(A1 / #114)."
+      );
+    }
+  }
 }
 
 run();
