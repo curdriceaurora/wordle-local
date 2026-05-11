@@ -281,13 +281,24 @@ describe("admin route input fuzz: every route × every payload survives malforme
 
           let response;
           if (payload.rawBytes) {
-            // Raw bytes — set Content-Type to application/json so
-            // express.json() actually attempts to parse them
-            // (Codex P2 caught on PR #136 round 3: an
-            // octet-stream Content-Type made the middleware skip
-            // parsing entirely, so the bytes never traversed the
-            // JSON-decode path we wanted to fuzz).
+            // Raw bytes through the JSON parser. Two non-obvious
+            // mechanics here, both caught by Codex on PR #136:
+            //
+            //   1. `Content-Type: application/json` is required so
+            //      `express.json()` actually attempts to parse the
+            //      body (with `application/octet-stream` the
+            //      middleware skips entirely → handler sees no body
+            //      → indistinguishable from the empty-body case).
+            //   2. `.send(Buffer)` with a JSON Content-Type makes
+            //      superagent JSON-serialize the Buffer into
+            //      `{"type":"Buffer","data":[...]}`, so the server
+            //      receives valid UTF-8 JSON, not the malformed
+            //      bytes. `.serialize((d) => d)` overrides that
+            //      serializer to return the Buffer verbatim — the
+            //      malformed bytes survive the supertest layer
+            //      and reach the JSON parser.
             req.set("Content-Type", "application/json");
+            req.serialize((d) => d);
             response = await req.send(payload.rawBytes);
           } else if (payload.raw) {
             req.set("Content-Type", "application/json");
