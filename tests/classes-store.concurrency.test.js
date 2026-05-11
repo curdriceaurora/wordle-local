@@ -42,17 +42,23 @@ async function cleanupDir(dir) {
 }
 
 // Build a profile id (1-64 chars, no whitespace per profileId rules
-// in the schema).
+// in the schema). Uses `toString()` not `padStart` so the id format
+// scales with i — Copilot caught the prior `padStart(3, "0")` would
+// have broken under env CONCURRENCY_PARALLELISM>=1000.
 function makeProfileId(i) {
-  return `profile-${String(i).padStart(3, "0")}`;
+  return `profile-${i}`;
 }
 
 describe("classes-store: writeQueue serializes parallel createClass", () => {
   test("N parallel createClass with distinct names: every class persists", async () => {
     await runConcurrencyScenario({
       name: "classes-store: parallel createClass (distinct names)",
-      // maxClasses default is 50; well above N.
+      // ClassesStore.DEFAULT_MAX_CLASSES is 200. `parallelismMax`
+      // clamps env stress mode so we don't trip
+      // MAX_CLASSES_REACHED (Copilot caught the wrong cap value
+      // in the prior comment on PR #134 round 1).
       parallelism: 20,
+      parallelismMax: 200,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new ClassesStore({
@@ -172,9 +178,9 @@ describe("classes-store: membership mutations under concurrency", () => {
               `duplicate profile ids in member list: ${JSON.stringify(ids)}`
             );
           }
-          // Every id matches the schema pattern (no torn writes).
+          // Every id matches the makeProfileId(i) format (no torn writes).
           for (const id of ids) {
-            if (!/^profile-\d{3}$/.test(id)) {
+            if (!/^profile-\d+$/.test(id)) {
               throw new Error(`malformed profile id in member list: ${id}`);
             }
           }

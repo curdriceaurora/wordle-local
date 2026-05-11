@@ -76,7 +76,11 @@ describe("leaderboard-store: writeQueue serializes parallel mutators", () => {
     await runConcurrencyScenario({
       name: "leaderboard-store: parallel mutate (distinct profiles)",
       parallelism: 20,
-      // Profile cap is 200 by default — well above our N.
+      // LeaderboardStore.DEFAULT_MAX_PROFILES is 50. `parallelismMax`
+      // clamps env stress mode (CONCURRENCY_PARALLELISM=200) so we
+      // don't trip the schema's pruning code path — codex/Copilot
+      // caught this on PR #134 round 1.
+      parallelismMax: 50,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new LeaderboardStore({
@@ -146,7 +150,8 @@ describe("leaderboard-store: writeQueue serializes parallel mutators", () => {
                 `(replace is not atomic)`
             );
           }
-          // The profile must be one of the candidates (id like "p-000".."p-019").
+          // The profile must be one of the candidates (id like
+          // "p-a", "p-b", ..., from indexToAlphaSuffix).
           if (!/^p-[a-z]+$/.test(snap.profiles[0].id)) {
             throw new Error(`final profile id ${snap.profiles[0].id} doesn't match expected pattern`);
           }

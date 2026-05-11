@@ -24,11 +24,13 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const nodeCrypto = require("node:crypto");
 
 const { WebhookStore } = require("../lib/webhook-store");
 const { WebhookDeliveryStore } = require("../lib/webhook-delivery-store");
-const { PushSubscriptionStore } = require("../lib/push-subscription-store");
+const {
+  PushSubscriptionStore,
+  endpointHashOf
+} = require("../lib/push-subscription-store");
 
 const { runConcurrencyScenario } = require("./helpers/concurrency-fixture");
 
@@ -142,11 +144,10 @@ describe("push-subscription-store: parallel upsert", () => {
       invariants: [
         async ({ store }) => {
           const snap = await store.getSnapshot();
-          const expectedHash = nodeCrypto
-            .createHash("sha256")
-            .update(fixedEndpoint)
-            .digest("hex")
-            .slice(0, 16);
+          // Use the store's exported helper so this test stays in
+          // sync if the hash algorithm/format ever changes (Copilot
+          // caught the inline re-implementation on PR #134 r1).
+          const expectedHash = endpointHashOf(fixedEndpoint);
           const matches = snap.subscriptions.filter(
             (s) => s.endpointHash === expectedHash
           );

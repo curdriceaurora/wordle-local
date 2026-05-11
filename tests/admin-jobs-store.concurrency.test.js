@@ -98,11 +98,14 @@ describe("admin-jobs-store: claimNextQueuedJob is exclusive", () => {
     // effects. The first M callers each claim a different queued
     // job; the rest see an empty queue and return null. No job is
     // claimed twice.
-    const M_JOBS = 5;
-    const PARALLEL_CLAIMS = 20;
+    // Seed M jobs, fire parallel claims. Some claimers get a job;
+    // the rest get null. The invariant derives expected counts from
+    // store state so it's tolerant of env-driven parallelism
+    // changes (CONCURRENCY_PARALLELISM=200 just adds more nulls).
+    const SEEDED_JOBS = 5;
     await runConcurrencyScenario({
       name: "admin-jobs-store: parallel claimNextQueuedJob",
-      parallelism: PARALLEL_CLAIMS,
+      parallelism: 20,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
         const store = new AdminJobsStore({
@@ -111,49 +114,53 @@ describe("admin-jobs-store: claimNextQueuedJob is exclusive", () => {
           logger: { warn: () => {}, error: () => {} }
         });
         await store.load();
-        // Seed M_JOBS queued jobs.
-        for (let i = 0; i < M_JOBS; i += 1) {
+        for (let i = 0; i < SEEDED_JOBS; i += 1) {
           await store.enqueueProviderImportJob(sampleRequest(i));
         }
         return { store, dir };
       },
       operation: async ({ store }) => store.claimNextQueuedJob(),
       invariants: [
-        async ({ store }, { results }) => {
+        async ({ store }, { results, parallelism }) => {
           const claimed = results.filter((r) => r !== null);
           const nulls = results.filter((r) => r === null);
-          if (claimed.length !== M_JOBS) {
+          // (1) Every caller got either a job or null.
+          if (nulls.length + claimed.length !== parallelism) {
             throw new Error(
-              `expected ${M_JOBS} claims; got ${claimed.length} ` +
-                `(at most-once invariant broken)`
+              `null + claimed (${nulls.length} + ${claimed.length}) != parallelism (${parallelism})`
             );
           }
-          if (nulls.length !== PARALLEL_CLAIMS - M_JOBS) {
+          // (2) Claim count equals min(SEEDED_JOBS, parallelism) —
+          // every seeded job got claimed (no leaks), and we didn't
+          // claim more than were seeded.
+          const expectedClaimed = Math.min(SEEDED_JOBS, parallelism);
+          if (claimed.length !== expectedClaimed) {
             throw new Error(
-              `expected ${PARALLEL_CLAIMS - M_JOBS} null returns; got ${nulls.length}`
+              `expected ${expectedClaimed} claims; got ${claimed.length} ` +
+                `(exclusivity broken or job not surfaced)`
             );
           }
-          // Each claim is a unique job (no double-claim).
+          // (3) Each claim is a unique job (no double-claim).
           const claimedIds = new Set(claimed.map((j) => j.id));
-          if (claimedIds.size !== M_JOBS) {
+          if (claimedIds.size !== claimed.length) {
             throw new Error(
-              `expected ${M_JOBS} unique claimed ids; got ${claimedIds.size} ` +
+              `expected ${claimed.length} unique claimed ids; got ${claimedIds.size} ` +
                 `(same job claimed twice — exclusivity broken)`
             );
           }
-          // Every claimed job has status="running".
+          // (4) Every claim has status="running".
           for (const job of claimed) {
             if (job.status !== "running") {
               throw new Error(`claimed job ${job.id} has unexpected status ${job.status}`);
             }
           }
-          // Store snapshot: M_JOBS running, 0 queued.
+          // (5) Store snapshot: SEEDED_JOBS running, 0 queued.
           const snap = await store.getSnapshot();
           const running = snap.jobs.filter((j) => j.status === "running");
           const queued = snap.jobs.filter((j) => j.status === "queued");
-          if (running.length !== M_JOBS) {
+          if (running.length !== expectedClaimed) {
             throw new Error(
-              `expected ${M_JOBS} running jobs in store; got ${running.length}`
+              `expected ${expectedClaimed} running jobs in store; got ${running.length}`
             );
           }
           if (queued.length !== 0) {
@@ -169,11 +176,16 @@ describe("admin-jobs-store: claimNextQueuedJob is exclusive", () => {
 });
 
 describe("admin-jobs-store: parallel terminal updates", () => {
-  test("parallel markSucceeded on the same running job is idempotent under the writeQueue", async () => {
-    // Test the per-job terminal-state invariant: once succeeded,
-    // subsequent markSucceeded calls re-stamp updatedAt but don't
-    // corrupt the job. With writeQueue serialization, each call
-    // sees the previous one's state.
+  test("parallel markSucceeded on the same job is idempotent (terminal-state convergence)", async () => {
+    // markSucceeded has no "must be running" precondition — every
+    // call sets status="succeeded" and stamps updatedAt. With
+    // writeQueue serialization, N parallel markSucceeded calls all
+    // succeed and the final state has status=succeeded with a
+    // single updatedAt timestamp (last writer wins). No corruption,
+    // no duplicate rows.
+    //
+    // Copilot caught the prior comment claiming a precondition error
+    // on PR #134 round 1 — corrected here.
     await runConcurrencyScenario({
       name: "admin-jobs-store: parallel markSucceeded same job",
       parallelism: 10,
@@ -186,18 +198,13 @@ describe("admin-jobs-store: parallel terminal updates", () => {
         });
         await store.load();
         const enqueued = await store.enqueueProviderImportJob(sampleRequest(0));
-        // Claim so the job is in "running" state and markSucceeded
-        // will accept it.
+        // Claim once so the job starts as "running"; subsequent
+        // markSucceeded calls all transition to "succeeded".
         await store.claimNextQueuedJob();
         return { store, jobId: enqueued.id, dir };
       },
       operation: async ({ store, jobId }, i) =>
         store.markSucceeded(jobId, { artifacts: { iteration: i } }),
-      acceptableErrors: ["INVALID_JOB_STATE"],
-      // First call succeeds; subsequent ones may reject because the job
-      // is already in a terminal state (not "running"). Either path
-      // is fine — we just want no corruption.
-      expectedSuccesses: (summary) => summary.parallelism - summary.errors.length,
       invariants: [
         async ({ store, jobId }) => {
           const snap = await store.getSnapshot();
@@ -208,7 +215,6 @@ describe("admin-jobs-store: parallel terminal updates", () => {
           if (matches[0].status !== "succeeded") {
             throw new Error(`expected status="succeeded"; got ${matches[0].status}`);
           }
-          // finishedAt and updatedAt must be set.
           if (!matches[0].finishedAt) {
             throw new Error("finishedAt not set after succeeded");
           }
