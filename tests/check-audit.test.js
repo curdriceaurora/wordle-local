@@ -257,6 +257,14 @@ describe("parseAuditOutput", () => {
     expect(() => parseAuditOutput("[]")).toThrow(/not a JSON object/);
     expect(() => parseAuditOutput("null")).toThrow(/not a JSON object/);
   });
+
+  test("throws when `vulnerabilities` is an array, not a map (Copilot round 5)", () => {
+    // Arrays satisfy `typeof === "object"` in JS — must be rejected
+    // explicitly to keep the fail-closed posture against malformed
+    // payloads.
+    const arrayShaped = JSON.stringify({ vulnerabilities: [] });
+    expect(() => parseAuditOutput(arrayShaped)).toThrow(/missing `vulnerabilities` map/);
+  });
 });
 
 // ---------- diffAdvisoriesAgainstBaseline ----------
@@ -510,6 +518,40 @@ describe("loadBaseline", () => {
       );
       // Full entry should load cleanly.
       expect(() => loadBaseline(writeBaseline({ accepted: [fullEntry] }))).not.toThrow();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("trims whitespace on string fields before storing (Copilot round 5)", () => {
+    // Validating .trim() but storing the untrimmed original would
+    // silently turn whitespace typos into baseline entries that
+    // never match the audit. Verify stored values are normalized.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "loadBaseline-trim-"));
+    try {
+      const p = path.join(tmpDir, "baseline.json");
+      fs.writeFileSync(
+        p,
+        JSON.stringify({
+          accepted: [
+            {
+              ghsa: "GHSA-aaaa-bbbb-cccc",
+              package: "  lodash  ",
+              severity: " moderate ",
+              title: " Prototype pollution ",
+              nodes: ["  node_modules/lodash  "],
+              scope: " dev ",
+              rationale: " test "
+            }
+          ]
+        })
+      );
+      const { acceptedKeys, acceptedByKey } = loadBaseline(p);
+      // The canonical key uses the trimmed package name.
+      expect([...acceptedKeys]).toEqual(["GHSA-AAAA-BBBB-CCCC|lodash"]);
+      const entry = acceptedByKey.get("GHSA-AAAA-BBBB-CCCC|lodash");
+      expect(entry.nodes).toEqual(["node_modules/lodash"]);
+      expect(entry.scope).toBe("dev");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

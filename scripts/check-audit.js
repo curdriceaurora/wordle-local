@@ -128,20 +128,27 @@ function loadBaseline(filePath = baselinePath) {
     if (!ghsa) {
       throw new Error(`[check-audit] baseline entry has invalid \`ghsa\`: ${JSON.stringify(entry.ghsa)}`);
     }
-    const pkg = typeof entry.package === "string" && entry.package.trim() ? entry.package : null;
+    // Trim-then-store every string field. Validating the trimmed
+    // form but storing the untrimmed original was a Copilot-caught
+    // bug on PR #139 round 5: a baseline entry with accidental
+    // whitespace (`"package": " lodash "`) would pass validation
+    // but the key would never match the audit output's `"lodash"`,
+    // surfacing as a confusing "advisory not in baseline" failure
+    // instead of a "fix your whitespace" error.
+    const pkg = typeof entry.package === "string" && entry.package.trim() ? entry.package.trim() : null;
     if (!pkg) {
       throw new Error(`[check-audit] baseline entry for ${ghsa} missing \`package\``);
     }
-    const severity = typeof entry.severity === "string" && entry.severity.trim() ? entry.severity : null;
+    const severity = typeof entry.severity === "string" && entry.severity.trim() ? entry.severity.trim() : null;
     if (!severity) {
       throw new Error(`[check-audit] baseline entry for ${ghsa}|${pkg} missing \`severity\``);
     }
-    const title = typeof entry.title === "string" && entry.title.trim() ? entry.title : null;
+    const title = typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : null;
     if (!title) {
       throw new Error(`[check-audit] baseline entry for ${ghsa}|${pkg} missing \`title\``);
     }
     const rationale =
-      typeof entry.rationale === "string" && entry.rationale.trim() ? entry.rationale : null;
+      typeof entry.rationale === "string" && entry.rationale.trim() ? entry.rationale.trim() : null;
     if (!rationale) {
       throw new Error(
         `[check-audit] baseline entry for ${ghsa}|${pkg} missing \`rationale\` ` +
@@ -149,7 +156,9 @@ function loadBaseline(filePath = baselinePath) {
       );
     }
     const nodes = Array.isArray(entry.nodes)
-      ? entry.nodes.filter((n) => typeof n === "string" && n.trim())
+      ? entry.nodes
+          .filter((n) => typeof n === "string" && n.trim())
+          .map((n) => n.trim())
       : null;
     if (!nodes || nodes.length === 0) {
       throw new Error(
@@ -157,7 +166,7 @@ function loadBaseline(filePath = baselinePath) {
           "(pins the dependency-path scope of the bless)"
       );
     }
-    const scope = typeof entry.scope === "string" ? entry.scope : null;
+    const scope = typeof entry.scope === "string" ? entry.scope.trim() : null;
     if (!scope || !VALID_SCOPES.has(scope)) {
       throw new Error(
         `[check-audit] baseline entry for ${ghsa}|${pkg} has invalid \`scope\` ` +
@@ -230,10 +239,19 @@ function parseAuditOutput(raw) {
         : parsed.error?.summary || parsed.error?.detail || JSON.stringify(parsed.error);
     throw new Error(`[check-audit] npm audit reported an error: ${msg}`);
   }
-  // Real audit reports include a `vulnerabilities` map (even when
-  // empty). Transport-error payloads (registry 403, network failure)
-  // do not. Refusing the latter ensures we fail closed.
-  if (!parsed.vulnerabilities || typeof parsed.vulnerabilities !== "object") {
+  // Real audit reports include a `vulnerabilities` MAP (object, not
+  // array — every audit report uses an object keyed by package name,
+  // even when empty `{}`). Arrays satisfy `typeof === "object"` in
+  // JS, so we reject them explicitly to keep parsing fail-closed on
+  // unexpected shapes like `{vulnerabilities: []}` that might come
+  // from a malformed proxy payload (Copilot caught this on PR #139
+  // round 5). Transport-error payloads (registry 403, network
+  // failure) don't include the field at all.
+  if (
+    !parsed.vulnerabilities ||
+    typeof parsed.vulnerabilities !== "object" ||
+    Array.isArray(parsed.vulnerabilities)
+  ) {
     throw new Error(
       "[check-audit] npm audit output missing `vulnerabilities` map " +
         "(likely a registry/transport error; refusing to mark CI green)"
