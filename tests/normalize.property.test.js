@@ -128,25 +128,22 @@ for (const entry of registry) {
     test("idempotence: normalize(normalize(x)) === normalize(x)", () => {
       fc.assert(
         fc.property(entry.arbitrary, (rawInput) => {
-          let onceState;
-          try {
-            onceState = entry.select(entry.normalize(rawInput));
-          } catch {
-            // Arbitrary is supposed to produce valid input. If
-            // normalize throws on a non-trivially-broken input,
-            // either the arbitrary needs tightening or the
-            // normalize contract is inconsistent. Skip the case so
-            // the run isn't blocked — persistent flakes from this
-            // path will surface via the schema-validity property.
-            return true;
-          }
+          // No try/catch: the arbitrary is schema-valid by
+          // construction and normalize must accept it. A throw
+          // here is a bug to investigate, not a case to swallow.
+          // Codex P2 + Copilot caught the prior `catch { return
+          // true; }` pattern on PR #133 — silent skips made the
+          // property vacuously pass on any arbitrary that
+          // generated normalize-rejected input.
+          const onceState = entry.select(entry.normalize(rawInput));
           const twiceState = entry.select(entry.normalize(onceState));
-          // Use deep-equality via JSON round-trip — fast-check's
-          // assertion would otherwise compare references for nested
-          // objects. JSON.stringify is sufficient because every
-          // normalize output is JSON-serializable by design (it's
-          // what gets persisted).
-          expect(JSON.stringify(twiceState)).toBe(JSON.stringify(onceState));
+          // jest's `toEqual` does proper recursive structural
+          // equality — order-independent for objects, order-sensitive
+          // for arrays (correct for our canonical-shape contract).
+          // Previously used `JSON.stringify(...) === JSON.stringify(...)`
+          // which is order-dependent on object keys (Copilot caught
+          // on PR #133).
+          expect(twiceState).toEqual(onceState);
         }),
         { numRuns: 50 }
       );
@@ -155,13 +152,7 @@ for (const entry of registry) {
     test("schema-validity: normalize output passes the persisted schema", () => {
       fc.assert(
         fc.property(entry.arbitrary, (rawInput) => {
-          let canonical;
-          try {
-            canonical = entry.select(entry.normalize(rawInput));
-          } catch {
-            // Same as above: skip thrown inputs.
-            return true;
-          }
+          const canonical = entry.select(entry.normalize(rawInput));
           const valid = entry.schema(canonical);
           if (!valid) {
             // Helpful diagnostic — show the schema errors plus the
