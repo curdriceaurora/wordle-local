@@ -6,11 +6,13 @@
 // asserts the production contract:
 //
 //   - Server doesn't crash (status < 500). A 2xx response is fine
-//     if the route legitimately accepts the sanitized input —
-//     Express's body parser strips `__proto__` keys before the
-//     handler sees them, accepts BOM prefixes, etc. The contract
-//     is "no crash, no leak, no proto-pollution" — NOT "every
-//     malformed input must 4xx".
+//     when the route legitimately accepts the input — `express.json()`
+//     with default options PARSES the JSON but does not strip
+//     `__proto__` keys; whether pollution lands depends on what the
+//     handler does with the parsed object. The contract this harness
+//     asserts is "no crash, no leak, no proto-pollution observed via
+//     the post-matrix sentinel" — NOT "every malformed input must
+//     4xx" and NOT "the parser sanitizes the body".
 //   - Neither `response.body` NOR `response.text` leaks
 //     filesystem paths, the ADMIN_KEY value, or V8 stack frames.
 //     We check both because body-parser errors typically yield a
@@ -63,12 +65,17 @@ function resetEnv() {
   });
 }
 
-function tempPath(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-fuzz-"));
-  return { dir, filePath: path.join(dir, name) };
-}
-
+// One tempdir per loadApp call (not per-store). Hosts all 11 store
+// files side-by-side. The prior implementation called mkdtempSync
+// once per store; multiplied by 48+ fuzz cases that's ~528 mkdtemp
+// calls and ~528 rmdir calls per run — observable filesystem
+// overhead. CodeRabbit caught this on PR #136 round 2.
 const tempDirs = [];
+function mkAppTempdir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-fuzz-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function loadApp(adminKey) {
   jest.resetModules();
@@ -85,41 +92,18 @@ function loadApp(adminKey) {
   // vs the actual WEBHOOKS_STORE_PATH), which silently let the
   // fuzz run against the REAL repo data/ directory. Names below
   // come from grepping `server.js` for `process.env.*PATH`.
-  const schedule = tempPath("schedule.json");
-  const stats = tempPath("leaderboard.json");
-  const webhooks = tempPath("webhooks.json");
-  const deliveries = tempPath("webhook-deliveries.json");
-  const challenges = tempPath("challenges.json");
-  const results = tempPath("challenge-results.json");
-  const classes = tempPath("classes.json");
-  const adminJobs = tempPath("admin-jobs.json");
-  const pushSubs = tempPath("push-subscriptions.json");
-  const vapid = tempPath("vapid.json");
-  const appConfig = tempPath("app-config.json");
-  tempDirs.push(
-    schedule.dir,
-    stats.dir,
-    webhooks.dir,
-    deliveries.dir,
-    challenges.dir,
-    results.dir,
-    classes.dir,
-    adminJobs.dir,
-    pushSubs.dir,
-    vapid.dir,
-    appConfig.dir
-  );
-  process.env.SCHEDULE_STORE_PATH = schedule.filePath;
-  process.env.STATS_STORE_PATH = stats.filePath;
-  process.env.WEBHOOKS_STORE_PATH = webhooks.filePath;
-  process.env.WEBHOOK_DELIVERIES_STORE_PATH = deliveries.filePath;
-  process.env.CHALLENGE_STORE_PATH = challenges.filePath;
-  process.env.CHALLENGE_RESULTS_STORE_PATH = results.filePath;
-  process.env.CLASSES_STORE_PATH = classes.filePath;
-  process.env.ADMIN_JOBS_STORE_PATH = adminJobs.filePath;
-  process.env.PUSH_SUBSCRIPTIONS_STORE_PATH = pushSubs.filePath;
-  process.env.VAPID_KEYS_STORE_PATH = vapid.filePath;
-  process.env.APP_CONFIG_PATH = appConfig.filePath;
+  const root = mkAppTempdir();
+  process.env.SCHEDULE_STORE_PATH = path.join(root, "schedule.json");
+  process.env.STATS_STORE_PATH = path.join(root, "leaderboard.json");
+  process.env.WEBHOOKS_STORE_PATH = path.join(root, "webhooks.json");
+  process.env.WEBHOOK_DELIVERIES_STORE_PATH = path.join(root, "webhook-deliveries.json");
+  process.env.CHALLENGE_STORE_PATH = path.join(root, "challenges.json");
+  process.env.CHALLENGE_RESULTS_STORE_PATH = path.join(root, "challenge-results.json");
+  process.env.CLASSES_STORE_PATH = path.join(root, "classes.json");
+  process.env.ADMIN_JOBS_STORE_PATH = path.join(root, "admin-jobs.json");
+  process.env.PUSH_SUBSCRIPTIONS_STORE_PATH = path.join(root, "push-subscriptions.json");
+  process.env.VAPID_KEYS_STORE_PATH = path.join(root, "vapid.json");
+  process.env.APP_CONFIG_PATH = path.join(root, "app-config.json");
   process.env.SCHEDULER_CHECK_INTERVAL_MS = String(60 * 60 * 1000);
   return require("../server");
 }
@@ -169,11 +153,14 @@ const PROTO_INJECT_NESTED = JSON.parse(
 //     supertest's write/end path so Node doesn't re-encode it
 const PAYLOADS = [
   { name: "empty body", body: {} },
-  // superagent.send(null) actually sends NO body (it early-returns
-  // before serialization), so the prior `body: null` was a duplicate
-  // of "empty body". To exercise the literal JSON `null` path, send
-  // the string "null" as raw JSON. CodeRabbit caught this on PR #136.
-  { name: "literal JSON null", raw: true, body: "null" },
+  // Top-level JSON `null` against `express.json()` default options:
+  // strict mode (which is the default) rejects this with
+  // `entity.parse.failed`. The case exercises that strict-parser
+  // error path — handler is never reached. NOT a "happy null body"
+  // case (CodeRabbit caught the prior naming on PR #136; Copilot
+  // refined the rationale on round 2 — the test still earns its
+  // keep by covering the parser-strict-reject branch).
+  { name: "top-level JSON null (strict-parser reject)", raw: true, body: "null" },
   { name: "depth-bomb (object, 500 levels)", body: depthBombObject(500) },
   { name: "depth-bomb (array, 500 levels)", body: depthBombArray(500) },
   { name: "__proto__ injection at top", body: PROTO_INJECT_TOP },
@@ -249,12 +236,16 @@ const ROUTES_TO_FUZZ = [
 //
 // We do NOT clean Object.prototype between fuzz cases. A polluting
 // payload that lands during one case would otherwise be wiped by
-// afterEach before the assertion below could observe it. Cleanup
-// happens ONLY at suite end (afterAll). The sentinel assertions run
-// inside the matrix loop AND after the loop completes so any
-// pollution is caught regardless of which payload introduced it.
-// Codex P2 + Copilot caught the prior afterEach-then-assert ordering
-// on PR #136.
+// afterEach before the post-matrix sentinel could observe it.
+// Cleanup happens ONLY at suite end (afterAll). The single
+// sentinel test below runs AFTER every matrix test and asserts the
+// worst-case state. We deliberately moved AWAY from a per-payload
+// check on round 2 — the cascade pattern (one polluter → all
+// subsequent payload tests fail) drowned the polluter's identity
+// in the test output; one end-of-suite check gives cleaner
+// diagnostics. The downside is the sentinel doesn't pinpoint
+// which payload polluted; if that becomes relevant in practice,
+// adding a tightly-scoped per-payload assert is straightforward.
 
 afterAll(() => {
   // One-time cleanup so a polluted Object.prototype doesn't leak
@@ -361,10 +352,10 @@ function requireRoutes(routes) {
 
 describe("admin route input fuzz: prototype-pollution sentinel (post-matrix)", () => {
   test("after every fuzz test ran, Object.prototype remains clean", () => {
-    // The matrix loop above asserts per-payload. This sentinel
-    // catches the case where a pollution lands but somehow isn't
-    // observable by the per-test check (e.g., gets cleared before
-    // the inline assert). Belt-and-suspenders.
+    // This is the ONLY pollution assertion in the file. We moved
+    // away from a per-payload check on round 2 (it cascaded once
+    // any payload polluted, making the polluter hard to identify
+    // — CodeRabbit caught the noise on PR #136).
     expect(objectPrototypeIsClean()).toBe(true);
   });
 });
