@@ -135,9 +135,13 @@ describe("fs-faulty: install/restore semantics", () => {
   });
 
   test("rejects null/undefined/non-object input loudly", () => {
-    expect(() => installFaultyFs(null)).toThrow(/expected an object, got null/);
-    expect(() => installFaultyFs(undefined)).toThrow(/expected an object, got undefined/);
-    expect(() => installFaultyFs("oops")).toThrow(/expected an object, got string/);
+    expect(() => installFaultyFs(null)).toThrow(/expected a plain object, got null/);
+    expect(() => installFaultyFs(undefined)).toThrow(/expected a plain object, got undefined/);
+    expect(() => installFaultyFs("oops")).toThrow(/expected a plain object, got string/);
+    // Arrays pass typeof === "object" but aren't valid configs;
+    // reject explicitly so the error message is clear (Copilot
+    // caught this on PR #135 round 2).
+    expect(() => installFaultyFs([])).toThrow(/expected a plain object, got array/);
   });
 
   test("rejects unknown method names in the fault config", () => {

@@ -33,8 +33,12 @@
 //     pass through to the real fsp.
 //   - `failAll: error` — every call throws `error`. Useful for "disk
 //     is permanently down" scenarios.
-//   - `delay: ms` — every call delays by ms before delegating. Useful
-//     for slow-disk timing tests.
+//   - `delay: ms` — every call sleeps for `ms` BEFORE the fault
+//     checks. Useful for slow-disk timing tests, including
+//     simulating slow-then-fail (combine with `failOnce`/`failAll`)
+//     where the call experiences latency before the error surfaces.
+//     The delay always applies regardless of whether the call
+//     would have otherwise thrown.
 //   - `failIfPath: { match: RegExp, error: Error }` — fail only when
 //     the first argument matches `match`. Useful for "this one file
 //     is unreadable" without affecting unrelated I/O.
@@ -146,11 +150,18 @@ function installFaultyFs(faults) {
   // call (`installFaultyFs()` with no args, or with `null`) fail
   // deep inside the property loop with a confusing TypeError —
   // Copilot caught this on PR #135.
-  if (faults === null || typeof faults !== "object") {
+  if (faults === null || typeof faults !== "object" || Array.isArray(faults)) {
+    // Arrays pass `typeof obj === "object"` so we reject them explicitly —
+    // without this, `installFaultyFs([1, 2])` would fall into the
+    // unknown-method-name check and confusingly complain about
+    // method '0'. Copilot caught this on PR #135 round 2.
+    const got = faults === null
+      ? "null"
+      : Array.isArray(faults)
+        ? "array"
+        : typeof faults;
     throw new TypeError(
-      `[fs-faulty] installFaultyFs(faults): expected an object, got ${
-        faults === null ? "null" : typeof faults
-      }`
+      `[fs-faulty] installFaultyFs(faults): expected a plain object, got ${got}`
     );
   }
   // Warn on unknown keys so a typo like `writefile` (lowercase 'f')

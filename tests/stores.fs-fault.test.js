@@ -213,11 +213,20 @@ describe("challenge-results-store: fault-injection", () => {
         fault.restore();
       }
 
-      // Prior state survives.
+      // Prior state survives in memory.
       const inMemory = await store.load();
       expect(inMemory.sessions).toHaveLength(1);
+      // ON-DISK state preserved by the atomic-rename pattern.
       const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
       expect(reloaded.sessions).toHaveLength(1);
+
+      // Recovery: a fresh op after the fault clears succeeds.
+      await store.createSession({
+        challengeId: "c-gamma",
+        profileId: "p-gamma",
+        puzzles: [{ index: 0, word: "GAMMA", guesses: [], solved: false }]
+      });
+      expect((await store.load()).sessions).toHaveLength(2);
     } finally {
       await cleanup(dir);
     }
@@ -312,6 +321,18 @@ describe("webhook-delivery-store: fault-injection", () => {
 
       const inMemory = await store.getSnapshot();
       expect(inMemory.deliveries).toHaveLength(1);
+      // On-disk state preserved.
+      const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
+      expect(reloaded.deliveries).toHaveLength(1);
+
+      // Recovery: a fresh enqueue after the fault clears succeeds.
+      await store.enqueue({
+        subscriptionId: "sub-3",
+        event: "daily.posted",
+        url: "https://example.com/sink",
+        payload: {}
+      });
+      expect((await store.getSnapshot()).deliveries).toHaveLength(2);
     } finally {
       await cleanup(dir);
     }
@@ -348,6 +369,15 @@ describe("push-subscription-store: fault-injection", () => {
 
       const inMemory = await store.getSnapshot();
       expect(inMemory.subscriptions).toHaveLength(1);
+      const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
+      expect(reloaded.subscriptions).toHaveLength(1);
+
+      // Recovery: a fresh upsert after the fault clears succeeds.
+      await store.upsert({
+        endpoint: "https://push.example.com/third",
+        keys: { p256dh: "p".repeat(87), auth: "a".repeat(22) }
+      });
+      expect((await store.getSnapshot()).subscriptions).toHaveLength(2);
     } finally {
       await cleanup(dir);
     }
@@ -474,10 +504,17 @@ describe("classes-store: fault-injection", () => {
         fault.restore();
       }
 
-      // Prior state preserved.
+      // Prior state preserved in memory + on disk.
       const inMemory = await store.getSnapshot();
       expect(inMemory.classes).toHaveLength(1);
       expect(inMemory.classes[0].name).toBe("First");
+      const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
+      expect(reloaded.classes).toHaveLength(1);
+      expect(reloaded.classes[0].name).toBe("First");
+
+      // Recovery: a fresh createClass after the fault clears succeeds.
+      await store.createClass("Second-recovered");
+      expect((await store.getSnapshot()).classes).toHaveLength(2);
     } finally {
       await cleanup(dir);
     }
@@ -527,6 +564,20 @@ describe("leaderboard-store: fault-injection", () => {
       const inMemory = await store.getSnapshot();
       expect(inMemory.profiles).toHaveLength(1);
       expect(inMemory.profiles[0].id).toBe("alpha");
+      const reloaded = JSON.parse(await fsp.readFile(filePath, "utf8"));
+      expect(reloaded.profiles).toHaveLength(1);
+      expect(reloaded.profiles[0].id).toBe("alpha");
+
+      // Recovery: a fresh mutate after the fault clears succeeds.
+      await store.mutate((draft) => {
+        draft.profiles.push({
+          id: "gamma",
+          name: "Gamma",
+          createdAt: "2026-05-11T00:00:00.000Z",
+          updatedAt: "2026-05-11T00:00:00.000Z"
+        });
+      });
+      expect((await store.getSnapshot()).profiles).toHaveLength(2);
     } finally {
       await cleanup(dir);
     }
