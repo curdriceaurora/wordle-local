@@ -19,11 +19,16 @@
 //     plain-text response with body === {} (Copilot caught this
 //     on PR #136).
 //   - Object.prototype is unchanged AFTER the full fuzz matrix
-//     (asserted via a sentinel set BEFORE the matrix runs +
-//     checked AFTER, NOT between tests — the afterEach hook
-//     deliberately leaves prototype mutations intact across the
-//     matrix so the sentinel runs against a worst-case state).
-//   - A follow-up GET on a known-safe admin route still works.
+//     (a single post-matrix sentinel test reads Object.prototype
+//     and asserts no `polluted` key landed). NO per-test cleanup
+//     runs between fuzz cases — a polluting payload's effect is
+//     deliberately preserved across the matrix so the sentinel
+//     observes the worst-case state. Cleanup is suite-end only.
+//   - A baseline GET on a fresh server instance still returns 200
+//     (post-matrix sanity check that the test infrastructure
+//     itself is healthy — NOT a process-level survival assertion;
+//     every fuzz test re-requires server.js via loadApp(), so
+//     each one runs against a fresh process anyway).
 //
 // What we fuzz (each route gets cross-matrix coverage):
 //   - empty / null body
