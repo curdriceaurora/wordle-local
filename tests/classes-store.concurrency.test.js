@@ -137,12 +137,17 @@ describe("classes-store: writeQueue serializes parallel createClass", () => {
 });
 
 describe("classes-store: membership mutations under concurrency", () => {
-  test("parallel addMembers + removeMember on the same class: no half-removed state", async () => {
-    // Seed one class, then alternately add and remove profiles.
-    // Each operation runs under writeQueue; the final state must
-    // be internally consistent.
+  test("parallel addMembers + removeMember on a shared id pool: no half-removed state", async () => {
+    // Codex P2 PR #134 round 1: the prior version added profile-i
+    // for even i and removed profile-i for odd i, so removes always
+    // failed with MEMBER_NOT_FOUND and never actually raced a
+    // successful add. We now seed a SHARED POOL of ids in setup
+    // and both halves operate on that pool — adds may be no-ops
+    // (id already present), removes may succeed OR fail. Either
+    // way the add+remove race is genuinely exercised.
+    const POOL_SIZE = 5; // ids picked deterministically per i
     await runConcurrencyScenario({
-      name: "classes-store: addMembers vs removeMember",
+      name: "classes-store: addMembers vs removeMember (shared pool)",
       parallelism: 20,
       setup: async () => {
         const { dir, filePath } = tempFilePath();
@@ -153,15 +158,21 @@ describe("classes-store: membership mutations under concurrency", () => {
         });
         await store.load();
         const created = await store.createClass("Mixed Class");
+        // Seed all POOL_SIZE ids so initial removes can succeed.
+        await store.addMembers(
+          created.id,
+          Array.from({ length: POOL_SIZE }, (_, k) => makeProfileId(k))
+        );
         return { store, classId: created.id, dir };
       },
       operation: async ({ store, classId }, i) => {
-        const profile = makeProfileId(i);
+        const profile = makeProfileId(i % POOL_SIZE);
         if (i % 2 === 0) {
-          // Add (no-op if already present)
+          // Add: re-add (no-op if still present) or restore after
+          // a prior remove won the race.
           return store.addMembers(classId, [profile]);
         }
-        // Remove may throw MEMBER_NOT_FOUND if never added.
+        // Remove: may succeed (id present) or fail (prior remove won).
         return store.removeMember(classId, profile);
       },
       acceptableErrors: ["MEMBER_NOT_FOUND"],
