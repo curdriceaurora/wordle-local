@@ -37,7 +37,7 @@ Renovate/Dependabot isn't currently wired up; manual quarterly refresh is suffic
 
 ### npm audit baseline
 
-`npm run check` (via `audit:check`) fails CI on any new `npm audit` advisory that isn't listed in `.audit-baseline.json`. The baseline is a list of accepted-risk advisories (by GHSA id) plus rationale for each.
+`npm run check` (via `audit:check`) fails CI on any new `npm audit` advisory that isn't listed in `.audit-baseline.json`. The baseline is a list of accepted-risk advisories keyed by `(GHSA id, package)` pair, plus rationale for each — the same GHSA against a different package requires its own entry.
 
 When CI surfaces a new advisory, you have two paths:
 

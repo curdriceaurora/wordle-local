@@ -26,7 +26,6 @@ const {
 } = require("../scripts/check-audit");
 
 const SCRIPT = path.resolve(__dirname, "..", "scripts", "check-audit.js");
-const BASELINE_PATH = path.resolve(__dirname, "..", ".audit-baseline.json");
 
 // ---------- helpers ----------
 
@@ -72,19 +71,28 @@ exit 99
   fs.chmodSync(shimPath, 0o755);
 }
 
-// Run the script binary with a temporary baseline AND a shimmed npm
-// that returns `auditFixture`. Used for the end-to-end smoke tests
-// at the bottom; the rest of the suite imports the helpers directly.
+// Run the script binary with a tmp baseline AND a shimmed npm that
+// returns `auditFixture`. Used for the end-to-end smoke tests at
+// the bottom; the rest of the suite imports the helpers directly.
+//
+// We never write to the real `.audit-baseline.json` — the script
+// reads `CHECK_AUDIT_BASELINE` env var instead. This means a
+// crashed test (SIGINT/SIGKILL mid-run) can't leave the repo's
+// baseline corrupted (CodeRabbit nit, PR #139 round 2).
 function runScriptWith({ baselineJson, auditFixture }) {
-  const originalBaseline = fs.readFileSync(BASELINE_PATH, "utf8");
-  fs.writeFileSync(BASELINE_PATH, JSON.stringify(baselineJson, null, 2));
-  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "check-audit-shim-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "check-audit-"));
   try {
-    installNpmShim(shimDir, auditFixture);
+    const baselineTmpPath = path.join(tmpDir, "baseline.json");
+    fs.writeFileSync(baselineTmpPath, JSON.stringify(baselineJson, null, 2));
+    installNpmShim(tmpDir, auditFixture);
     const stdout = execFileSync("node", [SCRIPT], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}` }
+      env: {
+        ...process.env,
+        PATH: `${tmpDir}:${process.env.PATH}`,
+        CHECK_AUDIT_BASELINE: baselineTmpPath
+      }
     });
     return { exitCode: 0, stdout, stderr: "" };
   } catch (err) {
@@ -94,8 +102,7 @@ function runScriptWith({ baselineJson, auditFixture }) {
       stderr: err.stderr?.toString() || ""
     };
   } finally {
-    fs.writeFileSync(BASELINE_PATH, originalBaseline);
-    fs.rmSync(shimDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 

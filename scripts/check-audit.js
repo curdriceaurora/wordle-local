@@ -42,7 +42,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const projectRoot = path.resolve(__dirname, "..");
-const baselinePath = path.join(projectRoot, ".audit-baseline.json");
+// Baseline path can be overridden via env var for tests (so the
+// e2e smoke can point at a temp fixture instead of mutating the
+// real .audit-baseline.json in the working tree).
+const baselinePath =
+  process.env.CHECK_AUDIT_BASELINE || path.join(projectRoot, ".audit-baseline.json");
 
 // Canonicalize a GHSA id (uppercase + trim). Some sources use
 // lowercase, some uppercase; the baseline normalizes both sides so
@@ -88,7 +92,13 @@ function runNpmAudit() {
     raw = execFileSync("npm", ["audit", "--json"], {
       cwd: projectRoot,
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      // npm audit JSON for a moderate dep tree easily exceeds Node's
+      // 1 MiB default; bump well past that. Bound runtime so a stuck
+      // registry / proxy can't park CI indefinitely — the gate fails
+      // closed if the timeout fires (caller surfaces the error).
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 120_000
     });
   } catch (err) {
     // `npm audit` exits non-zero when vulns are present. The JSON
@@ -148,6 +158,13 @@ function parseAuditOutput(raw) {
 // String / number entries cross-reference other vulns in the map
 // (transitively-affected packages) and don't carry their own GHSA
 // from the via — we extract directly only from object entries.
+//
+// Assumption — GHSA appears ONLY in `via.url`. We do NOT try to
+// recover a GHSA from `via.source` (numeric advisory-DB id, not a
+// GHSA) or `via.name` (package name). If npm's JSON ever drifts to
+// place a GHSA elsewhere, the gate would silently undercount; the
+// OK-path test in tests/check-audit.test.js would catch the
+// regression if any advisory disappeared from extraction.
 function extractAdvisoriesFromAudit(auditJson) {
   const advisories = [];
   const vulns = auditJson?.vulnerabilities || {};
@@ -169,22 +186,21 @@ function extractAdvisoriesFromAudit(auditJson) {
 }
 
 // Pure logic — exported for unit tests. Determines which advisories
-// in the current audit are missing from the baseline.
+// in the current audit are missing from the baseline. Single pass:
+// `uniqueKeys` tracks every (GHSA, package) pair seen (drives the
+// OK-path total), `seenUnexpected` dedupes the failure list across
+// multiple via entries.
 function diffAdvisoriesAgainstBaseline(advisories, acceptedKeys) {
-  const seenKeys = new Set();
+  const seenUnexpected = new Set();
+  const uniqueKeys = new Set();
   const unexpected = [];
   for (const a of advisories) {
     const key = makeBaselineKey(a.ghsa, a.package);
+    uniqueKeys.add(key);
     if (acceptedKeys.has(key)) continue;
-    if (seenKeys.has(key)) continue; // de-dupe across multiple via entries
-    seenKeys.add(key);
+    if (seenUnexpected.has(key)) continue;
+    seenUnexpected.add(key);
     unexpected.push(a);
-  }
-  // Also dedupe the OK-path total so the success message reports
-  // unique (GHSA, package) pairs, not raw via entries.
-  const uniqueKeys = new Set();
-  for (const a of advisories) {
-    uniqueKeys.add(makeBaselineKey(a.ghsa, a.package));
   }
   return { unexpected, uniqueCount: uniqueKeys.size };
 }
