@@ -74,7 +74,12 @@ jobs:
 
       - name: Install Playwright Browsers
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: npx playwright install --with-deps
+        # Install only the browsers the suite's DEFAULT_BROWSERS matrix
+        # actually runs (chromium + firefox). Webkit is parked per
+        # playwright.config.js / issue #142 — installing it would add
+        # ~150MB of download for no benefit. When #142 closes and
+        # webkit is re-added to DEFAULT_BROWSERS, update this list too.
+        run: npx playwright install --with-deps chromium firefox
 
       - name: Run UI Tests
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
