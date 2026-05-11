@@ -426,23 +426,15 @@ describe("admin-jobs-store: fault-injection", () => {
     }
   });
 
-  // FINDING discovered by C3 — admin-jobs-store's `#enqueueWrite`
-  // lacks the snapshot-restore wrapper that `classes-store.js`
-  // has. When `writeJsonAtomicSync` throws, the already-pushed
-  // in-memory job stays in `this.state.jobs` even though disk
-  // wasn't updated. A follow-up task is filed to apply the
-  // classes-store rollback pattern to admin-jobs-store.
-  //
-  // We use `test.failing` here to TRACK the bug: today this
-  // assertion fails (jobs.length === 2, not 1), which jest
-  // treats as the expected outcome. When the rollback fix lands,
-  // the assertion will pass, jest will fail this test for
-  // "unexpected passing", and CI will surface the test needs to
-  // be promoted to a plain `test()`. That ratchets the bug
-  // closed automatically. Codex caught the prior approach of
-  // asserting `toHaveLength(2)` directly on PR #135 — that would
-  // have masked the fix.
-  test.failing("[pending rollback fix] in-memory state preserved on persist failure", async () => {
+  // Discovered by the C3 fault-injection harness on PR #135: when
+  // `writeJsonAtomicSync` threw inside `#enqueueWrite`, the
+  // already-pushed in-memory job stayed in `this.state.jobs` even
+  // though disk wasn't updated. This was tracked with a
+  // `test.failing` block while PR #137 applied the classes-store
+  // snapshot-restore pattern to admin-jobs-store. Now that the fix
+  // is in place, the assertion is the regression guard — the test
+  // should pass and stay passing.
+  test("in-memory state rolled back on persist failure", async () => {
     const { dir, filePath } = tempFilePath("admin-jobs.json");
     try {
       const store = new AdminJobsStore({ filePath, now: frozenNow() });
@@ -462,12 +454,13 @@ describe("admin-jobs-store: fault-injection", () => {
         fault.restore();
       }
 
-      // EXPECTED post-rollback-fix: in-memory jobs.length === 1.
-      // Today this fails (length === 2 because the push happened
-      // before the throw). `test.failing` makes the failing
-      // assertion the "expected outcome" until the fix lands.
+      // Snapshot-restore wrapper around `#enqueueWrite` must revert
+      // the pushed job when persist throws — observable as
+      // jobs.length === 1 (the en job from before the failed push),
+      // not 2.
       const inMemory = await store.getSnapshot();
       expect(inMemory.jobs).toHaveLength(1);
+      expect(inMemory.jobs[0].request.language).toBe("en");
     } finally {
       await cleanup(dir);
     }
