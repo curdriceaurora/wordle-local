@@ -536,18 +536,22 @@ describe("admin-jobs-store: in-memory rollback on persist failure", () => {
 
     // Fail the next renameSync — atomic-write's commit step. This forces
     // writeJsonAtomicSync to throw STORE_WRITE_FAILED after the in-memory
-    // push has already happened, exercising the rollback path.
+    // push has already happened, exercising the rollback path. Restored
+    // in a finally so an unexpected assertion failure can't leak the spy
+    // to subsequent tests.
     const renameSpy = jest.spyOn(fs, "renameSync").mockImplementationOnce(() => {
       const err = new Error("simulated disk failure");
       err.code = "EIO";
       throw err;
     });
 
-    await expect(
-      store.enqueueProviderImportJob(buildRequest({ variant: "en-GB" }))
-    ).rejects.toMatchObject({ code: "STORE_WRITE_FAILED" });
-
-    renameSpy.mockRestore();
+    try {
+      await expect(
+        store.enqueueProviderImportJob(buildRequest({ variant: "en-GB" }))
+      ).rejects.toMatchObject({ code: "STORE_WRITE_FAILED" });
+    } finally {
+      renameSpy.mockRestore();
+    }
 
     // The rollback must have restored this.state. In-memory view shows
     // only the first job; on-disk file is unchanged from the prior
