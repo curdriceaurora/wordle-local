@@ -10,7 +10,7 @@ const { defineConfig } = require("@playwright/test");
 // invested in fixing. Webkit stays runnable via
 // `PLAYWRIGHT_BROWSERS=webkit npm run test:ui`. Tracking issue: #142.
 const ALL_BROWSERS = ["chromium", "firefox", "webkit"];
-const DEFAULT_BROWSERS = ["chromium", "firefox"];
+const DEFAULT_BROWSERS = ["chromium", "firefox", "webkit"];
 const requestedBrowsers = process.env.PLAYWRIGHT_BROWSERS
   ? process.env.PLAYWRIGHT_BROWSERS.split(",").map((entry) => entry.trim()).filter(Boolean)
   : [];
