@@ -8,15 +8,31 @@ on:
   schedule:
     - cron: "0 9 * * *"
 
+# Explicit minimum-required permissions so this workflow's
+# `GITHUB_TOKEN` only carries the scopes the steps actually need
+# — regardless of the repo/org-level default. Stays correct if a
+# future admin change widens the org-default token permissions.
+#
+# `pull-requests: read` is required by `dorny/paths-filter@v3`,
+# which uses the GitHub REST API to list changed files on
+# pull_request events. Without it the filter silently returns
+# no matches (no error — just an empty result), which would
+# make the conditional steps (provider-workflow gate) skip
+# even on genuinely-changed PRs. CodeRabbit caught this on
+# PR #138.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
@@ -27,7 +43,7 @@ jobs:
       - name: Detect Provider Workflow Changes
         if: github.event_name == 'pull_request'
         id: provider_paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
         with:
           filters: |
             provider_workflow:
@@ -65,7 +81,7 @@ jobs:
 
       - name: Upload UI Coverage Report
         if: github.event_name == 'schedule'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ui-coverage
           path: |
