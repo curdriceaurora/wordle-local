@@ -6,9 +6,9 @@ const { test, expect } = require("./fixtures");
 // Playwright worker, the multi-context choreography can run up
 // against the default 30s test timeout — especially the firefox
 // project, which lacks chromium's tab-process batching optimizations.
-// Bump to 60s so the suite doesn't intermittently flake on the
+// Bump to 120s so the suite doesn't intermittently flake on the
 // concurrent-clients tests (caught while validating #142 / PR #143).
-test.describe.configure({ timeout: 60000 });
+test.describe.configure({ timeout: 120000 });
 
 const gotoOptions = { waitUntil: "commit" };
 const DAILY_WORD_CODE = "yfrqp"; // CRANE
@@ -58,6 +58,13 @@ function dailyLink(day) {
 async function openDaily(page, day, options = {}) {
   const expectProfilePanel = options.expectProfilePanel !== false;
   await page.goto(dailyLink(day), gotoOptions);
+  // After goto with waitUntil: "commit", JS hasn't run yet. The
+  // `.hidden` class is removed by app.js once URL params resolve.
+  // Wait for `domcontentloaded` so the bootstrap script has had a
+  // chance to set up before we probe for `#playPanel`. On CI's
+  // single-worker firefox under concurrent-context load, this
+  // settled-state wait avoids racing against a still-hidden panel.
+  await page.waitForLoadState("domcontentloaded");
   await page.waitForSelector("#playPanel:not(.hidden)");
   if (expectProfilePanel) {
     await expect(page.locator("#profilePanel")).toBeVisible();

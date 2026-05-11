@@ -1,14 +1,19 @@
 const { defineConfig } = require("@playwright/test");
 
-// All browsers the suite KNOWS about. Webkit is parked: 61/64 tests
-// fail on webkit (chromium + firefox are 100% green) due to layered
-// webkit/Playwright interaction issues — `<select>` elements in
-// freshly-shown tab panels fail strict visibility checks, `<a href>`
-// click-then-toHaveURL races, and tab-panel `hidden` attribute
-// transitions don't settle. None of these are app bugs; the shipped
-// app works in Safari. They're test-harness friction we haven't
-// invested in fixing. Webkit stays runnable via
-// `PLAYWRIGHT_BROWSERS=webkit npm run test:ui`. Tracking issue: #142.
+// All browsers the suite runs by default: chromium, firefox, webkit.
+// Webkit was temporarily parked from the default matrix in PR #141
+// after 61/64 webkit tests failed; investigation in #142 / PR #143
+// surfaced two real production bugs masked by chromium + firefox
+// silently exempting localhost:
+//   1. Helmet's default CSP includes `upgrade-insecure-requests`,
+//      which webkit enforces literally for localhost — fixed by
+//      explicitly disabling it in server.js.
+//   2. `.toggle` buttons had no `background-color`, exposing the
+//      webkit UA default #c0c0c0 and dropping contrast against
+//      `--muted` below WCAG AA — fixed in public/styles.css.
+// Plus a Playwright 1.49 → 1.60 upgrade resolved older webkit
+// anchor-click navigation bugs. Full suite is now 192/192 across
+// all 3 browsers.
 const ALL_BROWSERS = ["chromium", "firefox", "webkit"];
 const DEFAULT_BROWSERS = ["chromium", "firefox", "webkit"];
 const requestedBrowsers = process.env.PLAYWRIGHT_BROWSERS

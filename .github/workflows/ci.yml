@@ -75,10 +75,10 @@ jobs:
       - name: Install Playwright Browsers
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         # Install all 3 browsers — DEFAULT_BROWSERS in playwright.config.js
-        # is chromium + firefox + webkit. Webkit was re-enabled in #142 after
-        # fixing the upstream root cause (CSP `upgrade-insecure-requests`
-        # forcing HTTPS upgrade on localhost; webkit doesn't auto-exempt
-        # loopback like chromium/firefox do).
+        # is chromium + firefox + webkit. Webkit was re-enabled by the PR
+        # that closed #142 (fixing the upstream root cause: CSP
+        # `upgrade-insecure-requests` forcing HTTPS upgrade on localhost;
+        # webkit doesn't auto-exempt loopback like chromium/firefox do).
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Run UI Tests
