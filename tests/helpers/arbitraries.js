@@ -17,9 +17,13 @@
 //   - Generated inputs are schema-valid by construction. If
 //     `normalize` throws on a generated input, that's a bug to
 //     investigate, not a `catch` to swallow.
-//   - Optional fields are sometimes absent (use `fc.option` so the
-//     "no key present" path is also exercised) — only when the
-//     schema marks them optional.
+//   - Optional fields are controlled via `fc.record(..., { requiredKeys })`
+//     — keys NOT in `requiredKeys` are sometimes absent in the
+//     generated record. We deliberately do NOT wrap optional values
+//     in `fc.option`, because `fc.option(arb, { nil: undefined })`
+//     produces records with `key: undefined` (not absent) — which
+//     is neither JSON-representable nor schema-valid (Copilot caught
+//     this on PR #133 round 3).
 //   - Generated strings are bounded length to keep runs fast.
 
 const nodeCrypto = require("node:crypto");
@@ -121,16 +125,21 @@ const classId = stringFromPool([...HEX_LOWER, "-"], 12, 32).map(
 
 // Leaderboard profile name. Schema: `^[A-Za-z][A-Za-z '\\-]*$`,
 // max 24 chars. Start with a letter then letters/spaces/hyphens/quotes.
+// Codex P2 PR #133 round 3 caught that names ending in a space pass
+// the schema but `normalizeProfile` trims and rejects when
+// `raw !== trimmed`. We anchor the LAST char to be non-space too —
+// the middle can have spaces/hyphens/quotes freely.
+const NAME_LETTERS = [
+  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+];
+const NAME_MIDDLE_CHARS = [...NAME_LETTERS, " ", "'", "-"];
 const leaderboardProfileName = fc
   .tuple(
-    fc.constantFrom(..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"),
-    stringFromPool(
-      [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '-"],
-      0,
-      23
-    )
+    fc.constantFrom(...NAME_LETTERS),
+    stringFromPool(NAME_MIDDLE_CHARS, 0, 22),
+    fc.constantFrom(...NAME_LETTERS)
   )
-  .map(([first, rest]) => `${first}${rest}`);
+  .map(([first, middle, last]) => `${first}${middle}${last}`);
 
 // ---------- Per-store top-level arbitraries ----------
 
@@ -140,7 +149,7 @@ const scheduleEntry = fc.record(
     date: isoDate,
     word: wordAZ,
     lang: langCode,
-    notes: fc.option(fc.string({ minLength: 1, maxLength: 200 }), { nil: undefined })
+    notes: fc.string({ minLength: 1, maxLength: 200 })
   },
   { requiredKeys: ["date", "word", "lang"] }
 );
@@ -154,9 +163,9 @@ const schedule = fc
       auto_rotate: fc.boolean(),
       retention_days: fc.integer({ min: 0, max: 365 }),
       scheduled_words: fc.array(scheduleEntry, { minLength: 0, maxLength: 10 }),
-      auto_rotate_seed: fc.option(fc.string({ minLength: 0, maxLength: 64 }), { nil: undefined }),
-      last_reconciled_for: fc.option(isoDate, { nil: undefined }),
-      last_reconciled_at: fc.option(isoTimestamp, { nil: undefined })
+      auto_rotate_seed: fc.string({ minLength: 0, maxLength: 64 }),
+      last_reconciled_for: isoDate,
+      last_reconciled_at: isoTimestamp
     },
     {
       requiredKeys: [
@@ -212,7 +221,7 @@ const challengeConfig = fc.record(
     replayPolicy: fc.constantFrom("best", "first-only", "unlimited"),
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp,
-    deleted: fc.option(fc.boolean(), { nil: undefined })
+    deleted: fc.boolean()
   },
   {
     requiredKeys: [
@@ -257,7 +266,7 @@ const puzzleEntry = fc.record(
     word: wordAZ,
     guesses: fc.array(wordAZ, { minLength: 0, maxLength: 12 }),
     solved: fc.boolean(),
-    solvedAtMs: fc.option(fc.integer({ min: 0, max: 100000 }), { nil: undefined })
+    solvedAtMs: fc.integer({ min: 0, max: 100000 })
   },
   { requiredKeys: ["index", "word", "guesses", "solved"] }
 );
@@ -267,11 +276,11 @@ const sessionEntry = fc.record(
     id: base64urlId,
     challengeId: base64urlId,
     profileId,
-    profileName: fc.option(fc.string({ minLength: 1, maxLength: 64 }), { nil: undefined }),
+    profileName: fc.string({ minLength: 1, maxLength: 64 }),
     status: fc.constantFrom("in-progress", "pending", "completed", "abandoned", "timed-out"),
     startedAt: isoTimestamp,
-    finishedAt: fc.option(isoTimestamp, { nil: undefined }),
-    score: fc.option(fc.integer({ min: 0, max: 1000000 }), { nil: undefined }),
+    finishedAt: isoTimestamp,
+    score: fc.integer({ min: 0, max: 1000000 }),
     puzzles: fc.array(puzzleEntry, { minLength: 1, maxLength: 5 })
   },
   {
@@ -312,7 +321,7 @@ const webhookSubscription = fc.record(
     enabled: fc.boolean(),
     secret: webhookSecret,
     maxAttempts: fc.integer({ min: 1, max: 20 }),
-    label: fc.option(fc.string({ minLength: 0, maxLength: 80 }), { nil: undefined }),
+    label: fc.string({ minLength: 0, maxLength: 80 }),
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp
   },
@@ -356,8 +365,8 @@ const webhookDelivery = fc.record(
     attempts: fc.integer({ min: 0, max: 20 }),
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp,
-    nextAttemptAt: fc.option(isoTimestamp, { nil: undefined }),
-    lastError: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined })
+    nextAttemptAt: isoTimestamp,
+    lastError: fc.string({ minLength: 0, maxLength: 200 })
   },
   {
     requiredKeys: [
@@ -408,7 +417,7 @@ const pushSubscription = httpsUrl.chain((endpoint) =>
       endpoint: fc.constant(endpoint),
       keys: pushKeys,
       createdAt: isoTimestamp,
-      ua: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined })
+      ua: fc.string({ minLength: 0, maxLength: 200 })
     },
     { requiredKeys: ["endpointHash", "endpoint", "keys", "createdAt"] }
   )
@@ -419,8 +428,8 @@ const pushSubscriptionStore = fc
     {
       version: fc.constant(1),
       updatedAt: isoTimestamp,
-      lastBroadcastAt: fc.option(isoTimestamp, { nil: undefined }),
-      lastDailyFireAt: fc.option(isoTimestamp, { nil: undefined }),
+      lastBroadcastAt: isoTimestamp,
+      lastDailyFireAt: isoTimestamp,
       subscriptions: fc.array(pushSubscription, { minLength: 0, maxLength: 5 })
     },
     { requiredKeys: ["version", "updatedAt", "subscriptions"] }
