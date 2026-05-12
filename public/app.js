@@ -128,7 +128,12 @@ function openShareModal() {
   if (!shareModal) return;
   lastFocusedElement = document.activeElement;
   shareModal.classList.add("is-open");
-  shareModal.setAttribute("aria-hidden", "false");
+  // Switch from `inert` (focus + AT blocked) to live. Using `inert`
+  // instead of `aria-hidden=true` avoids the aria-hidden-focus
+  // violation: an aria-hidden subtree mustn't contain focusable
+  // descendants (the Close button is one), but `inert` properly
+  // suspends them without the contradiction.
+  shareModal.removeAttribute("inert");
   if (shareModalClose) {
     shareModalClose.focus();
   }
@@ -137,7 +142,7 @@ function openShareModal() {
 function closeShareModal() {
   if (!shareModal) return;
   shareModal.classList.remove("is-open");
-  shareModal.setAttribute("aria-hidden", "true");
+  shareModal.setAttribute("inert", "");
   if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
     lastFocusedElement.focus();
   }
