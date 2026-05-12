@@ -87,11 +87,11 @@ B6 / #125:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Webhook delivery** | `lib/webhook-service.js` | Node `fetch` (optional undici) | `WEBHOOK_REQUEST_TIMEOUT_MS` (default 10s) | Per-sub `maxAttempts` (default 5) | `[1s, 5s, 30s, 2m, 10m]` | 0–25% additive (B6) | `WEBHOOK_GLOBAL_INFLIGHT_LIMIT=4` for in-flight; `WEBHOOK_MAX_CONCURRENT_RETRIES=16` for retry budget (B6) |
 | **Provider artifact fetch** | `lib/provider-fetch.js:97-171` | Node `fetch` | `DEFAULT_FETCH_TIMEOUT_MS=15s` | Single-shot (admin can re-upload) | n/a | n/a | None (single per-import event) |
-| **Web-push send** | `lib/notification-service.js:110-141` | `web-push` npm | Delegated to library | Fire-and-forget; next daily fire re-tries | n/a | n/a | `maxConcurrent` worker pool (default 8) |
+| **Web-push send** | `lib/notification-service.js:110-141` | `web-push` npm | Delegated to library | Fire-and-forget; next daily fire retries | n/a | n/a | `maxConcurrent` worker pool (default 8) |
 
 Web-push deliberately does NOT retry within a single fire — failure
-modes are tracked via `failureStreak` and the next daily fire re-
-attempts. See `docs/notifications.md` for the failure-mode table.
+modes are tracked via `failureStreak` and the next daily fire
+retries. See `docs/notifications.md` for the failure-mode table.
 Provider fetch is admin-initiated and re-invokable; adding retry
 there would mask transient errors operators need to see.
 

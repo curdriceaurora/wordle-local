@@ -682,6 +682,91 @@ describe("retry budget cap (B6 / #125)", () => {
     expect(svcStr.maxConcurrentRetries).toBe(16);
     svcStr.shutdown();
   });
+
+  // Helper: seed a delivery in the persisted store with arbitrary
+  // attempts/status to simulate a crash-recovered row. enqueue() always
+  // creates with status=queued/attempts=0; update() advances state.
+  async function seedDelivery(deliveries, sub, { attempts, nextAttemptAt, status } = {}) {
+    const created = await deliveries.enqueue({
+      subscriptionId: sub.id,
+      event: "e",
+      url: sub.url,
+      nextAttemptAt: nextAttemptAt || undefined,
+      payload: {}
+    });
+    if (attempts !== undefined || status) {
+      await deliveries.update(created.id, {
+        ...(attempts !== undefined ? { attempts } : {}),
+        ...(status ? { status } : {})
+      });
+    }
+    return created;
+  }
+
+  // Codex P2 + Copilot on PR #154
+  test("recoverOnBoot counts persisted-retry deliveries against the budget", async () => {
+    const { svc, subs, deliveries } = await buildService({
+      maxConcurrentRetries: 2,
+      // Far-future nextAttemptAt so the schedule doesn't fire and
+      // unwind the budget before we observe.
+      backoffSchedule: [60_000]
+    });
+    const sub = await subs.create({
+      url: "https://a.example/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    const nowFar = new Date(Date.now() + 60_000).toISOString();
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    expect(svc.retryInflightCount).toBe(0);
+    await svc.recoverOnBoot();
+    // Two get scheduled (budget=2); the third hits the budget cap
+    // and is marked failed instead of scheduled.
+    expect(svc.retryInflightCount).toBe(2);
+    await waitForCondition(async () => {
+      const all = (await deliveries.load()).deliveries;
+      return all.some((d) => /retry budget exhausted/.test(d.lastError || "") && d.status === "failed");
+    });
+    const all = (await deliveries.load()).deliveries;
+    const exhausted = all.find((d) => /retry budget exhausted/.test(d.lastError || ""));
+    expect(exhausted).toBeTruthy();
+    expect(exhausted.status).toBe("failed");
+    // Copilot on PR #154: nextAttemptAt must be cleared when the
+    // budget-exhaust path marks the row failed, not left as a
+    // phantom future timestamp.
+    expect(exhausted.nextAttemptAt === null || exhausted.nextAttemptAt === undefined || exhausted.nextAttemptAt === "").toBe(true);
+    svc.shutdown();
+  });
+
+  test("recoverOnBoot treats first-attempt persisted deliveries (attempts=0) as NOT retries", async () => {
+    const { svc, subs, deliveries } = await buildService({
+      maxConcurrentRetries: 1,
+      backoffSchedule: [60_000]
+    });
+    const sub = await subs.create({
+      url: "https://a.example/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    // Fill the retry budget with a real retry (attempts=2).
+    await seedDelivery(deliveries, sub, {
+      attempts: 2,
+      nextAttemptAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    // And a first-attempt-scheduled row (attempts=0 — default from enqueue).
+    await seedDelivery(deliveries, sub, {});
+    await svc.recoverOnBoot();
+    expect(svc.retryInflightCount).toBe(1); // only the attempts=2 row counted
+    // The attempts=0 row should NOT have been marked failed —
+    // first-attempt schedules bypass the retry budget entirely.
+    const all = (await deliveries.load()).deliveries;
+    const firstAttempt = all.find((d) => (d.attempts || 0) === 0);
+    expect(firstAttempt).toBeTruthy();
+    expect(firstAttempt.status).not.toBe("failed");
+    svc.shutdown();
+  });
 });
 
 // B6 / #125: jitter is on by default. Inject a deterministic random
