@@ -727,8 +727,26 @@ function buildKeyboard() {
       if (key === "ENTER" || key === "BACK") {
         button.classList.add("wide");
       }
-      button.textContent = key === "BACK" ? "⌫" : key;
-      button.setAttribute("aria-label", key === "BACK" ? "Backspace" : key);
+      if (key === "BACK") {
+        // Wrap the ⌫ glyph in aria-hidden so the only accessible name
+        // is the explicit aria-label. Some auditors flag a button whose
+        // visible text is purely an unnamed Unicode glyph even when
+        // aria-label is set (Chrome's Lighthouse button-name has been
+        // strict about this in the past).
+        const glyph = document.createElement("span");
+        glyph.setAttribute("aria-hidden", "true");
+        glyph.textContent = "⌫";
+        button.appendChild(glyph);
+        button.setAttribute("aria-label", "Backspace");
+      } else if (key === "ENTER") {
+        button.textContent = key;
+        // "Submit guess" is more meaningful to assistive tech than the
+        // raw key name; matches what the challenge keyboard uses.
+        button.setAttribute("aria-label", "Submit guess");
+      } else {
+        button.textContent = key;
+        button.setAttribute("aria-label", key);
+      }
       button.addEventListener("click", () => handleKey(key));
       rowEl.appendChild(button);
       if (key.length === 1) {
@@ -2234,16 +2252,25 @@ function makeKbKey(label, key, extraClass) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'key' + (extraClass ? ` ${extraClass}` : '');
-  btn.textContent = label;
   // Special keys render glyphs/labels that don't read well to screen
   // readers — "⌫" is a private-use character with no semantic name in
   // most assistive-tech voices, and "Enter" without context can be
   // ambiguous. Provide an explicit accessible name for the special
   // keys; alphabet keys already announce their letter via textContent.
   if (key === 'Backspace') {
+    // Same Backspace pattern as buildKeyboard: hide the glyph from AT
+    // so the only accessible name is the aria-label.
+    const glyph = document.createElement('span');
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = label;
+    btn.appendChild(glyph);
     btn.setAttribute('aria-label', 'Backspace');
   } else if (key === 'Enter') {
+    btn.textContent = label;
     btn.setAttribute('aria-label', 'Submit guess');
+  } else {
+    btn.textContent = label;
+    btn.setAttribute('aria-label', label);
   }
   btn.addEventListener('click', () => onChallengeKey(key));
   return btn;
