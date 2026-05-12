@@ -35,20 +35,22 @@ function createStatsRouter(deps) {
     mergeDailyResult,
     describeRange,
     StatsApiError,
-    // B4 / #123: optional. When supplied, every leaderboard mutation
-    // in this router brackets the disk-write window with the backup
-    // direct-writer slot counter so a backup pre-swap probe sees the
-    // POST in flight and 409s rather than silently winning the race
-    // (drain still catches it, but the operator-facing BACKUP_BUSY
-    // signal is the goal). When the host doesn't inject it (older
-    // tests, embedded uses), the wrap becomes a no-op.
+    // B4 / #123: REQUIRED. Every leaderboard mutation in this router
+    // brackets the disk-write window with the backup direct-writer
+    // slot counter so a backup pre-swap probe sees the POST in flight
+    // and 409s rather than silently winning the race (drain still
+    // catches it, but the operator-facing BACKUP_BUSY signal is the
+    // goal). Fail-fast at wiring time (matches the routes/admin.js
+    // policy on the same dep) so a missing inject can't silently
+    // downgrade concurrency observability — CR Major on PR #151.
     claimDirectDataWriteSlot
   } = deps;
 
+  if (typeof claimDirectDataWriteSlot !== "function") {
+    throw new TypeError("createStatsRouter: claimDirectDataWriteSlot dep is required.");
+  }
+
   async function withSlot(fn) {
-    if (typeof claimDirectDataWriteSlot !== "function") {
-      return fn();
-    }
     const release = await claimDirectDataWriteSlot();
     try {
       return await fn();
