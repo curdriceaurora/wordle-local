@@ -94,7 +94,7 @@
           data-i18n-attr="aria-label:header.notificationsToggleAriaLabel"
           hidden
         >
-          <span id="notificationToggleLabel" data-i18n="header.notificationsToggleOff">Get notified when daily puzzle is ready</span>
+          <span id="notificationToggleLabel" data-i18n="header.notificationsToggleOff">Notifications</span>
         </button>
         <span id="notificationStatus" class="hint" aria-live="polite"></span>
       </div>
@@ -126,7 +126,6 @@
           </div>
           <button type="submit" data-i18n="create.startPuzzle">Start puzzle</button>
           <div id="createStatus" class="message" role="status" aria-live="polite"></div>
-          <p class="note" data-i18n="create.noLogin">No login, no tracking. English is built in, with optional imported variants.</p>
           <p class="note" data-i18n="create.shareLinksNote">Share links are encoded for convenience, not security.</p>
         </form>
       </section>
@@ -148,7 +147,7 @@
         </div>
         <section id="profilePanel" class="profile-panel hidden" aria-live="polite">
           <div class="profile-head">
-            <h3 data-i18n="play.familyPlayerHeading">Family Player</h3>
+            <h3 data-i18n="play.familyPlayerHeading">Player</h3>
             <button type="button" id="switchPlayerBtn" class="link-button hidden" data-i18n="play.switchPlayer">Switch player</button>
           </div>
           <div id="activePlayerWrap" class="note hidden">
@@ -193,7 +192,7 @@
         </section>
         <section id="leaderboardPanel" class="leaderboard-panel hidden">
           <div class="leaderboard-head">
-            <h3 data-i18n="play.leaderboardHeading">Family Leaderboard</h3>
+            <h3 data-i18n="play.leaderboardHeading">Leaderboard</h3>
             <label>
               <span data-i18n="play.leaderboardPeriod">Period</span>
               <select id="leaderboardRange">
@@ -234,12 +233,12 @@
             <button type="button" id="shareCopyBtn" class="ghost" data-i18n="play.copyLink">Copy link</button>
             <button type="button" id="shareInfoBtn" class="link-button" data-i18n="play.aboutShareLinks">About share links</button>
           </div>
-          <p class="note" data-i18n="play.encodedNote">Encoded links can be decoded. Don't use them for secrets.</p>
+          <p class="note" data-i18n="play.encodedNote">Encoded links aren't private.</p>
         </div>
       </section>
 
       <section id="errorPanel" class="panel hidden">
-        <h2 data-i18n="error.heading">Oops!</h2>
+        <h2 data-i18n="error.heading">Something went wrong</h2>
         <p id="errorMessage" class="note"></p>
         <p id="errorCountdown" class="note"></p>
         <a class="admin-link" href="/" data-i18n="error.makeNewPuzzle">Make a new puzzle</a>
