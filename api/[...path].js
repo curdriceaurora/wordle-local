@@ -213,6 +213,26 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
+// Deploy-capability flags layered onto /api/meta. The front-end reads
+// these and hides UI affordances for backends that aren't wired up
+// here — e.g. the header's "Daily Word" link would otherwise navigate
+// to /daily and 404 because that route needs persistent state.
+const DEPLOY_FLAGS = {
+  dailyWordEnabled: false,
+  leaderboardEnabled: false,
+  challengesEnabled: false,
+  notificationsEnabled: false
+};
+
+// Mount the base meta router, then intercept /api/meta with a wrapper
+// that adds the flags. Done with a wrapping response so the upstream
+// router can evolve and we just pass through the rest of the payload.
+app.get("/api/meta", (req, res, next) => {
+  const original = res.json.bind(res);
+  res.json = (body) => original({ ...body, ...DEPLOY_FLAGS });
+  next();
+});
+
 app.use(
   createMetaRouter({
     getAvailableLanguages: () => AVAILABLE_LANGUAGES,

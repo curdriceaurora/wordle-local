@@ -1076,6 +1076,15 @@ async function loadMeta() {
     if (langRow) {
       langRow.classList.toggle("hidden", data.languages.length <= 1);
     }
+    // Hide top-nav links pointing at backends the deploy didn't wire up.
+    // /api/meta on the Vercel preview returns dailyWordEnabled=false, etc.
+    // We only HIDE on an explicit `false`; older servers that don't ship
+    // the flag (undefined) keep the link visible so we don't break them.
+    if (data.dailyWordEnabled === false) {
+      document
+        .querySelectorAll('a.admin-link[href="/daily"]')
+        .forEach((el) => el.classList.add("hidden"));
+    }
     updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = false;
 

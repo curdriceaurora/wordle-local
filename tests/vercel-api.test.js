@@ -26,6 +26,18 @@ describe("vercel api entrypoint", () => {
       expect(res.body.minLength).toBe(3);
       expect(res.body.maxLength).toBe(12);
     });
+
+    test("exposes deploy-capability flags as false so the UI can hide broken links", async () => {
+      const res = await supertest(app).get("/api/meta");
+      // Front-end reads these flags and hides the matching nav links
+      // (e.g. "Daily Word" → /daily 404s without persistent state).
+      // If a flag goes missing here, the link reappears and clicking
+      // it lands on 404 NOT_FOUND.
+      expect(res.body.dailyWordEnabled).toBe(false);
+      expect(res.body.leaderboardEnabled).toBe(false);
+      expect(res.body.challengesEnabled).toBe(false);
+      expect(res.body.notificationsEnabled).toBe(false);
+    });
   });
 
   describe("gameplay endpoints", () => {
