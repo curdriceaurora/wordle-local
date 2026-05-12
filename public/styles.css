@@ -559,6 +559,7 @@ body.high-contrast .tile.absent {
   display: flex;
   justify-content: center;
   gap: 0.4rem;
+  width: 100%;
   max-width: min(40rem, 95vw);
   margin: 0 auto;
   -webkit-overflow-scrolling: touch;
@@ -593,8 +594,11 @@ body.high-contrast .tile.absent {
   padding-left: 0.4rem;
   padding-right: 0.4rem;
   text-transform: uppercase;
-  /* Force ENTER label to fit on a single line; if it ever needs more
-     room than the column gives, shrink rather than wrap or overflow. */
+  /* Defensive: keep the label single-line and clip rather than wrap
+     if the column ever ends up narrower than the text needs (the
+     keyboard row sizes via flex, but a parent layout change could
+     in principle shrink the box). Verified by tests/ui/keyboard-
+     wide-key.spec.js across desktop/tablet/mobile viewports. */
   white-space: nowrap;
   overflow: hidden;
 }

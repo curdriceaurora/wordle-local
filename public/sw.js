@@ -1,12 +1,17 @@
 // v5: invalidates the stale styles.css + app.js cache on existing
-// installs. Two follow-ups landed simultaneously:
-//   - .key.wide (on-screen keyboard ENTER / ⌫) widened materially
-//     (flex 2.4 → 3.5, mobile fixed-width 5.2rem → 6rem) so the
-//     ENTER label has visible breathing room instead of touching
-//     the button edges.
-//   - The Backspace ⌫ glyph and ENTER aria-label hardening from
-//     f693dff (player + challenge keyboards).
-// Cache-first fetch handler would otherwise keep the old styles.
+// installs. Two follow-ups landed in the same revision:
+//   - .key-row gained width:100%. The row had only max-width set,
+//     so it sized to min-content (~355 px on a 640 px keyboard)
+//     and flex-grow had no free space to distribute — letters and
+//     ENTER both pinned to min-width. Setting width:100% makes
+//     flex actually work; .key.wide then expands to a Wordle-ish
+//     proportion and "ENTER" gets visible breathing room.
+//   - Player + challenge keyboards harden Backspace (⌫ wrapped in
+//     <span aria-hidden>) and ENTER (aria-label = "Submit guess")
+//     for stricter button-name auditors.
+// SW's fetch handler is cache-first for non-API requests, so
+// without the cache-name bump existing installs keep getting the
+// old styles.css and the layout fix doesn't reach them.
 //
 // v4: invalidates the stale app.js cache on existing installs. The Vercel
 // preview's app.js now reads dailyWordEnabled / leaderboardEnabled /
