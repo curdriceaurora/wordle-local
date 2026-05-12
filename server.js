@@ -3010,6 +3010,19 @@ app.use(
   })
 );
 app.use(compression());
+// In-flight request counter for graceful shutdown (B1 / #120). The
+// SIGTERM handler awaits `inflightRequestsRef.value` to hit zero
+// before draining the stores, so a request mid-mutation can finish
+// persisting before the process exits. Mounted right after the
+// global rate-limit so rejected requests don't inflate the count.
+const inflightRequestsRef = { value: 0 };
+app.use((req, res, next) => {
+  inflightRequestsRef.value += 1;
+  res.on("close", () => {
+    inflightRequestsRef.value = Math.max(0, inflightRequestsRef.value - 1);
+  });
+  next();
+});
 // Per-route-class body-size enforcement. The global
 // `express.json({ limit: JSON_BODY_LIMIT })` accepts payloads up to
 // 12 MiB to accommodate the admin manual-provider-upload path
@@ -3712,7 +3725,7 @@ async function startServer(listener = app.listen.bind(app)) {
       console.error("[challenge] boot recovery failed:", err);
     }
   }
-  return listener(PORT, HOST, () => {
+  const httpServer = listener(PORT, HOST, () => {
     console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
     console.log(`Definitions mode: ${getDefinitionsMode()}`);
     if (isPerfLoggingEnabled()) {
@@ -3732,13 +3745,200 @@ async function startServer(listener = app.listen.bind(app)) {
       );
     }
   });
+  return httpServer;
+}
+
+// Graceful shutdown (B1 / #120). Drains every in-flight piece of
+// state in a deterministic order so a SIGTERM mid-write doesn't
+// orphan a pending atomic-rename or leave a webhook delivery half-
+// applied. Order matters:
+//
+//   1. Stop accepting new HTTP connections (`server.close`).
+//   2. Wait for already-in-flight requests to finish (counter
+//      middleware decrements on `res.close`).
+//   3. Stop the scheduler interval + daily notification scheduler so
+//      they don't enqueue more writes.
+//   4. Wait for an active applyRestore to release `restoreInProgressRef`
+//      so we don't kill it mid-rename.
+//   5. Tell the webhook service to stop accepting new deliveries
+//      (`shutdown`) and wait for active dispatches to finish
+//      (`waitForDrain`).
+//   6. Await every store's writeQueue / commitQueue so the last
+//      mutation persists to disk before exit.
+//   7. process.exit(0).
+//
+// Each step has a per-step timeout so a stuck phase can't park the
+// whole drain forever. Total budget defaults to ~30s.
+const SHUTDOWN_TOTAL_TIMEOUT_MS =
+  Number(process.env.SHUTDOWN_TIMEOUT_MS) || 30000;
+const SHUTDOWN_HTTP_DRAIN_TIMEOUT_MS = 10000;
+const SHUTDOWN_WEBHOOK_DRAIN_TIMEOUT_MS = 10000;
+const SHUTDOWN_STORE_FLUSH_TIMEOUT_MS = 10000;
+
+let shutdownInFlight = false;
+
+async function gracefulShutdown(httpServer, signal) {
+  // Re-entry guard: a second SIGTERM/SIGINT arriving while a drain
+  // is already in progress is a no-op. Reset on completion so the
+  // test harness can call this repeatedly across fresh server-module
+  // loads (the `loadApp` helper clears require.cache but we still
+  // want a clean slate).
+  if (shutdownInFlight) return 0;
+  shutdownInFlight = true;
+  const startedAt = Date.now();
+  console.log(`[shutdown] ${signal} received; draining (total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms)…`);
+
+  // 1. Stop accepting new connections. server.close() resolves only
+  //    after all open sockets have closed, which can be slow on
+  //    keep-alive — we just initiate, then watch inflightRequestsRef.
+  console.log("[shutdown] step 1: closing HTTP listener");
+  if (httpServer && typeof httpServer.close === "function") {
+    try {
+      httpServer.close();
+    } catch (err) {
+      console.warn("[shutdown] httpServer.close threw:", err.message);
+    }
+  }
+
+  // 2. Drain in-flight requests via the counter middleware.
+  console.log(
+    `[shutdown] step 2: waiting for ${inflightRequestsRef.value} in-flight request(s)`
+  );
+  await waitForRef(
+    () => inflightRequestsRef.value <= 0,
+    SHUTDOWN_HTTP_DRAIN_TIMEOUT_MS,
+    "HTTP drain"
+  );
+
+  // 3. Stop the schedulers so they don't enqueue more writes.
+  console.log("[shutdown] step 3: stopping schedulers");
+  try { stopSchedulerInterval(); } catch (err) { console.warn("[shutdown] stopSchedulerInterval threw:", err.message); }
+  try { dailyNotificationScheduler.shutdown(); } catch (err) { console.warn("[shutdown] notification scheduler shutdown threw:", err.message); }
+
+  // 4. Let any active applyRestore complete so we don't kill it
+  //    mid-atomic-rename. waitForRelease() is its own helper.
+  if (restoreInProgressRef.value) {
+    console.log("[shutdown] step 4: waiting for active restore to complete");
+    try {
+      await Promise.race([
+        restoreInProgressRef.waitForRelease(),
+        new Promise((resolve) => setTimeout(resolve, SHUTDOWN_STORE_FLUSH_TIMEOUT_MS))
+      ]);
+    } catch (err) {
+      console.warn("[shutdown] restore drain threw:", err.message);
+    }
+  }
+
+  // 5. Webhook service: stop accepting + wait for in-flight.
+  console.log("[shutdown] step 5: draining webhook pool");
+  try {
+    webhookService.shutdown();
+    const drained = await webhookService.waitForDrain(SHUTDOWN_WEBHOOK_DRAIN_TIMEOUT_MS);
+    if (!drained) console.warn("[shutdown] webhook drain timeout — exiting with active deliveries");
+  } catch (err) {
+    console.warn("[shutdown] webhook drain threw:", err.message);
+  }
+
+  // 6. Flush every store's writeQueue / commitQueue. Each store
+  //    owns its own queue field; we don't dispatch a write from
+  //    here, we just await the tail of whatever's already chained.
+  console.log("[shutdown] step 6: flushing store queues");
+  // Build the queue list lazily — re-read each store's queue field
+  // RIGHT NOW so we see the current tail (some store ops may have
+  // landed during the earlier steps' awaits).
+  const storeQueueGetters = [
+    ["leaderboardStore", () => leaderboardStore.writeQueue],
+    ["scheduleStore", () => scheduleStore.commitQueue],
+    ["classesStore", () => classesStore.writeQueue],
+    ["adminJobsStore", () => adminJobsStore.writeQueue],
+    ["webhookStore", () => webhookStore.commitQueue],
+    ["webhookDeliveryStore", () => webhookDeliveryStore.commitQueue],
+    ["pushSubscriptionStore", () => pushSubscriptionStore.commitQueue],
+    ["challengeConfigStore", () => challengeConfigStore.commitQueue],
+    ["challengeResultsStore", () => challengeResultsStore.commitQueue]
+  ];
+  const pendingQueues = storeQueueGetters
+    .map(([name, getter]) => {
+      try {
+        const q = getter();
+        if (!q || typeof q.then !== "function") return null;
+        // Tag the wrapped promise with its source name so a hang
+        // shows up identifiable in step 6's per-queue timing log.
+        const wrapped = Promise.race([
+          q.then(() => ({ name, settled: true }), () => ({ name, settled: true })),
+          new Promise((resolve) => setTimeout(() => resolve({ name, settled: false, timedOut: true }), SHUTDOWN_STORE_FLUSH_TIMEOUT_MS))
+        ]);
+        return { name, q: wrapped };
+      } catch (err) {
+        console.warn(`[shutdown] reading ${name}.queue threw:`, err.message);
+        return null;
+      }
+    })
+    .filter((p) => p !== null);
+  console.log(`[shutdown] step 6: awaiting ${pendingQueues.length} store queue tail(s)`);
+  const results = await Promise.all(pendingQueues.map((entry) => entry.q));
+  const timedOut = results.filter((r) => r.timedOut);
+  if (timedOut.length > 0) {
+    console.warn(`[shutdown] step 6: queue(s) timed out: ${timedOut.map((r) => r.name).join(", ")}`);
+  } else {
+    console.log("[shutdown] step 6: all store queues flushed cleanly");
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  console.log(`[shutdown] complete in ${elapsedMs}ms`);
+  shutdownInFlight = false;
+  return elapsedMs;
+}
+
+async function waitForRef(predicate, timeoutMs, label) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start >= timeoutMs) {
+      console.warn(`[shutdown] ${label} timeout after ${timeoutMs}ms`);
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+function installShutdownHandlers(httpServer) {
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.on(signal, () => {
+      // Hard-stop fallback: if drain takes longer than the total
+      // budget, force-exit so the supervisor doesn't have to SIGKILL.
+      const hardStop = setTimeout(() => {
+        console.error(`[shutdown] total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms exceeded; force-exit`);
+        process.exit(1);
+      }, SHUTDOWN_TOTAL_TIMEOUT_MS);
+      hardStop.unref();
+      gracefulShutdown(httpServer, signal)
+        .then(() => {
+          clearTimeout(hardStop);
+          process.exit(0);
+        })
+        .catch((err) => {
+          clearTimeout(hardStop);
+          console.error(`[shutdown] handler threw for ${signal}:`, err);
+          process.exit(1);
+        });
+    });
+  }
 }
 
 if (require.main === module) {
-  startServer().catch((err) => {
-    console.error("[boot] startServer failed:", err);
-    process.exit(1);
-  });
+  startServer()
+    .then((httpServer) => {
+      // Only install graceful-shutdown handlers in the entry-point
+      // case. Tests that `require("../server")` don't want SIGINT
+      // to trigger a real drain — Jest's runner handles signals
+      // itself.
+      installShutdownHandlers(httpServer);
+    })
+    .catch((err) => {
+      console.error("[boot] startServer failed:", err);
+      process.exit(1);
+    });
 }
 
 module.exports = app;
@@ -3747,6 +3947,15 @@ module.exports.startServer = startServer;
 // interval timer cleanly during teardown.
 module.exports.runSchedulerReconcile = runSchedulerReconcile;
 module.exports.stopSchedulerInterval = stopSchedulerInterval;
+// Exposed for the B1 / #120 graceful-shutdown test harness: run the
+// drain procedure against a passed http.Server stub without
+// actually killing the jest worker via process.exit().
+module.exports.gracefulShutdown = gracefulShutdown;
+module.exports.installShutdownHandlers = installShutdownHandlers;
+module.exports.inflightRequestsRef = inflightRequestsRef;
+module.exports.leaderboardStore = leaderboardStore;
+module.exports.classesStore = classesStore;
+module.exports.adminJobsStore = adminJobsStore;
 module.exports.scheduleStore = scheduleStore;
 module.exports.webhookStore = webhookStore;
 module.exports.webhookDeliveryStore = webhookDeliveryStore;

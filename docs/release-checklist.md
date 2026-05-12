@@ -15,6 +15,7 @@ Use this checklist before tagging or publishing a release.
 2. Confirm Docker image includes `LICENSE` and `THIRD_PARTY_NOTICES.md`.
 3. Confirm rate-limit/proxy guidance is documented for deployment topology (`TRUST_PROXY` behavior).
 4. For admin/provider releases, review `docs/admin-security-checklist.md`.
+5. Confirm graceful-shutdown is configured for the deployment topology. The process responds to `SIGTERM` and `SIGINT` by closing the HTTP listener, draining in-flight requests, stopping the schedulers, waiting for any active backup-restore, draining the webhook worker pool, and flushing every store's writeQueue / commitQueue. Total drain budget defaults to 30s — override via `SHUTDOWN_TIMEOUT_MS` if your supervisor's SIGKILL window is shorter (Docker's default is 10s, so either bump the supervisor's `stop_grace_period` to ≥35s or lower `SHUTDOWN_TIMEOUT_MS` so the process exits before SIGKILL).
 
 ## Leaderboard rollout gate
 
