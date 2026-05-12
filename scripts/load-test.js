@@ -388,6 +388,18 @@ async function main() {
     }
   }
   report.summary.wallEnd = new Date().toISOString();
+  // Codex P2 on PR #157: if ANY scenario was skipped due to a
+  // configuration failure (missing ADMIN_KEY for admin-auth/mixed),
+  // exit non-zero so a release-checklist or CI step doesn't silently
+  // pass a partial baseline. The skipped scenario is still recorded
+  // in the report for debugging.
+  const skippedCount = report.scenarios.filter((s) => s.skipped).length;
+  if (skippedCount > 0) {
+    report.summary.skippedCount = skippedCount;
+    process.stderr.write(
+      `load-test: ${skippedCount} scenario(s) skipped — see report.scenarios[].reason. Exiting non-zero.\n`
+    );
+  }
   const text = JSON.stringify(report, null, 2);
   process.stdout.write(text + "\n");
   if (args.output) {
@@ -400,6 +412,9 @@ async function main() {
   // similar invocations would block longer than they should.
   HTTP_AGENT.destroy();
   HTTPS_AGENT.destroy();
+  if (skippedCount > 0) {
+    process.exitCode = 2;
+  }
 }
 
 // Library exports (for tests). When the script is executed directly,

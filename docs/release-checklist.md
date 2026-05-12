@@ -55,19 +55,33 @@ machine to detect throughput regressions.
 env var; the runner reads it from its own process environment. It's
 documented in `.env.example` for discoverability.
 
+The default global rate limit (`RATE_LIMIT_MAX=300` per 15-min
+window) and admin rate limit (`ADMIN_RATE_LIMIT_MAX=90` per 15-min
+window) will be exceeded by even a short load run — set both to a
+large value when the server is configured for a load test (Codex P1
+on PR #157):
+
 ```bash
-# Terminal 1 — start the server with production-ish flags:
+# Terminal 1 — start the server with production-ish flags, BUT with
+# the per-window rate limits raised so the load test doesn't trip
+# them mid-scenario:
 ADMIN_KEY=secret REQUIRE_ADMIN_KEY=true NODE_ENV=production \
+  RATE_LIMIT_MAX=1000000 ADMIN_RATE_LIMIT_MAX=1000000 \
   PORT=3000 node server.js
 
 # Terminal 2 — drive the load:
 BASE_URL=http://localhost:3000 ADMIN_KEY=secret \
   node scripts/load-test.js --duration=15 --concurrency=8
 
-# Or just one scenario:
+# Or just one scenario (player-read needs no ADMIN_KEY):
 BASE_URL=http://localhost:3000 \
   node scripts/load-test.js --scenario=player-read --duration=30
 ```
+
+The load runner exits non-zero (code 2) if ANY scenario was skipped
+due to missing configuration (e.g., `admin-auth` or `mixed` without
+`ADMIN_KEY`). This stops a release-checklist or CI step from silently
+passing on a partial baseline.
 
 Output is JSON to stdout (also writable to `--output=path.json`).
 
