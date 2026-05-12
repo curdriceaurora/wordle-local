@@ -1,0 +1,372 @@
+#!/usr/bin/env node
+"use strict";
+
+// Server load baseline test (C5 / #131).
+//
+// Drives a running wordle-local server against three scenarios —
+// player read, admin write, mixed — and reports RPS + latency
+// percentiles. Self-contained: no autocannon / wrk / k6 dependency.
+// Uses Node's built-in `http(s)` module + the Performance API.
+//
+// Usage
+// -----
+//
+//   # Start the server in one terminal:
+//   ADMIN_KEY=secret REQUIRE_ADMIN_KEY=true PORT=3000 node server.js
+//
+//   # In another terminal:
+//   BASE_URL=http://localhost:3000 ADMIN_KEY=secret \
+//     node scripts/load-test.js
+//
+//   # Or run just one scenario:
+//   BASE_URL=http://localhost:3000 ADMIN_KEY=secret \
+//     node scripts/load-test.js --scenario=player-read --duration=10
+//
+// Args
+// ----
+//
+//   --scenario=<name>      One of: player-read, admin-write, mixed, all
+//                          (default: all)
+//   --duration=<seconds>   How long each scenario runs (default: 15)
+//   --concurrency=<N>      Concurrent in-flight requests per scenario
+//                          (default: 8)
+//   --warmup=<seconds>     Discard latency samples from the first N
+//                          seconds to let JIT settle (default: 2)
+//   --output=<path>        Write the JSON report to a file in addition
+//                          to stdout (default: stdout only)
+//
+// Env
+// ---
+//
+//   BASE_URL         — server URL (default http://localhost:3000)
+//   ADMIN_KEY        — admin key for admin-write + mixed scenarios
+//
+// Output shape
+// ------------
+//
+//   {
+//     "summary": { "totalRequests", "totalDurationMs", "wallStart", "wallEnd" },
+//     "scenarios": [
+//       {
+//         "name": "player-read",
+//         "requests": 1234,
+//         "errors": 0,
+//         "errorRate": 0.0,
+//         "durationMs": 15003,
+//         "rps": 82.3,
+//         "latencyMs": {
+//           "min": 1.2,
+//           "p50": 4.1,
+//           "p95": 12.7,
+//           "p99": 28.4,
+//           "max": 105.2,
+//           "mean": 5.8
+//         },
+//         "statusCodes": { "200": 1230, "503": 4 }
+//       },
+//       ...
+//     ]
+//   }
+//
+// Out of scope (per #131):
+//
+//   - Distributed load (single-machine only).
+//   - Stress-to-failure (this is a baseline, not a breaking-point test).
+//   - Cross-version comparison harness (operator records baselines per
+//     reference machine + records in docs).
+
+const http = require("node:http");
+const https = require("node:https");
+const fs = require("node:fs");
+
+// Use a keep-alive agent so the test measures HANDLER latency in
+// steady state rather than the TCP handshake cost on every request.
+// Real clients (browsers, fetch, axios, curl with -K) reuse
+// connections; the baseline should match. Cap the per-host socket
+// pool at the highest --concurrency we expect; that's 256 (CLI
+// clamp), so size accordingly.
+const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 64 });
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 64 });
+
+const DEFAULTS = Object.freeze({
+  baseUrl: "http://localhost:3000",
+  scenario: "all",
+  durationSec: 15,
+  concurrency: 8,
+  warmupSec: 2
+});
+
+function parseArgs(argv) {
+  const args = { ...DEFAULTS, adminKey: process.env.ADMIN_KEY || "", output: null };
+  if (process.env.BASE_URL) args.baseUrl = process.env.BASE_URL;
+  for (const raw of argv.slice(2)) {
+    const m = raw.match(/^--([^=]+)=(.*)$/);
+    if (!m) continue;
+    const [, key, value] = m;
+    switch (key) {
+      case "scenario":
+        args.scenario = String(value);
+        break;
+      case "duration":
+        args.durationSec = Math.max(1, Number(value) | 0);
+        break;
+      case "concurrency":
+        args.concurrency = Math.max(1, Number(value) | 0);
+        break;
+      case "warmup":
+        args.warmupSec = Math.max(0, Number(value) | 0);
+        break;
+      case "output":
+        args.output = String(value);
+        break;
+      default:
+        // Unknown flag; ignore rather than fail so the harness is
+        // forgiving across versions.
+        break;
+    }
+  }
+  return args;
+}
+
+// Percentile from a presorted array of numbers. p in [0, 1].
+// Uses linear interpolation between adjacent ranks (the same method
+// numpy's `interpolation='linear'` uses).
+function percentile(sortedSamples, p) {
+  if (sortedSamples.length === 0) return null;
+  if (sortedSamples.length === 1) return sortedSamples[0];
+  const clamped = Math.max(0, Math.min(1, p));
+  const rank = clamped * (sortedSamples.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sortedSamples[lo];
+  const frac = rank - lo;
+  return sortedSamples[lo] + (sortedSamples[hi] - sortedSamples[lo]) * frac;
+}
+
+function round(value, decimals = 2) {
+  if (value === null || value === undefined) return null;
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function summarize(latencySamples) {
+  if (latencySamples.length === 0) {
+    return { min: null, p50: null, p95: null, p99: null, max: null, mean: null };
+  }
+  const sorted = latencySamples.slice().sort((a, b) => a - b);
+  let sum = 0;
+  for (const v of sorted) sum += v;
+  return {
+    min: round(sorted[0], 3),
+    p50: round(percentile(sorted, 0.5), 3),
+    p95: round(percentile(sorted, 0.95), 3),
+    p99: round(percentile(sorted, 0.99), 3),
+    max: round(sorted[sorted.length - 1], 3),
+    mean: round(sum / sorted.length, 3)
+  };
+}
+
+// Single-shot HTTP request. Returns { latencyMs, status, error }.
+// Designed to never throw — errors are captured in the result.
+function makeRequest(target, options = {}) {
+  return new Promise((resolve) => {
+    const url = new URL(target);
+    const lib = url.protocol === "https:" ? https : http;
+    const agent = url.protocol === "https:" ? HTTPS_AGENT : HTTP_AGENT;
+    const startedAt = performance.now();
+    const req = lib.request(
+      {
+        method: options.method || "GET",
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: url.pathname + url.search,
+        headers: options.headers || {},
+        agent
+      },
+      (res) => {
+        // Drain the body so the connection can be reused (keep-alive).
+        res.resume();
+        res.on("end", () => {
+          resolve({
+            latencyMs: performance.now() - startedAt,
+            status: res.statusCode,
+            error: null
+          });
+        });
+        res.on("error", (err) => {
+          resolve({
+            latencyMs: performance.now() - startedAt,
+            status: res.statusCode || 0,
+            error: err.message
+          });
+        });
+      }
+    );
+    req.on("error", (err) => {
+      resolve({
+        latencyMs: performance.now() - startedAt,
+        status: 0,
+        error: err.message
+      });
+    });
+    if (options.body) {
+      req.write(options.body);
+    }
+    req.end();
+  });
+}
+
+// Returns a function that emits the NEXT request to fire for the
+// given scenario. The harness calls it on a tight loop per worker.
+function buildRequestFactory(scenarioName, args) {
+  const { baseUrl, adminKey } = args;
+  const adminHeaders = adminKey ? { "x-admin-key": adminKey } : {};
+  switch (scenarioName) {
+    case "player-read":
+      return () => {
+        // Random pick across two read endpoints.
+        const pick = Math.random();
+        if (pick < 0.5) {
+          return { url: `${baseUrl}/api/word?lang=en`, options: { method: "GET" } };
+        }
+        return {
+          url: `${baseUrl}/api/stats/leaderboard?lang=en&range=7d`,
+          options: { method: "GET" }
+        };
+      };
+    case "admin-write": {
+      if (!adminKey) {
+        throw new Error(
+          "admin-write scenario requires ADMIN_KEY env var; got empty. Set it or run --scenario=player-read."
+        );
+      }
+      // Mix two admin GET endpoints — they go through the admin auth
+      // gate which exercises the most expensive middleware stack
+      // (admin rate-limit + key check + structured logger). Pure
+      // admin-WRITE would require crafting valid POST bodies for
+      // every endpoint, which is brittle and overkill for a baseline.
+      return () => {
+        const pick = Math.random();
+        if (pick < 0.5) {
+          return {
+            url: `${baseUrl}/api/admin/providers`,
+            options: { method: "GET", headers: adminHeaders }
+          };
+        }
+        return {
+          url: `${baseUrl}/api/admin/jobs`,
+          options: { method: "GET", headers: adminHeaders }
+        };
+      };
+    }
+    case "mixed": {
+      const playerRead = buildRequestFactory("player-read", args);
+      const adminWrite = adminKey ? buildRequestFactory("admin-write", args) : null;
+      // 10:1 read-to-admin ratio per #131 spec.
+      return () => {
+        const pick = Math.random();
+        if (pick < 0.91 || !adminWrite) {
+          return playerRead();
+        }
+        return adminWrite();
+      };
+    }
+    default:
+      throw new Error(`Unknown scenario: ${scenarioName}`);
+  }
+}
+
+async function runScenario(scenarioName, args) {
+  const requestFactory = buildRequestFactory(scenarioName, args);
+  const latencies = [];
+  const statusCodes = Object.create(null);
+  let errors = 0;
+  let requests = 0;
+  const warmupDeadline = performance.now() + args.warmupSec * 1000;
+  const endDeadline = performance.now() + (args.warmupSec + args.durationSec) * 1000;
+  const startWall = Date.now();
+  async function worker() {
+    while (performance.now() < endDeadline) {
+      const { url, options } = requestFactory();
+      const result = await makeRequest(url, options);
+      requests += 1;
+      if (result.error || result.status === 0) errors += 1;
+      statusCodes[result.status || "error"] = (statusCodes[result.status || "error"] || 0) + 1;
+      // Discard samples from the warmup window.
+      if (performance.now() >= warmupDeadline) {
+        latencies.push(result.latencyMs);
+      }
+    }
+  }
+  const startedAt = performance.now();
+  const workers = [];
+  for (let i = 0; i < args.concurrency; i += 1) workers.push(worker());
+  await Promise.all(workers);
+  const durationMs = performance.now() - startedAt;
+  const samplesDurationMs = Math.max(0, durationMs - args.warmupSec * 1000);
+  const sampledRequests = latencies.length;
+  return {
+    name: scenarioName,
+    requests,
+    sampledRequests,
+    errors,
+    errorRate: requests === 0 ? 0 : round(errors / requests, 4),
+    durationMs: round(durationMs, 1),
+    samplesDurationMs: round(samplesDurationMs, 1),
+    warmupSec: args.warmupSec,
+    concurrency: args.concurrency,
+    rps: samplesDurationMs > 0 ? round((sampledRequests / samplesDurationMs) * 1000, 1) : null,
+    latencyMs: summarize(latencies),
+    statusCodes,
+    wallStart: new Date(startWall).toISOString(),
+    wallEnd: new Date().toISOString()
+  };
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  const scenariosToRun =
+    args.scenario === "all" ? ["player-read", "admin-write", "mixed"] : [args.scenario];
+  const wallStart = Date.now();
+  const report = {
+    summary: {
+      baseUrl: args.baseUrl,
+      durationSec: args.durationSec,
+      warmupSec: args.warmupSec,
+      concurrency: args.concurrency,
+      wallStart: new Date(wallStart).toISOString()
+    },
+    scenarios: []
+  };
+  for (const name of scenariosToRun) {
+    try {
+      const result = await runScenario(name, args);
+      report.scenarios.push(result);
+    } catch (err) {
+      report.scenarios.push({
+        name,
+        skipped: true,
+        reason: err && err.message ? err.message : String(err)
+      });
+    }
+  }
+  report.summary.wallEnd = new Date().toISOString();
+  const text = JSON.stringify(report, null, 2);
+  process.stdout.write(text + "\n");
+  if (args.output) {
+    fs.writeFileSync(args.output, text + "\n");
+  }
+}
+
+// Library exports (for tests). When the script is executed directly,
+// the `require.main === module` check fires main(). The exports let
+// tests/scripts.load-test.test.js exercise the pure helpers without
+// spinning up a server.
+module.exports = { parseArgs, percentile, summarize, round };
+
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(`load-test failed: ${err && err.message ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+}
