@@ -17,4 +17,3 @@ server.js
 test-server-load.js
 routes
 lib
-public/dist
