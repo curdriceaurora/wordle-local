@@ -1,8 +1,51 @@
+// v8: invalidates stale app.js so the leaderboard-disabled gate
+// (Codex finding on PR #160) and the ensureMetaReady retry-on-failure
+// fix (Copilot finding on PR #160) reach returning visitors. Without
+// the bump, a daily share URL on Vercel keeps issuing /api/stats/*
+// fetches that 404 STATIC_DEPLOY_ENDPOINT_MISSING.
+//
+// v7: invalidates stale app.js for the share-modal inert fallback.
+// Modern browsers (Chrome/Edge 102+, Safari 15.5+, FF 112+) ignore
+// the change — they already honored the `inert` attribute. Older
+// browsers + AT combos now get an explicit tabindex="-1" sweep on
+// every focusable descendant when the modal is inactive, so a Tab
+// walker can't land on the Close button while the modal is closed.
+//
+// v6: invalidates the stale app.js + styles.css cache after the
+// deploy-flag audit landed:
+//   - styles.css gained `[hidden] { display: none !important }` so
+//     elements like the challenges nav link and notification toggle
+//     actually disappear when their `hidden` attribute is set
+//     (the .admin-link rule had display:flex which previously won).
+//   - app.js loadMeta now propagates the dailyWord / leaderboard /
+//     challenges / notifications flags from /api/meta to a global
+//     deployCaps record, then hides the matching nav affordances
+//     and short-circuits loadChallengeList() + refreshNotificationToggle()
+//     when the flag is false. No more 404 noise on cold load.
+//
+// v5: invalidates the stale styles.css + app.js cache on existing
+// installs. Two follow-ups landed in the same revision:
+//   - .key-row gained width:100%. The row had only max-width set,
+//     so it sized to min-content (~355 px on a 640 px keyboard)
+//     and flex-grow had no free space to distribute — letters and
+//     ENTER both pinned to min-width. Setting width:100% makes
+//     flex actually work; .key.wide then expands to a Wordle-ish
+//     proportion and "ENTER" gets visible breathing room.
+//   - Player + challenge keyboards harden Backspace (⌫ wrapped in
+//     <span aria-hidden>) and ENTER (aria-label = "Submit guess")
+//     for stricter button-name auditors.
+// SW's fetch handler is cache-first for non-API requests, so
+// without the cache-name bump existing installs keep getting the
+// old styles.css and the layout fix doesn't reach them.
+//
+// v4: invalidates the stale app.js cache on existing installs. The Vercel
+// preview's app.js now reads dailyWordEnabled / leaderboardEnabled /
+// challengesEnabled flags from /api/meta and hides the matching header
+// nav links when each is false.
+//
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
-// Web Push notification flow (#92). Bumping the cache name forces a
-// service-worker update on existing installs so the new listeners
-// activate without a hard reload.
-const CACHE_NAME = 'wordle-cache-v3';
+// Web Push notification flow (#92).
+const CACHE_NAME = 'wordle-cache-v8';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

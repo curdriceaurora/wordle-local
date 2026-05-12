@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "buildCommand": "",
+  "rewrites": [
+    { "source": "/challenges", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/[...path].js": {
+      "includeFiles": "data/dictionaries/en.txt"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex" }
+      ]
+    }
+  ]
+}

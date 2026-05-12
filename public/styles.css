@@ -91,6 +91,16 @@ body.high-contrast {
   box-sizing: border-box;
 }
 
+/* Force the HTML `hidden` attribute to always win against component
+   styles. Without this, rules like `.admin-link { display: inline-flex }`
+   override the UA-stylesheet `[hidden] { display: none }` and elements
+   marked hidden render anyway — caught by the simulated-Vercel audit
+   on PR #160 (the challenges nav link + notification toggle stayed
+   visible despite their `hidden` attribute being true). */
+[hidden] {
+  display: none !important;
+}
+
 html {
   overflow-x: clip;
 }
@@ -559,6 +569,7 @@ body.high-contrast .tile.absent {
   display: flex;
   justify-content: center;
   gap: 0.4rem;
+  width: 100%;
   max-width: min(40rem, 95vw);
   margin: 0 auto;
   -webkit-overflow-scrolling: touch;
@@ -587,7 +598,19 @@ body.high-contrast .tile.absent {
 }
 
 .key.wide {
-  flex: 1.6;
+  flex: 3.5;
+  font-size: 0.65rem;
+  letter-spacing: 0;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  text-transform: uppercase;
+  /* Defensive: keep the label single-line and clip rather than wrap
+     if the column ever ends up narrower than the text needs (the
+     keyboard row sizes via flex, but a parent layout change could
+     in principle shrink the box). Verified by tests/ui/keyboard-
+     wide-key.spec.js across desktop/tablet/mobile viewports. */
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .key:hover {
@@ -895,7 +918,8 @@ body.high-contrast .key.absent {
   }
 
   .key.wide {
-    flex: 0 0 3.65rem;
+    flex: 0 0 6rem;
+    min-width: 6rem;
   }
 }
 

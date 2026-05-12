@@ -77,6 +77,15 @@ let dailyDate = "";
 let dailyPuzzleKey = "";
 let physicalKeyboardBound = false;
 let perfLogging = false;
+// Deploy-capability flags from /api/meta. Default to enabled so a
+// missing /api/meta (older server) doesn't accidentally hide working
+// features; the Vercel deploy turns them off explicitly.
+let deployCaps = {
+  dailyWordEnabled: true,
+  leaderboardEnabled: true,
+  challengesEnabled: true,
+  notificationsEnabled: true
+};
 let tileGrid = [];
 let keyboardKeyEls = new Map();
 let profileState = {
@@ -120,6 +129,65 @@ let leaderboardState = {
 };
 let statsServiceUnavailable = false;
 
+// Use this instead of `statsServiceUnavailable = false` anywhere a
+// gameplay path resets the runtime "stats backend is down" flag.
+// On a deploy that doesn't ship /api/stats/* (`leaderboardEnabled:false`
+// in /api/meta), the flag must stay locked-on; otherwise the next
+// initPlay/initCreate would clear it and the daily share path would
+// fire /api/stats/leaderboard → 404 STATIC_DEPLOY_ENDPOINT_MISSING.
+function clearStatsServiceUnavailable() {
+  if (deployCaps.leaderboardEnabled === false) return;
+  statsServiceUnavailable = false;
+}
+
+// Feature-detect `inert` (Chrome/Edge 102+, Safari 15.5+, FF 112+).
+// In the rare browser/AT combo that doesn't support inert, falling back
+// to CSS `visibility:hidden` alone leaves the Close button reachable in
+// some screen-reader walkers. We explicitly tabindex="-1" each focusable
+// descendant as belt-and-braces (and stash the prior tabindex in a
+// data-* attribute so reopening can restore it verbatim).
+const SUPPORTS_INERT =
+  typeof HTMLElement !== "undefined" && "inert" in HTMLElement.prototype;
+
+function setShareModalInactive(inactive) {
+  if (!shareModal) return;
+  // Always toggle the `inert` attribute so DOM state mirrors the logical
+  // active/inactive intent regardless of browser support. On
+  // inert-supporting browsers this is the entire fix; on browsers where
+  // `inert` is silently ignored, the attribute is still correct for any
+  // future polyfill / feature-detect callsite that reads it (including
+  // our own tests). Inert-supporting browsers (Chrome/Edge 102+, Safari
+  // 15.5+, Firefox 112+) cover the modern fleet.
+  if (inactive) shareModal.setAttribute("inert", "");
+  else shareModal.removeAttribute("inert");
+
+  if (SUPPORTS_INERT) return;
+
+  // Belt-and-braces fallback for the long tail: explicitly tab-isolate
+  // every focusable descendant so a Tab walker can't land on the Close
+  // button. CSS visibility:hidden + opacity:0 already removes them
+  // visually, but some AT × browser combos still announce focusables
+  // across visibility:hidden if keyboard nav reaches them. Sentinel
+  // "__none__" remembers prior absence so open() restores cleanly.
+  const focusables = shareModal.querySelectorAll(
+    'a[href], button, input, select, textarea, [tabindex]'
+  );
+  focusables.forEach((el) => {
+    if (inactive) {
+      const cur = el.getAttribute("tabindex");
+      el.setAttribute("data-inert-tabindex", cur === null ? "__none__" : cur);
+      el.setAttribute("tabindex", "-1");
+    } else {
+      const prev = el.getAttribute("data-inert-tabindex");
+      if (prev !== null) {
+        if (prev === "__none__") el.removeAttribute("tabindex");
+        else el.setAttribute("tabindex", prev);
+        el.removeAttribute("data-inert-tabindex");
+      }
+    }
+  });
+}
+
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
 }
@@ -128,7 +196,13 @@ function openShareModal() {
   if (!shareModal) return;
   lastFocusedElement = document.activeElement;
   shareModal.classList.add("is-open");
-  shareModal.setAttribute("aria-hidden", "false");
+  // Switch from `inert` (focus + AT blocked) to live. Using `inert`
+  // instead of `aria-hidden=true` avoids the aria-hidden-focus
+  // violation: an aria-hidden subtree mustn't contain focusable
+  // descendants (the Close button is one), but `inert` properly
+  // suspends them without the contradiction. Browsers without `inert`
+  // get the tabindex-fallback inside setShareModalInactive.
+  setShareModalInactive(false);
   if (shareModalClose) {
     shareModalClose.focus();
   }
@@ -137,10 +211,18 @@ function openShareModal() {
 function closeShareModal() {
   if (!shareModal) return;
   shareModal.classList.remove("is-open");
-  shareModal.setAttribute("aria-hidden", "true");
+  setShareModalInactive(true);
   if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
     lastFocusedElement.focus();
   }
+}
+
+// Apply the fallback at module load. On inert-supporting browsers
+// this is a no-op (`inert` is already on the element in HTML). On
+// non-supporting browsers, it tab-isolates the modal's focusables so
+// Tab doesn't land on the Close button before any user opens the modal.
+if (!SUPPORTS_INERT) {
+  setShareModalInactive(true);
 }
 
 function setCreateStatus(text) {
@@ -722,8 +804,26 @@ function buildKeyboard() {
       if (key === "ENTER" || key === "BACK") {
         button.classList.add("wide");
       }
-      button.textContent = key === "BACK" ? "⌫" : key;
-      button.setAttribute("aria-label", key === "BACK" ? "Backspace" : key);
+      if (key === "BACK") {
+        // Wrap the ⌫ glyph in aria-hidden so the only accessible name
+        // is the explicit aria-label. Some auditors flag a button whose
+        // visible text is purely an unnamed Unicode glyph even when
+        // aria-label is set (Chrome's Lighthouse button-name has been
+        // strict about this in the past).
+        const glyph = document.createElement("span");
+        glyph.setAttribute("aria-hidden", "true");
+        glyph.textContent = "⌫";
+        button.appendChild(glyph);
+        button.setAttribute("aria-label", "Backspace");
+      } else if (key === "ENTER") {
+        button.textContent = key;
+        // "Submit guess" is more meaningful to assistive tech than the
+        // raw key name; matches what the challenge keyboard uses.
+        button.setAttribute("aria-label", "Submit guess");
+      } else {
+        button.textContent = key;
+        button.setAttribute("aria-label", key);
+      }
       button.addEventListener("click", () => handleKey(key));
       rowEl.appendChild(button);
       if (key.length === 1) {
@@ -1035,10 +1135,31 @@ function buildShareLink(code, lang, guessesCount, options = {}) {
   return url.toString();
 }
 
+// Cached single-flight for /api/meta. Both init() (gameplay path) and
+// initChallengesUI() (challenge bootstrap) need the deploy-cap flags
+// before they make their first network call; without sharing the
+// promise the two bootstraps race and the loser fires /api/challenges
+// before deployCaps.challengesEnabled has been set to false.
+//
+// On failure (network drop, non-2xx), the cached promise is cleared
+// so the next caller can retry within the same page load instead of
+// being stuck on a permanently-resolved-but-empty promise. Without
+// this, a transient /api/meta failure on first call would leave
+// deployCaps + languageMinLengths at defaults forever.
+let metaReadyPromise = null;
+function ensureMetaReady() {
+  if (!metaReadyPromise) {
+    metaReadyPromise = loadMeta().then((ok) => {
+      if (!ok) metaReadyPromise = null;
+    });
+  }
+  return metaReadyPromise;
+}
+
 async function loadMeta() {
   try {
     const response = await fetch("/api/meta");
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const data = await response.json();
     minLen = data.minLength || minLen;
     maxLen = data.maxLength || maxLen;
@@ -1069,6 +1190,55 @@ async function loadMeta() {
         ? defaultLang
         : data.languages[0]?.id || "en";
     }
+    // Hide the dictionary picker row when only one language is on offer —
+    // the user has no real choice to make. The select still carries the
+    // selected value for downstream code that reads langSelect.value.
+    const langRow = langSelect.closest("label");
+    if (langRow) {
+      langRow.classList.toggle("hidden", data.languages.length <= 1);
+    }
+    // Hide top-nav affordances pointing at backends the deploy didn't
+    // wire up. /api/meta on the Vercel preview returns each flag as
+    // false. We only HIDE on an explicit `false`; older servers that
+    // don't ship the flag (undefined) keep the affordance visible so
+    // we don't break them.
+    if (data.dailyWordEnabled === false) {
+      deployCaps.dailyWordEnabled = false;
+      document
+        .querySelectorAll('a.admin-link[href="/daily"]')
+        .forEach((el) => el.classList.add("hidden"));
+    }
+    if (data.challengesEnabled === false) {
+      deployCaps.challengesEnabled = false;
+      // Use both `hidden` attribute and `.hidden` class — the attribute
+      // is the semantic signal; the class is the historical sibling
+      // selector. styles.css forces `[hidden] { display: none !important }`
+      // so the attribute alone wins against `.admin-link { display: flex }`.
+      const link = document.getElementById("challengesNavLink");
+      if (link) {
+        link.hidden = true;
+        link.classList.add("hidden");
+      }
+    }
+    if (data.notificationsEnabled === false) {
+      deployCaps.notificationsEnabled = false;
+      const toggle = document.getElementById("notificationToggle");
+      if (toggle) {
+        toggle.hidden = true;
+        toggle.classList.add("hidden");
+      }
+    }
+    if (data.leaderboardEnabled === false) {
+      deployCaps.leaderboardEnabled = false;
+      // Lock the stats service into "unavailable" so every code path
+      // that already gates on `statsServiceUnavailable` (refreshStatsPanels,
+      // requestStatsProfile, daily-result POST, leaderboard render, etc.)
+      // skips the fetch on a deploy that doesn't ship /api/stats/*.
+      // Without this, opening a daily share URL like `/?word=...&daily=1`
+      // hits initPlay → resets statsServiceUnavailable=false → calls
+      // refreshStatsPanels(), which 404s on STATIC_DEPLOY_ENDPOINT_MISSING.
+      statsServiceUnavailable = true;
+    }
     updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = false;
 
@@ -1077,8 +1247,12 @@ async function loadMeta() {
     if (Number(guessInput.value) < minGuesses || Number(guessInput.value) > maxGuessesAllowed) {
       guessInput.value = String(defaultGuesses);
     }
+    return true;
   } catch (err) {
-    // Ignore meta failures
+    // Ignore meta failures (callers tolerate empty defaults). Returning
+    // false lets ensureMetaReady drop its cache so a later caller can
+    // retry within the same page load.
+    return false;
   }
 }
 
@@ -1251,7 +1425,7 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   dailyMode = Boolean(options.dailyMode);
   dailyDate = options.dailyDate || toLocalDateString(new Date());
   dailyPuzzleKey = dailyMode ? `${dailyDate}|${puzzleLang}|${puzzleCode}` : "";
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
 
   resetGame();
 
@@ -1280,7 +1454,7 @@ function initCreate() {
   dailyMode = false;
   dailyDate = "";
   dailyPuzzleKey = "";
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
   renderDailyPlayerPanels();
   showCreate();
   updatedEl.textContent = "Create mode";
@@ -1486,7 +1660,7 @@ async function init() {
   if (window.i18nReady) {
     try { await window.i18nReady; } catch (_e) { /* fall back to English */ }
   }
-  await loadMeta();
+  await ensureMetaReady();
   profileState = {
     profiles: [],
     activeProfileId: null,
@@ -1500,7 +1674,7 @@ async function init() {
     dayKey: "",
     loading: false
   };
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
 
   const storedContrast = getStoredItem("highContrast") === "true";
   const storedStrict = getStoredItem("strictMode") === "true";
@@ -1693,6 +1867,13 @@ async function getNotificationRegistration() {
 
 async function refreshNotificationToggle() {
   if (!notificationToggleEl) return;
+  // /api/meta said the deploy can't subscribe (no /api/notifications/*
+  // backend) — keep the toggle hidden. Without this, the toggle shows
+  // on the Vercel preview and clicking it 404s on the VAPID key fetch.
+  if (deployCaps.notificationsEnabled === false) {
+    notificationToggleEl.hidden = true;
+    return;
+  }
   if (!pushNotificationsSupported()) {
     notificationToggleEl.hidden = true;
     setNotificationStatus(
@@ -1950,10 +2131,26 @@ function challengeFetch(input, init) {
 }
 
 async function loadChallengeList() {
+  // /api/meta said challenges aren't available in this deploy — skip
+  // the fetch entirely so we don't paint a 404 into the network panel
+  // or the console on every cold load.
+  if (deployCaps.challengesEnabled === false) {
+    if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
+    return;
+  }
   try {
     const res = await challengeFetch('/api/challenges');
     if (!res.ok) {
-      if (res.status === 404 && (await res.json().catch(() => ({}))).code === 'CHALLENGE_MODE_DISABLED') {
+      const body = await res.json().catch(() => ({}));
+      // Either the legacy CHALLENGE_MODE_DISABLED code (full server
+      // with feature flag off) or the deploy-time
+      // STATIC_DEPLOY_ENDPOINT_MISSING (Vercel preview) means "no
+      // challenges here; hide the nav link and bail."
+      if (
+        res.status === 404
+        && (body.code === 'CHALLENGE_MODE_DISABLED'
+          || body.code === 'STATIC_DEPLOY_ENDPOINT_MISSING')
+      ) {
         if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
         return;
       }
@@ -2213,16 +2410,25 @@ function makeKbKey(label, key, extraClass) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'key' + (extraClass ? ` ${extraClass}` : '');
-  btn.textContent = label;
   // Special keys render glyphs/labels that don't read well to screen
   // readers — "⌫" is a private-use character with no semantic name in
   // most assistive-tech voices, and "Enter" without context can be
   // ambiguous. Provide an explicit accessible name for the special
   // keys; alphabet keys already announce their letter via textContent.
   if (key === 'Backspace') {
+    // Same Backspace pattern as buildKeyboard: hide the glyph from AT
+    // so the only accessible name is the aria-label.
+    const glyph = document.createElement('span');
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = label;
+    btn.appendChild(glyph);
     btn.setAttribute('aria-label', 'Backspace');
   } else if (key === 'Enter') {
+    btn.textContent = label;
     btn.setAttribute('aria-label', 'Submit guess');
+  } else {
+    btn.textContent = label;
+    btn.setAttribute('aria-label', label);
   }
   btn.addEventListener('click', () => onChallengeKey(key));
   return btn;
@@ -2491,6 +2697,10 @@ async function initChallengesUI() {
   if (window.i18nReady) {
     try { await window.i18nReady; } catch (_e) { /* fall through with English fallback */ }
   }
+  // Also wait for /api/meta — without this, loadChallengeList races
+  // init() and fires /api/challenges before deployCaps.challengesEnabled
+  // has been set to false on a deploy that doesn't ship that backend.
+  await ensureMetaReady();
   loadChallengeList().then(() => {
     renderChallengeList();
     if (location.pathname === '/challenges') {
