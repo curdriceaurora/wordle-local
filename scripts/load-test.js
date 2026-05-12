@@ -111,7 +111,12 @@ function parseArgs(argv) {
         args.durationSec = Math.max(1, Number(value) | 0);
         break;
       case "concurrency":
-        args.concurrency = Math.max(1, Number(value) | 0);
+        // Clamp to [1, 256] (CR Major on PR #157 — unbounded
+        // concurrency would spawn excessive workers and destabilize
+        // baseline runs). 256 matches the HTTP agent's maxSockets
+        // declared above; setting concurrency higher than that has
+        // diminishing returns anyway.
+        args.concurrency = Math.max(1, Math.min(256, Number(value) | 0));
         break;
       case "warmup":
         args.warmupSec = Math.max(0, Number(value) | 0);
@@ -388,6 +393,13 @@ async function main() {
   if (args.output) {
     fs.writeFileSync(args.output, text + "\n");
   }
+  // CR Major on PR #157: destroy the keep-alive agents so their
+  // lingering sockets don't keep the event loop alive after main()
+  // returns. Without this, node exits cleanly anyway (the agents'
+  // socket idle timer eventually fires) but `node ... | head` and
+  // similar invocations would block longer than they should.
+  HTTP_AGENT.destroy();
+  HTTPS_AGENT.destroy();
 }
 
 // Library exports (for tests). When the script is executed directly,

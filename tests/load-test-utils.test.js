@@ -179,4 +179,10 @@ describe("parseArgs (C5 / #131)", () => {
     const args = parseArgs(["node", "load-test.js", "--concurrency=0"]);
     expect(args.concurrency).toBe(1);
   });
+
+  // CR Major on PR #157
+  test("concurrency clamps to 256 ceiling (unbounded values would destabilize)", () => {
+    const args = parseArgs(["node", "load-test.js", "--concurrency=1024"]);
+    expect(args.concurrency).toBe(256);
+  });
 });
