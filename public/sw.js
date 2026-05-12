@@ -1,3 +1,9 @@
+// v8: invalidates stale app.js so the leaderboard-disabled gate
+// (Codex finding on PR #160) and the ensureMetaReady retry-on-failure
+// fix (Copilot finding on PR #160) reach returning visitors. Without
+// the bump, a daily share URL on Vercel keeps issuing /api/stats/*
+// fetches that 404 STATIC_DEPLOY_ENDPOINT_MISSING.
+//
 // v7: invalidates stale app.js for the share-modal inert fallback.
 // Modern browsers (Chrome/Edge 102+, Safari 15.5+, FF 112+) ignore
 // the change — they already honored the `inert` attribute. Older
@@ -39,7 +45,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v7';
+const CACHE_NAME = 'wordle-cache-v8';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

@@ -129,6 +129,17 @@ let leaderboardState = {
 };
 let statsServiceUnavailable = false;
 
+// Use this instead of `statsServiceUnavailable = false` anywhere a
+// gameplay path resets the runtime "stats backend is down" flag.
+// On a deploy that doesn't ship /api/stats/* (`leaderboardEnabled:false`
+// in /api/meta), the flag must stay locked-on; otherwise the next
+// initPlay/initCreate would clear it and the daily share path would
+// fire /api/stats/leaderboard → 404 STATIC_DEPLOY_ENDPOINT_MISSING.
+function clearStatsServiceUnavailable() {
+  if (deployCaps.leaderboardEnabled === false) return;
+  statsServiceUnavailable = false;
+}
+
 // Feature-detect `inert` (Chrome/Edge 102+, Safari 15.5+, FF 112+).
 // In the rare browser/AT combo that doesn't support inert, falling back
 // to CSS `visibility:hidden` alone leaves the Close button reachable in
@@ -1129,16 +1140,26 @@ function buildShareLink(code, lang, guessesCount, options = {}) {
 // before they make their first network call; without sharing the
 // promise the two bootstraps race and the loser fires /api/challenges
 // before deployCaps.challengesEnabled has been set to false.
+//
+// On failure (network drop, non-2xx), the cached promise is cleared
+// so the next caller can retry within the same page load instead of
+// being stuck on a permanently-resolved-but-empty promise. Without
+// this, a transient /api/meta failure on first call would leave
+// deployCaps + languageMinLengths at defaults forever.
 let metaReadyPromise = null;
 function ensureMetaReady() {
-  if (!metaReadyPromise) metaReadyPromise = loadMeta();
+  if (!metaReadyPromise) {
+    metaReadyPromise = loadMeta().then((ok) => {
+      if (!ok) metaReadyPromise = null;
+    });
+  }
   return metaReadyPromise;
 }
 
 async function loadMeta() {
   try {
     const response = await fetch("/api/meta");
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const data = await response.json();
     minLen = data.minLength || minLen;
     maxLen = data.maxLength || maxLen;
@@ -1209,6 +1230,14 @@ async function loadMeta() {
     }
     if (data.leaderboardEnabled === false) {
       deployCaps.leaderboardEnabled = false;
+      // Lock the stats service into "unavailable" so every code path
+      // that already gates on `statsServiceUnavailable` (refreshStatsPanels,
+      // requestStatsProfile, daily-result POST, leaderboard render, etc.)
+      // skips the fetch on a deploy that doesn't ship /api/stats/*.
+      // Without this, opening a daily share URL like `/?word=...&daily=1`
+      // hits initPlay → resets statsServiceUnavailable=false → calls
+      // refreshStatsPanels(), which 404s on STATIC_DEPLOY_ENDPOINT_MISSING.
+      statsServiceUnavailable = true;
     }
     updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = false;
@@ -1218,8 +1247,12 @@ async function loadMeta() {
     if (Number(guessInput.value) < minGuesses || Number(guessInput.value) > maxGuessesAllowed) {
       guessInput.value = String(defaultGuesses);
     }
+    return true;
   } catch (err) {
-    // Ignore meta failures
+    // Ignore meta failures (callers tolerate empty defaults). Returning
+    // false lets ensureMetaReady drop its cache so a later caller can
+    // retry within the same page load.
+    return false;
   }
 }
 
@@ -1392,7 +1425,7 @@ async function initPlay(code, lang, guessesCount, options = {}) {
   dailyMode = Boolean(options.dailyMode);
   dailyDate = options.dailyDate || toLocalDateString(new Date());
   dailyPuzzleKey = dailyMode ? `${dailyDate}|${puzzleLang}|${puzzleCode}` : "";
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
 
   resetGame();
 
@@ -1421,7 +1454,7 @@ function initCreate() {
   dailyMode = false;
   dailyDate = "";
   dailyPuzzleKey = "";
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
   renderDailyPlayerPanels();
   showCreate();
   updatedEl.textContent = "Create mode";
@@ -1641,7 +1674,7 @@ async function init() {
     dayKey: "",
     loading: false
   };
-  statsServiceUnavailable = false;
+  clearStatsServiceUnavailable();
 
   const storedContrast = getStoredItem("highContrast") === "true";
   const storedStrict = getStoredItem("strictMode") === "true";
