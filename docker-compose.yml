@@ -20,3 +20,15 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+    # B7 / #126: readiness probe. /readyz returns 200 when the
+    # process is up AND not shutting down AND no restore/backup is
+    # holding the data lock. During graceful shutdown drain (B1) or
+    # while a restore is mid-apply, this returns 503 so the
+    # supervisor stops sending new traffic. For liveness (restart on
+    # genuine hang), use /healthz instead.
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

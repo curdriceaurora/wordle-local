@@ -52,6 +52,7 @@ const {
 } = require("./lib/provider-answer-filter");
 const { logger } = require("./lib/logger");
 const { createRequestIdMiddleware } = require("./lib/request-id-middleware");
+const createHealthRouter = require("./routes/health.js");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -3054,6 +3055,26 @@ function buildRuntimeConfigResponse() {
   };
 }
 
+// B7 / #126: hoisted so the /healthz + /readyz route can read the
+// current value via a closure when the route is mounted later in this
+// file. gracefulShutdown (defined far below) flips this on entry and
+// back off on completion. The route uses
+// `getShutdownInFlight: () => shutdownInFlight` so it sees the
+// CURRENT value, not the snapshot at mount time.
+let shutdownInFlight = false;
+
+// B7 / #126: surface the running build version via /healthz and
+// /readyz so an operator can confirm which image is responding. Read
+// once at boot from package.json; falls back to "unknown" if the file
+// is unreadable (e.g., a minimal Docker image that strips package.json).
+const APP_VERSION = (() => {
+  try {
+    return require("./package.json").version || "unknown";
+  } catch (_err) {
+    return "unknown";
+  }
+})();
+
 app.disable("x-powered-by");
 if (TRUST_PROXY) {
   app.set("trust proxy", TRUST_PROXY_HOPS);
@@ -3097,6 +3118,20 @@ app.use(helmet({
 // `res.status(429).json({ error: ... })` flows through the decorator.
 // See lib/request-id-middleware.js.
 app.use(createRequestIdMiddleware());
+// B7 / #126: health endpoints mounted BEFORE the rate-limiter so a
+// flood of supervisor probes doesn't trip the global cap and stop
+// the orchestrator from being able to read liveness/readiness. Also
+// before compression + body-parsers — these are GETs with no body
+// and trivial response shapes, no point spending cycles on
+// streaming-compression.
+app.use(
+  createHealthRouter({
+    restoreInProgressRef,
+    dataMutationLockRef,
+    getShutdownInFlight: () => shutdownInFlight,
+    appVersion: APP_VERSION
+  })
+);
 app.use(
   rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
@@ -3875,8 +3910,6 @@ const SHUTDOWN_TOTAL_TIMEOUT_MS =
 const SHUTDOWN_HTTP_DRAIN_TIMEOUT_MS = 10000;
 const SHUTDOWN_WEBHOOK_DRAIN_TIMEOUT_MS = 10000;
 const SHUTDOWN_STORE_FLUSH_TIMEOUT_MS = 10000;
-
-let shutdownInFlight = false;
 
 async function gracefulShutdown(httpServer, signal) {
   // Re-entry guard: a second SIGTERM/SIGINT arriving while a drain
