@@ -15,6 +15,7 @@ function captureWriter() {
 }
 
 function lastRecord(lines) {
+  if (lines.length === 0) throw new Error("No records emitted");
   return JSON.parse(lines[lines.length - 1]);
 }
 
@@ -64,6 +65,43 @@ describe("sanitizeFieldValue", () => {
   });
   test("arrays are walked", () => {
     expect(sanitizeFieldValue([1, "x", () => {}, null])).toEqual([1, "x", undefined, null]);
+  });
+
+  test("cycle detection: object that references itself becomes '[circular]'", () => {
+    const obj = {};
+    obj.self = obj;
+    const out = sanitizeFieldValue(obj);
+    expect(out.self).toBe("[circular]");
+  });
+
+  test("cycle detection: array that contains itself becomes '[circular]'", () => {
+    const arr = [];
+    arr.push(arr);
+    const out = sanitizeFieldValue(arr);
+    expect(out).toEqual(["[circular]"]);
+  });
+
+  test("cycle detection: cross-object cycles handled (a -> b -> a)", () => {
+    const a = { name: "a" };
+    const b = { name: "b", parent: a };
+    a.child = b;
+    const out = sanitizeFieldValue(a);
+    expect(out.name).toBe("a");
+    expect(out.child.name).toBe("b");
+    expect(out.child.parent).toBe("[circular]");
+  });
+});
+
+describe("logger smoke through createLogger with cyclic field bag", () => {
+  test("does not stack-overflow on circular field input", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    const obj = { name: "loop" };
+    obj.self = obj;
+    expect(() => logger.info("cyclic field", obj)).not.toThrow();
+    const rec = lastRecord(out.lines);
+    expect(rec.msg).toBe("cyclic field");
+    expect(rec.self).toBe("[circular]");
   });
 });
 
@@ -173,14 +211,26 @@ describe("createLogger emit", () => {
 });
 
 describe("createNoopLogger", () => {
-  test("methods exist and are callable", () => {
+  test("methods exist and are callable (including log alias)", () => {
     const noop = createNoopLogger();
     expect(() => {
       noop.debug("x");
       noop.info("y");
+      noop.log("alias for info");
       noop.warn("z");
       noop.error("w");
     }).not.toThrow();
+  });
+});
+
+describe("log alias on createLogger", () => {
+  test("logger.log emits at info level (backward-compat with console)", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    logger.log("via log alias");
+    const rec = lastRecord(out.lines);
+    expect(rec.level).toBe("info");
+    expect(rec.msg).toBe("via log alias");
   });
 });
 

@@ -18,13 +18,11 @@ const RESTORE_CONFIRM_HEADER = "x-admin-confirm";
 const RESTORE_CONFIRM_VALUE = "I-UNDERSTAND";
 
 function logEvent(req, event, fields = {}) {
+  // Pass `event` as the message and `fields` as the field bag so
+  // aggregators see them as queryable top-level keys; the logger
+  // adds its own `ts` (Codex P2 + Copilot on PR #149).
   try {
-    const payload = {
-      event,
-      ts: new Date().toISOString(),
-      ...fields
-    };
-    logger.info(JSON.stringify(payload));
+    logger.info(event, fields);
   } catch {
     // best effort
   }

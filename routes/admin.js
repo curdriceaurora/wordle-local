@@ -229,12 +229,12 @@ function createAdminRouter(deps) {
     // log doesn't contain the secret itself; the requireAdminAccess
     // middleware already attaches the raw key on req for the duration of
     // the request, and we hash here at the call site.
+    //
+    // Pass `event` as the message and the audit payload as the field
+    // bag so aggregators see `action` / `actor` / `entryId` / etc. as
+    // top-level structured fields (Codex P2 on PR #149).
     try {
-      logger.info(JSON.stringify({
-        event: `[schedule] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[schedule] ${action}`, fields);
     } catch (_err) {
       // best-effort; never block a write on logging failure
     }
@@ -748,11 +748,7 @@ function createAdminRouter(deps) {
   }
   function webhookAudit(action, fields) {
     try {
-      logger.info(JSON.stringify({
-        event: `[webhook] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[webhook] ${action}`, fields);
     } catch (_err) {
       // best-effort
     }
@@ -1045,11 +1041,7 @@ function createAdminRouter(deps) {
   // counts/timestamps and the broadcast control.
   function notificationAudit(action, fields) {
     try {
-      logger.info(JSON.stringify({
-        event: `[notify] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[notify] ${action}`, fields);
     } catch (_err) {
       // best-effort
     }

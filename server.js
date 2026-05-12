@@ -1550,7 +1550,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
   try {
     schedule = await scheduleStore.load();
   } catch (err) {
-    logger.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
+    logger.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err);
     // Background callers (boot / interval) can't react meaningfully —
     // they swallow this. Admin-trigger callers re-throw so the route
     // can return 503 instead of silently reporting "ok".
@@ -1574,7 +1574,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
         try {
           await scheduleStore.recordReconcile({ date, at });
         } catch (err) {
-          logger.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
+          logger.warn("[scheduler] could not record reconcile timestamp:", err);
           // Background callers (boot / interval) swallow this — a
           // missing timestamp on data/schedule.json doesn't justify
           // killing the tick driver. Admin-trigger callers re-throw
@@ -1587,7 +1587,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
     });
     return result;
   } catch (err) {
-    logger.error(`[scheduler] reconcile failed (${reason}):`, err.message);
+    logger.error(`[scheduler] reconcile failed (${reason}):`, err);
     // Same propagation rule: admin-trigger callers see the failure;
     // background callers swallow it (logged above) so a transient
     // disk error doesn't kill the interval driver.
@@ -3680,7 +3680,7 @@ async function startServer(listener = app.listen.bind(app)) {
       subject: ENV_PUSH_VAPID_SUBJECT
     });
   } catch (err) {
-    logger.error("[notify] VAPID provisioning failed:", err.message);
+    logger.error("[notify] VAPID provisioning failed:", err);
   }
   // Start the daily notification scheduler. Always-on: the scheduler
   // itself respects the runtime `enabled` flag from app-config so
@@ -3797,7 +3797,7 @@ async function gracefulShutdown(httpServer, signal) {
     try {
       httpServer.close();
     } catch (err) {
-      logger.warn("[shutdown] httpServer.close threw:", err.message);
+      logger.warn("[shutdown] httpServer.close threw:", err);
     }
   }
 
@@ -3813,8 +3813,8 @@ async function gracefulShutdown(httpServer, signal) {
 
   // 3. Stop the schedulers so they don't enqueue more writes.
   logger.info("[shutdown] step 3: stopping schedulers");
-  try { stopSchedulerInterval(); } catch (err) { logger.warn("[shutdown] stopSchedulerInterval threw:", err.message); }
-  try { dailyNotificationScheduler.shutdown(); } catch (err) { logger.warn("[shutdown] notification scheduler shutdown threw:", err.message); }
+  try { stopSchedulerInterval(); } catch (err) { logger.warn("[shutdown] stopSchedulerInterval threw:", err); }
+  try { dailyNotificationScheduler.shutdown(); } catch (err) { logger.warn("[shutdown] notification scheduler shutdown threw:", err); }
 
   // 4. Let any active applyRestore complete so we don't kill it
   //    mid-atomic-rename. waitForRelease() is its own helper.
@@ -3826,7 +3826,7 @@ async function gracefulShutdown(httpServer, signal) {
         new Promise((resolve) => setTimeout(resolve, SHUTDOWN_STORE_FLUSH_TIMEOUT_MS))
       ]);
     } catch (err) {
-      logger.warn("[shutdown] restore drain threw:", err.message);
+      logger.warn("[shutdown] restore drain threw:", err);
     }
   }
 
@@ -3837,7 +3837,7 @@ async function gracefulShutdown(httpServer, signal) {
     const drained = await webhookService.waitForDrain(SHUTDOWN_WEBHOOK_DRAIN_TIMEOUT_MS);
     if (!drained) logger.warn("[shutdown] webhook drain timeout — exiting with active deliveries");
   } catch (err) {
-    logger.warn("[shutdown] webhook drain threw:", err.message);
+    logger.warn("[shutdown] webhook drain threw:", err);
   }
 
   // 6. Flush every store's writeQueue / commitQueue. Each store
@@ -3871,7 +3871,7 @@ async function gracefulShutdown(httpServer, signal) {
         ]);
         return { name, q: wrapped };
       } catch (err) {
-        logger.warn(`[shutdown] reading ${name}.queue threw:`, err.message);
+        logger.warn(`[shutdown] reading ${name}.queue threw:`, err);
         return null;
       }
     })
