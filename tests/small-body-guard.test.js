@@ -111,4 +111,57 @@ describe("small-body Content-Length guard", () => {
       .send(oversizedForSmallGuard);
     expect(res.status).not.toBe(413);
   });
+
+  test(`chunked-transfer bypass: per-prefix express.json rejects oversized chunked body without Content-Length (Codex P2)`, async () => {
+    // The Content-Length pre-check ONLY catches honest clients that
+    // declare an oversized payload. A hostile client can use
+    // `Transfer-Encoding: chunked` and omit Content-Length to skip
+    // the pre-check. The per-prefix `express.json` parser is the
+    // load-bearing defense — it counts bytes during streaming and
+    // throws `entity.too.large` when the limit is exceeded.
+    //
+    // Use raw Node http to issue a chunked request because supertest
+    // automatically sets Content-Length when .send() receives a
+    // string, which short-circuits the pre-check before the chunked
+    // path is exercised.
+    const http = require("node:http");
+    process.env.RATE_LIMIT_MAX = "10000";
+    process.env.RATE_LIMIT_WINDOW_MS = "60000";
+    const app = loadApp();
+    const server = await new Promise((resolve) => {
+      const s = app.listen(0, () => resolve(s));
+    });
+    const port = server.address().port;
+    try {
+      const oversized = JSON.stringify({ junk: "x".repeat(OVERSIZED_BYTES) });
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            method: "POST",
+            path: COVERED_PATHS[0],
+            headers: {
+              "Content-Type": "application/json",
+              "Transfer-Encoding": "chunked"
+            }
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode));
+          }
+        );
+        req.on("error", reject);
+        // Write in 50 KiB chunks so the limit is exceeded mid-stream.
+        const CHUNK = 50 * 1024;
+        for (let i = 0; i < oversized.length; i += CHUNK) {
+          req.write(oversized.slice(i, i + CHUNK));
+        }
+        req.end();
+      });
+      expect(status).toBe(413);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });

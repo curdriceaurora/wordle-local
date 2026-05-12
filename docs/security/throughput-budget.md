@@ -45,7 +45,12 @@ Worst-case ingress per minute (per IP / per admin-key bucket where the limiter i
 
 **Was:** A POST to `/api/stats/result` could carry 12 MiB of JSON (200× over the actual payload size), giving 240 MiB/min × parse-cost CPU as a worst-case ingress per IP. The handler discards unknown fields, but the parser still has to materialize and validate the body.
 
-**Mitigation:** Added a small-body pre-check (`SMALL_BODY_PATH_PREFIXES` + `SMALL_BODY_LIMIT_BYTES = 256 KiB`) in `server.js` that runs *before* `express.json`. Player API paths (`stats`, `challenges`, `push`, `notifications`) now reject `Content-Length > 256 KiB` with a 413, dropping the worst case from 240 MiB/min to ~5 MiB/min.
+**Mitigation:** Two layers in `server.js`:
+
+1. **Content-Length pre-check** for fast-fail 413 on honest clients that declare an oversized payload. Skips JSON parsing entirely.
+2. **Per-prefix `express.json({ limit: 256 KiB })`** mounted on each prefix BEFORE the global `express.json({ limit: JSON_BODY_LIMIT })`. This is the load-bearing defense — chunked-transfer requests that omit `Content-Length` bypass layer 1, but the per-prefix parser still counts bytes during streaming and throws `entity.too.large` (Codex P2 on PR #146 caught the chunked bypass; the layered approach closes it).
+
+Player API paths now reject oversized payloads with 413 regardless of whether the client uses `Content-Length` or `Transfer-Encoding: chunked`, dropping the worst case from 240 MiB/min to ~5 MiB/min.
 
 **Audit:** If a future endpoint legitimately needs a larger payload, add its path prefix to the allowlist via a separate exception (or move it out of the `SMALL_BODY_PATH_PREFIXES` covered set). Don't drop the 256 KiB cap for everyone.
 

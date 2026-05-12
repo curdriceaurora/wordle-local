@@ -3010,14 +3010,28 @@ app.use(
   })
 );
 app.use(compression());
-// Per-route-class body-size pre-check. The global `express.json({ limit:
-// JSON_BODY_LIMIT })` accepts payloads up to 12 MiB to accommodate the
-// admin manual-provider-upload path (~11 MiB base64). Player API paths
-// (`/api/stats/*`, `/api/challenges/*`, `/api/push/*`) accept tiny
-// payloads (sub-KiB) and should not be a vehicle for 12 MiB ingress
-// abuse — see docs/security/throughput-budget.md for the analysis.
-// Reject early via Content-Length so we don't burn CPU parsing a
-// 12 MiB JSON body just to throw at the route handler.
+// Per-route-class body-size enforcement. The global
+// `express.json({ limit: JSON_BODY_LIMIT })` accepts payloads up to
+// 12 MiB to accommodate the admin manual-provider-upload path
+// (~11 MiB base64). Player API paths (`/api/stats/*`,
+// `/api/challenges/*`, `/api/push/*`, `/api/notifications/*`) accept
+// tiny payloads (sub-KiB) and should not be a vehicle for 12 MiB
+// ingress abuse — see `docs/security/throughput-budget.md`.
+//
+// Two layers:
+//   1. Optional Content-Length pre-check: fast 413 without invoking
+//      the JSON parser when the client honestly declares a large
+//      body.
+//   2. Per-prefix `express.json({ limit: SMALL_BODY_LIMIT_BYTES })`
+//      mounted BEFORE the global parser. This is the load-bearing
+//      enforcement: chunked-transfer requests that omit
+//      Content-Length still hit this parser first because Express
+//      uses path-based middleware matching, and the parser counts
+//      bytes during streaming. Express's body-parser throws
+//      `PayloadTooLargeError` (entity.too.large) which the existing
+//      error handler converts to 413 (Codex P2 on PR #146 — the
+//      Content-Length-only approach was bypassable via
+//      `Transfer-Encoding: chunked`).
 const SMALL_BODY_PATH_PREFIXES = Object.freeze([
   "/api/stats/",
   "/api/challenges/",
@@ -3041,6 +3055,10 @@ app.use((req, res, next) => {
   }
   return next();
 });
+const smallBodyJsonParser = express.json({ limit: SMALL_BODY_LIMIT_BYTES });
+for (const prefix of SMALL_BODY_PATH_PREFIXES) {
+  app.use(prefix, smallBodyJsonParser);
+}
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use((err, req, res, next) => {
   if (!err) {
