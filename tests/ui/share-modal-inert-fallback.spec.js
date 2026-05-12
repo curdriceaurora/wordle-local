@@ -1,7 +1,8 @@
 // Verifies the share modal's inert fallback. On the real browser
 // (inert-supporting) both paths behave correctly; we also forcibly
 // disable inert support to drive the tabindex fallback and confirm
-// the Close button is not Tab-reachable when the modal is closed.
+// the Close button is not Tab-reachable when the modal is closed,
+// AND that the round-trip open → close restores cleanly.
 const { test, expect } = require("./fixtures");
 
 test("share modal hides Close from Tab when closed (inert path)", async ({ page }) => {
@@ -28,7 +29,7 @@ test("share modal hides Close from Tab when closed (inert path)", async ({ page 
   expect(reachableClosed).toBe(false);
 });
 
-test("share modal hides Close from Tab when closed (tabindex fallback)", async ({ page }) => {
+test("share modal inert fallback: full open/close round-trip on a browser without `inert`", async ({ page }) => {
   // Strip inert support BEFORE page scripts run so SUPPORTS_INERT
   // evaluates to false on bootstrap and the fallback path takes over.
   await page.addInitScript(() => {
@@ -39,18 +40,71 @@ test("share modal hides Close from Tab when closed (tabindex fallback)", async (
       /* feature-removal best effort */
     }
   });
-  await page.goto("/");
-  await page.waitForSelector("#shareModal", { state: "attached" });
+
+  // Navigate via an encoded share link so #playPanel becomes visible
+  // (the create-page DOM has #shareInfoBtn under .hidden, so a real
+  // click can't open the modal from /). Driving to play state means
+  // we exercise the full open/close round-trip through the same
+  // listeners a user would.
+  await page.goto("/?word=yfrqp&lang=en");
+  await page.waitForSelector("#shareInfoBtn", { state: "visible" });
+
+  // --- 1. INACTIVE (closed) ---
+  // Save side: tabindex stashed, data-inert-tabindex remembers prior
+  // absence, AND inert is still toggled (the function always sets it
+  // regardless of browser support so the DOM is internally consistent).
   await page.waitForFunction(() =>
     document.getElementById("shareModalClose").getAttribute("data-inert-tabindex") !== null
   );
+  const closedSave = await page.evaluate(() => {
+    const close = document.getElementById("shareModalClose");
+    const modal = document.getElementById("shareModal");
+    return {
+      tabindex: close.getAttribute("tabindex"),
+      remembered: close.getAttribute("data-inert-tabindex"),
+      modalHasInert: modal.hasAttribute("inert"),
+      remainingStashedNodes: modal.querySelectorAll("[data-inert-tabindex]").length
+    };
+  });
+  expect(closedSave.tabindex).toBe("-1");
+  expect(closedSave.remembered).toBe("__none__");
+  expect(closedSave.modalHasInert).toBe(true);
+  expect(closedSave.remainingStashedNodes).toBeGreaterThan(0);
 
-  // Fallback should set tabindex="-1" + remember prior absence, AND
-  // the `inert` attribute must still mirror the inactive state (the
-  // function now always toggles inert regardless of browser support so
-  // the DOM stays internally consistent — fix for PR #160 Copilot
-  // review on public/app.js:147).
-  const state = await page.evaluate(() => {
+  // --- 2. OPEN ---
+  // Real click on the same trigger a keyboard/AT user would use.
+  await page.click("#shareInfoBtn");
+  await page.waitForFunction(() =>
+    document.getElementById("shareModal").classList.contains("is-open")
+  );
+
+  // Restore side: inert removed, tabindex cleared, data-inert-tabindex
+  // wiped from every focusable in the modal (no stashed nodes remain).
+  const openedRestore = await page.evaluate(() => {
+    const close = document.getElementById("shareModalClose");
+    const modal = document.getElementById("shareModal");
+    return {
+      tabindex: close.getAttribute("tabindex"),
+      remembered: close.getAttribute("data-inert-tabindex"),
+      modalHasInert: modal.hasAttribute("inert"),
+      remainingStashedNodes: modal.querySelectorAll("[data-inert-tabindex]").length
+    };
+  });
+  expect(openedRestore.tabindex).toBeNull();
+  expect(openedRestore.remembered).toBeNull();
+  expect(openedRestore.modalHasInert).toBe(false);
+  expect(openedRestore.remainingStashedNodes).toBe(0);
+
+  // --- 3. CLOSE again ---
+  // Escape is the documented close path; verify the save side comes
+  // back identically after a real round-trip (regression guard against
+  // the function leaking state across cycles).
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() =>
+    !document.getElementById("shareModal").classList.contains("is-open")
+  );
+
+  const closedSaveAgain = await page.evaluate(() => {
     const close = document.getElementById("shareModalClose");
     const modal = document.getElementById("shareModal");
     return {
@@ -59,24 +113,7 @@ test("share modal hides Close from Tab when closed (tabindex fallback)", async (
       modalHasInert: modal.hasAttribute("inert")
     };
   });
-  expect(state.tabindex).toBe("-1");
-  expect(state.remembered).toBe("__none__");
-  expect(state.modalHasInert).toBe(true);
-
-  // Opening should restore (no tabindex; data-inert-tabindex cleared).
-  await page.evaluate(() => {
-    document.querySelector('[data-share-modal-open]')?.click();
-    // Manual fallback: programmatic open if the trigger lives elsewhere
-    if (!document.getElementById("shareModal").classList.contains("is-open")) {
-      // app.js exposes openShareModal via the click handler on the
-      // ".share About share links" button; we tickle that button if
-      // it exists, otherwise just dispatch a click on the modal-open
-      // anchor.
-      const btn = document.getElementById("shareInfoBtn");
-      if (btn) btn.click();
-    }
-  });
-  // If we couldn't actually open the modal in this gameplay-less view,
-  // skip the restore check — the fallback save side is the part that
-  // mattered for the Copilot finding.
+  expect(closedSaveAgain.tabindex).toBe("-1");
+  expect(closedSaveAgain.remembered).toBe("__none__");
+  expect(closedSaveAgain.modalHasInert).toBe(true);
 });
