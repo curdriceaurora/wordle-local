@@ -34,8 +34,28 @@ function createStatsRouter(deps) {
     mapRegistryErrorToStats,
     mergeDailyResult,
     describeRange,
-    StatsApiError
+    StatsApiError,
+    // B4 / #123: optional. When supplied, every leaderboard mutation
+    // in this router brackets the disk-write window with the backup
+    // direct-writer slot counter so a backup pre-swap probe sees the
+    // POST in flight and 409s rather than silently winning the race
+    // (drain still catches it, but the operator-facing BACKUP_BUSY
+    // signal is the goal). When the host doesn't inject it (older
+    // tests, embedded uses), the wrap becomes a no-op.
+    claimDirectDataWriteSlot
   } = deps;
+
+  async function withSlot(fn) {
+    if (typeof claimDirectDataWriteSlot !== "function") {
+      return fn();
+    }
+    const release = await claimDirectDataWriteSlot();
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   const router = express.Router();
 
@@ -65,7 +85,7 @@ function createStatsRouter(deps) {
         preSnapshotFailed = true;
       }
 
-      const snapshot = await leaderboardStore.mutate((draft) => {
+      const snapshot = await withSlot(() => leaderboardStore.mutate((draft) => {
         const existing = draft.profiles.find(
           (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
         );
@@ -84,7 +104,7 @@ function createStatsRouter(deps) {
         };
         draft.profiles.push(createdProfile);
         createdProfileId = createdProfile.id;
-      });
+      }));
 
       if (classesStore && !reused) {
         const postIds = new Set(snapshot.profiles.map((profile) => profile.id));
@@ -104,7 +124,7 @@ function createStatsRouter(deps) {
         }
         if (shouldReconcile) {
           try {
-            await classesStore.reconcileMissingProfiles(postIds);
+            await withSlot(() => classesStore.reconcileMissingProfiles(postIds));
           } catch (reconcileErr) {
             logger.warn(
               `[stats] Profile creation pruned older profile(s) but class reconciliation failed: ${reconcileErr?.message || String(reconcileErr)}`
@@ -139,7 +159,7 @@ function createStatsRouter(deps) {
 
     try {
       let retained = false;
-      const snapshot = await leaderboardStore.mutate((draft) => {
+      const snapshot = await withSlot(() => leaderboardStore.mutate((draft) => {
         const profile = draft.profiles.find((item) => item.id === payload.profileId);
         if (!profile) {
           throw new StatsApiError(404, "Player profile not found.");
@@ -156,7 +176,7 @@ function createStatsRouter(deps) {
         currentEntries.set(payload.dailyKey, mergeOutcome.entry);
         draft.resultsByProfile[payload.profileId] = Object.fromEntries(currentEntries);
         profile.updatedAt = nowIso;
-      });
+      }));
       const persistedEntry = snapshot.resultsByProfile[payload.profileId]?.[payload.dailyKey] || null;
       const retainedInStore = retained && Boolean(persistedEntry);
 

@@ -296,7 +296,13 @@ function createAdminRouter(deps) {
     }
 
     try {
-      const snapshot = await leaderboardStore.mutate((draft) => {
+      // B4 / #123: bump the slot counter so backup's pre-swap busy-check
+      // observes this leaderboard mutation as in-flight. Without the
+      // wrap, exclusion still works (`waitForDataMutationLock` is
+      // injected into the store), but the operator-facing 409
+      // BACKUP_BUSY signal mis-fires as "now is a good time to start"
+      // and the backup blocks on drain instead.
+      const snapshot = await withSlot(() => leaderboardStore.mutate((draft) => {
         const profile = draft.profiles.find((item) => item.id === profileId);
         if (!profile) {
           throw new StatsApiError(404, "Player profile not found.");
@@ -310,7 +316,7 @@ function createAdminRouter(deps) {
         const nowIso = new Date().toISOString();
         profile.name = nextName;
         profile.updatedAt = nowIso;
-      });
+      }));
       const persistedProfile = snapshot.profiles.find((item) => item.id === profileId) || null;
       if (!persistedProfile) {
         throw new Error("Failed to persist player profile rename.");
@@ -1324,7 +1330,9 @@ function createAdminRouter(deps) {
     }
 
     try {
-      await leaderboardStore.deleteProfile(profileId, { expectedName: confirmName });
+      // B4 / #123: bump slot for leaderboard write — see rationale on
+      // rename handler above.
+      await withSlot(() => leaderboardStore.deleteProfile(profileId, { expectedName: confirmName }));
     } catch (err) {
       if (err instanceof LeaderboardStoreError) {
         if (err.code === "PROFILE_NOT_FOUND") {
@@ -1343,7 +1351,8 @@ function createAdminRouter(deps) {
     let classCleanupTouched = 0;
     let classCleanupError = null;
     try {
-      classCleanupTouched = await classesStore.removeMemberEverywhere(profileId);
+      // B4 / #123: bump slot for classes write.
+      classCleanupTouched = await withSlot(() => classesStore.removeMemberEverywhere(profileId));
     } catch (err) {
       classCleanupError = err;
       logger.warn(
@@ -1388,7 +1397,8 @@ function createAdminRouter(deps) {
 
     let mergedProfile;
     try {
-      const snapshot = await leaderboardStore.mergeProfiles(sourceId, targetId);
+      // B4 / #123: bump slot for leaderboard merge.
+      const snapshot = await withSlot(() => leaderboardStore.mergeProfiles(sourceId, targetId));
       mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
       if (!mergedProfile) {
         throw new Error("Failed to persist merged profile.");
@@ -1409,7 +1419,8 @@ function createAdminRouter(deps) {
     let classMembershipsTransferred = [];
     let classCleanupError = null;
     try {
-      const result = await classesStore.replaceMemberEverywhere(sourceId, targetId);
+      // B4 / #123: bump slot for classes write.
+      const result = await withSlot(() => classesStore.replaceMemberEverywhere(sourceId, targetId));
       classMembershipsTransferred = result.touchedClassIds;
     } catch (err) {
       classCleanupError = err;
@@ -1747,12 +1758,20 @@ function createAdminRouter(deps) {
         requestPayload.manualUpload = stagedManualUpload;
       }
 
-      queuedJob = await adminJobsStore.enqueueProviderImportJob(requestPayload, {
+      // B4 / #123: bump slot for admin-jobs enqueue/mark writes. The
+      // provider-import-enqueue ref already gates the upload+enqueue
+      // window for backup busy-check, but the slot counter is the
+      // primitive the busy-check probes directly; keeping both lit
+      // gives the busy-check a single uniform signal across all
+      // direct writers.
+      queuedJob = await withSlot(() => adminJobsStore.enqueueProviderImportJob(requestPayload, {
         requestedBy: "admin"
-      });
+      }));
     } catch (err) {
       if (queuedJob?.id) {
-        await adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err)).catch(() => {});
+        await withSlot(() =>
+          adminJobsStore.markFailed(queuedJob.id, formatProviderJobError(err))
+        ).catch(() => {});
       }
       await cleanupManualUploadStaging(stagedManualUpload).catch(() => {});
       if (providerImportEnqueueActiveRef) {
@@ -2120,7 +2139,8 @@ function createAdminRouter(deps) {
   router.post("/api/admin/classes", async (req, res) => {
     const name = req.body?.name;
     try {
-      const created = await classesStore.createClass(name);
+      // B4 / #123: bump slot for classes create.
+      const created = await withSlot(() => classesStore.createClass(name));
       return res.status(201).json({
         ok: true,
         class: {
@@ -2182,7 +2202,8 @@ function createAdminRouter(deps) {
       return res.status(400).json({ error: "Provide at least one of: name, archived." });
     }
     try {
-      const updated = await classesStore.updateClass(classId, patch);
+      // B4 / #123: bump slot for classes update.
+      const updated = await withSlot(() => classesStore.updateClass(classId, patch));
       return res.json({
         ok: true,
         class: {
@@ -2218,11 +2239,13 @@ function createAdminRouter(deps) {
         // IDs are NOT in any other non-archived class, and removes those
         // from every (archived) class that still references them. The
         // classes-side state is consistent before we touch the leaderboard.
-        const result = await classesStore.deleteClassWithCarveOut(classId);
+        // B4 / #123: bump slot for classes delete-with-carve-out.
+        const result = await withSlot(() => classesStore.deleteClassWithCarveOut(classId));
         carveOutIds = result.carveOutIds;
       } else {
         // Just delete the class without touching profiles.
-        await classesStore.deleteClass(classId);
+        // B4 / #123: bump slot for classes delete.
+        await withSlot(() => classesStore.deleteClass(classId));
       }
     } catch (err) {
       return handleClassesStoreError(res, err, "Class delete failed.");
@@ -2259,7 +2282,8 @@ function createAdminRouter(deps) {
         }
         eligibleForCleanup = carveOutIds.filter((id) => !referencedNow.has(id));
         const tentativeRemoved = [];
-        await leaderboardStore.mutate((draft) => {
+        // B4 / #123: bump slot for the leaderboard carve-out write.
+        await withSlot(() => leaderboardStore.mutate((draft) => {
           for (const memberId of eligibleForCleanup) {
             const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
             if (idx !== -1) {
@@ -2273,7 +2297,7 @@ function createAdminRouter(deps) {
               tentativeRemoved.push(memberId);
             }
           }
-        });
+        }));
         removedProfileIds = tentativeRemoved;
       } catch (err) {
         leaderboardCleanupError = err;
@@ -2452,7 +2476,8 @@ function createAdminRouter(deps) {
     const reusedProfileIds = [];
     const createdProfileIds = [];
     try {
-      await leaderboardStore.mutate((draft) => {
+      // B4 / #123: bump slot for the bulk-add leaderboard mutate.
+      await withSlot(() => leaderboardStore.mutate((draft) => {
         const nowIso = new Date().toISOString();
         const existingByLowerName = new Map(
           draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
@@ -2482,7 +2507,7 @@ function createAdminRouter(deps) {
             `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
           );
         }
-      });
+      }));
     } catch (err) {
       if (err && err.code === "HOST_CAP_EXCEEDED") {
         return res.status(409).json({ error: err.message });
@@ -2512,7 +2537,8 @@ function createAdminRouter(deps) {
 
     let addOutcome;
     try {
-      addOutcome = await classesStore.addMembers(classId, membersToAdd);
+      // B4 / #123: bump slot for classes addMembers.
+      addOutcome = await withSlot(() => classesStore.addMembers(classId, membersToAdd));
     } catch (err) {
       // Race window: between the pre-check and addMembers, another admin
       // could have archived the class or filled the per-class cap. Roll back
@@ -2543,7 +2569,8 @@ function createAdminRouter(deps) {
           const safeToDelete = createdProfileIds.filter((id) => !referencedNow.has(id));
           if (safeToDelete.length > 0) {
             const safeSet = new Set(safeToDelete);
-            await leaderboardStore.mutate((draft) => {
+            // B4 / #123: bump slot for rollback leaderboard mutate.
+            await withSlot(() => leaderboardStore.mutate((draft) => {
               draft.profiles = draft.profiles.filter((profile) => !safeSet.has(profile.id));
               if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
                 for (const id of safeSet) {
@@ -2552,7 +2579,7 @@ function createAdminRouter(deps) {
                   }
                 }
               }
-            });
+            }));
           }
         } catch (rollbackErr) {
           logger.warn(
@@ -2584,7 +2611,8 @@ function createAdminRouter(deps) {
       return res.status(400).json({ error: "Class id and profile id are required." });
     }
     try {
-      const updated = await classesStore.removeMember(classId, profileId);
+      // B4 / #123: bump slot for classes removeMember.
+      const updated = await withSlot(() => classesStore.removeMember(classId, profileId));
       return res.json({
         ok: true,
         class: {
