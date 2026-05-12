@@ -176,6 +176,10 @@ const AVAILABLE_LANGUAGES = new Map([
 
 const app = express();
 
+// Don't advertise the underlying framework on a public preview. Matches
+// server.js which disables this for the same reason.
+app.disable("x-powered-by");
+
 // Vercel terminates TLS / load balances before the function runs, so the
 // originating IP is in x-forwarded-for. Trust one hop so express-rate-limit
 // keys by the real client address instead of the proxy.
@@ -202,7 +206,9 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ error: "Request body too large." });
   }
   if (err instanceof SyntaxError && "body" in err) {
-    return res.status(400).json({ error: "Invalid JSON body." });
+    // Match server.js's wording so client error copy is consistent
+    // between the local/Docker hosting paths and the Vercel preview.
+    return res.status(400).json({ error: "Request body must be valid JSON." });
   }
   return next(err);
 });
