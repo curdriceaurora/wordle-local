@@ -81,7 +81,7 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 
 The repo includes `vercel.json` and `api/[...path].js`. Importing the repo into Vercel gets you a public gameplay-only preview with zero config.
 
-- No env vars are read by the serverless function. `ADMIN_KEY`, `REQUIRE_ADMIN_KEY`, `TRUST_PROXY`, the rate-limit envs, `DEFINITIONS_MODE`, `PERF_LOGGING`, and the `*_PATH` overrides on this page have no effect there — the function uses hard-coded defaults (rate limit at 300 req / 15 min per IP, definitions off, trust 1 proxy hop).
+- No env vars are read by the serverless function. `ADMIN_KEY`, `REQUIRE_ADMIN_KEY`, `TRUST_PROXY`, the rate-limit envs, `DEFINITIONS_MODE`, `PERF_LOGGING`, and the `*_PATH` overrides on this page have no effect there — the function uses hard-coded defaults (rate limit at 300 req / 15 min per IP **per warm instance**, definitions off, trust 1 proxy hop). The rate limit is best-effort, not durable: `express-rate-limit`'s default in-memory store resets on every cold start and is not shared across concurrent serverless instances or regions, so the effective ceiling under load can be several multiples of 300/15min. Treat it as a courtesy throttle, not a security control.
 - The bundle ships only `data/dictionaries/en.txt`. `en-definitions.json` and the runtime state JSONs are excluded by `.vercelignore`.
 - Only English is exposed (the front-end auto-hides the language dropdown when `/api/meta` reports a single language).
 - Stateful endpoints (`/api/word`, `/api/stats/*`, `/api/challenges/*`, `/api/admin/*`, `/api/notifications/*`, `/api/backup`, `/api/restore`) return `404 {"code": "STATIC_DEPLOY_ENDPOINT_MISSING"}`.
