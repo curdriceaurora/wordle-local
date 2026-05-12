@@ -244,7 +244,12 @@ rollback dir contains the originals.
 **Detection**: boot log lines as above. The orphan staging dir name
 follows `.restore-staging-<timestamp>-<random>` and the matching
 rollback dir is `.restore-rollback-<timestamp>-<random>` from the
-same restore.
+same restore. The two dirs are created by separate
+`makeStagingDir()` calls so they each have an INDEPENDENT random
+suffix — pair them by the closest `<timestamp>` (the same restore
+creates both within milliseconds of each other), not by exact
+suffix match. (Codex P2 on PR #153: a multi-orphan environment can
+otherwise mis-pair across failed restores.)
 
 **Recovery**:
 
@@ -266,9 +271,21 @@ same restore.
 
 **Symptom**: `applyRestore` fails with `BackupError` codes
 `SHA256_MISMATCH`, `BYTES_MISMATCH`, `MANIFEST_INCOMPLETE`, or
-`INVALID_MANIFEST_JSON`. The transient `.restore-staging-*` dir is
-auto-cleaned at the error path before phase 3 (no rollback dir is
-created because the live swap never started).
+`MANIFEST_PARSE_FAILED` (CR Minor on PR #153 caught: the code name
+in `lib/backup-store.js:540` is `MANIFEST_PARSE_FAILED`, not
+`INVALID_MANIFEST_JSON`).
+
+On-disk artifacts depend on where the failure occurred (Copilot on
+PR #153 caught the previous "auto-cleaned" claim was incorrect):
+
+- Failures BEFORE `makeStagingDir` runs (manifest schema invalid,
+  schema-digest drift, etc.): no staging or rollback dirs are
+  created.
+- Failures AFTER staging+rollback are created (extraction, byte
+  validation, mid-swap rename): BOTH dirs remain on disk for
+  operator inspection. The success path (and only the success path)
+  removes them — `lib/backup-store.js:1098-1110`. Use the
+  SIGKILL-recovery procedure above for these.
 
 **Detection**: the API response includes the BackupError code and
 message. Log line `applyRestore.failed` at `error` level.

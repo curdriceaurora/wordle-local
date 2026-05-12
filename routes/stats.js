@@ -7,6 +7,7 @@ const { logger } = require("../lib/logger");
  * Provides leaderboard and player profile endpoints
  * @param {Object} deps - Dependencies
  * @param {Object} deps.leaderboardStore - LeaderboardStore instance for persisting stats
+ * @param {Object} [deps.classesStore] - Optional ClassesStore for cross-store profile reconciliation
  * @param {Function} deps.normalizeProfileNameInput - Validates and normalizes profile name
  * @param {Function} deps.parseDailyResultPayload - Parses and validates result submission
  * @param {Function} deps.parseLeaderboardRange - Validates leaderboard range query param
@@ -18,6 +19,9 @@ const { logger } = require("../lib/logger");
  * @param {Function} deps.mergeDailyResult - Merges new result with existing result and retention state
  * @param {Function} deps.describeRange - Gets human-readable range description
  * @param {Function} deps.StatsApiError - Error class for stats validation errors
+ * @param {Function} deps.claimDirectDataWriteSlot - REQUIRED. Returns a release-fn promise; brackets each
+ *   leaderboard mutation against backup busy-checks (B4 / #123). Throws at router construction if
+ *   not supplied — matches the routes/admin.js fail-fast policy on the same dep.
  * @returns {express.Router} Express router
  */
 function createStatsRouter(deps) {
