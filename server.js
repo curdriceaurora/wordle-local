@@ -50,6 +50,7 @@ const {
   buildFilteredAnswerPoolArtifacts,
   FILTER_MODES: PROVIDER_FILTER_MODES
 } = require("./lib/provider-answer-filter");
+const { logger } = require("./lib/logger");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -103,13 +104,13 @@ function clampEnvBounded(rawValue, defaultValue, min, max, envName) {
   }
   const numeric = Number(rawValue);
   if (!Number.isInteger(numeric) || numeric <= 0) {
-    console.warn(
+    logger.warn(
       `${envName}=${String(rawValue)} is not a positive integer; using default ${defaultValue}.`
     );
     return defaultValue;
   }
   if (numeric < min || numeric > max) {
-    console.warn(
+    logger.warn(
       `${envName}=${String(rawValue)} is outside the documented range (${min}-${max}); using default ${defaultValue}.`
     );
     return defaultValue;
@@ -245,7 +246,7 @@ const ENV_ANALYTICS_TIMEZONE = (() => {
     new Intl.DateTimeFormat("en-US", { timeZone: raw });
     return raw;
   } catch (_err) {
-    console.warn(
+    logger.warn(
       `ANALYTICS_TIMEZONE=${raw} is not a recognised IANA zone; falling back to UTC.`
     );
     return "UTC";
@@ -262,7 +263,7 @@ const ENV_SCHEDULE_TIMEZONE_DEFAULT = (() => {
     new Intl.DateTimeFormat("en-US", { timeZone: candidate });
     return candidate;
   } catch (_err) {
-    console.warn(
+    logger.warn(
       `SCHEDULE_TIMEZONE_DEFAULT=${candidate} is not a recognised IANA zone; falling back to UTC.`
     );
     return "UTC";
@@ -338,7 +339,7 @@ const ENV_PUSH_NOTIFICATIONS_ENABLED_DEFAULT =
 const ENV_PUSH_DAILY_FIRE_LOCAL_TIME_DEFAULT = (() => {
   const raw = String(process.env.PUSH_DAILY_FIRE_LOCAL_TIME || "00:00").trim();
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw)) {
-    console.warn(`PUSH_DAILY_FIRE_LOCAL_TIME=${raw} is not HH:MM; using 00:00.`);
+    logger.warn(`PUSH_DAILY_FIRE_LOCAL_TIME=${raw} is not HH:MM; using 00:00.`);
     return "00:00";
   }
   return raw;
@@ -353,7 +354,7 @@ const ENV_PUSH_GRACE_PERIOD_MINUTES_DEFAULT = clampEnvBounded(
 const ENV_PUSH_VAPID_SUBJECT = (() => {
   const raw = String(process.env.PUSH_VAPID_SUBJECT || "mailto:admin@localhost").trim();
   if (!/^(mailto:|https:)/.test(raw)) {
-    console.warn(`PUSH_VAPID_SUBJECT=${raw} is not mailto:/https:; using mailto:admin@localhost.`);
+    logger.warn(`PUSH_VAPID_SUBJECT=${raw} is not mailto:/https:; using mailto:admin@localhost.`);
     return "mailto:admin@localhost";
   }
   return raw;
@@ -602,7 +603,7 @@ function resolveDefinitionsMode() {
     return explicitMode;
   }
   if (process.env.DEFINITIONS_MODE) {
-    console.warn(
+    logger.warn(
       `Unknown DEFINITIONS_MODE="${process.env.DEFINITIONS_MODE}". Falling back to "memory".`
     );
   }
@@ -813,7 +814,7 @@ function applyRuntimeConfig(overrides) {
     });
   } catch (err) {
     limitsApplied = false;
-    console.warn(
+    logger.warn(
       `[runtime-config] Could not apply leaderboard limits: ${err?.message || String(err)}`
     );
     next.effective.limits = {
@@ -916,7 +917,7 @@ function endPerfTimer(timer, details = "") {
   if (!timer) return;
   const elapsedMs = Number(process.hrtime.bigint() - timer.start) / 1e6;
   const suffix = details ? ` ${details}` : "";
-  console.log(`[perf] ${timer.label} ${elapsedMs.toFixed(2)}ms${suffix}`);
+  logger.info(`[perf] ${timer.label} ${elapsedMs.toFixed(2)}ms${suffix}`);
 }
 
 function buildDefaultWordData() {
@@ -1006,7 +1007,7 @@ function ensureWordData() {
   const fallback = buildDefaultWordData();
   saveWordData(fallback);
   wordDataCache = fallback;
-  console.warn("Daily word data was invalid and has been reset.");
+  logger.warn("Daily word data was invalid and has been reset.");
   return fallback;
 }
 
@@ -1149,7 +1150,7 @@ function loadWordDefinitions(filePath) {
       ? parsed.definitions
       : parsed;
     if (!source || typeof source !== "object" || Array.isArray(source)) {
-      console.warn("Definition file is invalid. Continuing without answer meanings.");
+      logger.warn("Definition file is invalid. Continuing without answer meanings.");
       return new Map();
     }
 
@@ -1163,7 +1164,7 @@ function loadWordDefinitions(filePath) {
     }
     return map;
   } catch (err) {
-    console.warn("Failed to load local definitions. Continuing without answer meanings.");
+    logger.warn("Failed to load local definitions. Continuing without answer meanings.");
     return new Map();
   }
 }
@@ -1321,7 +1322,7 @@ function warnDefinitionIndexFallback() {
     return;
   }
   hasWarnedAboutDefinitionIndex = true;
-  console.warn(
+  logger.warn(
     "Definition index is missing or invalid. Falling back to lazy full-map lookups."
   );
 }
@@ -1549,7 +1550,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
   try {
     schedule = await scheduleStore.load();
   } catch (err) {
-    console.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
+    logger.error(`[scheduler] reconcile aborted (${reason}): could not load schedule:`, err.message);
     // Background callers (boot / interval) can't react meaningfully —
     // they swallow this. Admin-trigger callers re-throw so the route
     // can return 503 instead of silently reporting "ok".
@@ -1573,7 +1574,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
         try {
           await scheduleStore.recordReconcile({ date, at });
         } catch (err) {
-          console.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
+          logger.warn(`[scheduler] could not record reconcile timestamp: ${err.message}`);
           // Background callers (boot / interval) swallow this — a
           // missing timestamp on data/schedule.json doesn't justify
           // killing the tick driver. Admin-trigger callers re-throw
@@ -1586,7 +1587,7 @@ async function runSchedulerReconcileInner(reason = "tick") {
     });
     return result;
   } catch (err) {
-    console.error(`[scheduler] reconcile failed (${reason}):`, err.message);
+    logger.error(`[scheduler] reconcile failed (${reason}):`, err.message);
     // Same propagation rule: admin-trigger callers see the failure;
     // background callers swallow it (logged above) so a transient
     // disk error doesn't kill the interval driver.
@@ -1609,7 +1610,7 @@ function startSchedulerInterval() {
     schedulerTickInFlight = true;
     runSchedulerReconcile("interval")
       .catch((err) => {
-        console.error("[scheduler] unhandled interval error:", err);
+        logger.error("[scheduler] unhandled interval error:", err);
       })
       .finally(() => {
         schedulerTickInFlight = false;
@@ -1710,12 +1711,12 @@ function initializeRuntimeConfig() {
     const snapshot = appConfigStore.loadSync();
     normalizePromise = applyRuntimeConfig(snapshot.overrides || {});
   } catch (err) {
-    console.error("Failed to load app config overrides. Falling back to environment defaults.", err);
+    logger.error("Failed to load app config overrides. Falling back to environment defaults.", err);
     normalizePromise = applyRuntimeConfig({});
   }
   if (normalizePromise && typeof normalizePromise.catch === "function") {
     normalizePromise.catch((err) => {
-      console.warn(
+      logger.warn(
         `[runtime-config] Could not normalize leaderboard at boot: ${err?.message || String(err)}`
       );
     });
@@ -2207,14 +2208,14 @@ rebuildLanguageRuntimeCatalog();
     const orphans = await findOrphanedRestoreDirs(path.join(backupRoot, "data"));
     if (orphans.length > 0) {
       const list = orphans.map((entry) => entry.name).join(", ");
-      console.warn(
+      logger.warn(
         `[backup-store] Found ${orphans.length} orphaned restore directory(ies) under data/: ${list}. ` +
           "These are left over from a restore that did not complete. " +
           "Inspect their contents before deleting; see docs/backup-restore.md."
       );
     }
   } catch (err) {
-    console.warn(`[backup-store] Orphan-dir check failed: ${err?.message || String(err)}`);
+    logger.warn(`[backup-store] Orphan-dir check failed: ${err?.message || String(err)}`);
   }
 })();
 
@@ -2573,7 +2574,7 @@ function statsServiceError(res, err) {
   if (err instanceof StatsApiError) {
     return res.status(err.status).json({ error: err.message });
   }
-  console.error("Stats service request failed.", err);
+  logger.error("Stats service request failed.", err);
   return res.status(503).json({ error: STATS_UNAVAILABLE_ERROR });
 }
 
@@ -2581,7 +2582,7 @@ function providerAdminError(res, err) {
   if (err instanceof StatsApiError) {
     return res.status(err.status).json({ error: err.message });
   }
-  console.error("Provider admin request failed.", err);
+  logger.error("Provider admin request failed.", err);
   return res.status(503).json({ error: PROVIDER_ADMIN_UNAVAILABLE_ERROR });
 }
 
@@ -2845,7 +2846,7 @@ async function startProviderImportQueueIfNeeded() {
           webhookEmitInFlightRef.count += 1;
           webhookService.emit(event, payload)
             .catch((emitErr) => {
-              console.error(`[webhook] emit failed for ${event}:`, emitErr);
+              logger.error(`[webhook] emit failed for ${event}:`, emitErr);
             })
             .finally(() => {
               webhookEmitInFlightRef.count -= 1;
@@ -3194,7 +3195,7 @@ function resolveAdminShellAssets() {
 
 const ADMIN_SHELL = resolveAdminShellAssets();
 if (!fs.existsSync(ADMIN_SHELL.indexPath)) {
-  console.warn("Admin shell assets are missing. Build assets before serving /admin.");
+  logger.warn("Admin shell assets are missing. Build assets before serving /admin.");
 }
 
 // Mount admin router first so GET /admin route takes precedence over static serving
@@ -3412,12 +3413,12 @@ adminJobsStore
   .recoverRunningJobs()
   .then((hadRecoveredJobs) => {
     if (hadRecoveredJobs) {
-      console.warn("Recovered in-flight provider import jobs to queued state after restart.");
+      logger.warn("Recovered in-flight provider import jobs to queued state after restart.");
     }
     return startProviderImportQueueIfNeeded();
   })
   .catch((err) => {
-    console.error("Failed to initialize provider import queue.", err);
+    logger.error("Failed to initialize provider import queue.", err);
   });
 
 // ============================================================================
@@ -3553,7 +3554,7 @@ app.post("/api/word", requireAdminAccess, async (req, res) => {
       try {
         await saveWordDataAtomic(data);
       } catch (err) {
-        console.error("Failed to persist daily word data.", err);
+        logger.error("Failed to persist daily word data.", err);
         return res.status(500).json({ error: "Could not save daily word right now." });
       }
       wordDataCache = data;
@@ -3651,7 +3652,7 @@ async function startServer(listener = app.listen.bind(app)) {
   try {
     await runSchedulerReconcile("boot");
   } catch (err) {
-    console.error("[scheduler] boot reconcile error:", err);
+    logger.error("[scheduler] boot reconcile error:", err);
   }
   startSchedulerInterval();
   // Restart recovery: any delivery left in `running` (process died
@@ -3663,10 +3664,10 @@ async function startServer(listener = app.listen.bind(app)) {
     try {
       const recovered = await webhookService.recoverOnBoot();
       if (recovered > 0) {
-        console.log(`[webhook] recovered ${recovered} delivery(ies) after restart.`);
+        logger.info(`[webhook] recovered ${recovered} delivery(ies) after restart.`);
       }
     } catch (err) {
-      console.error("[webhook] recovery failed:", err);
+      logger.error("[webhook] recovery failed:", err);
     }
   }
   // Provision VAPID keys on first boot. Idempotent: subsequent boots
@@ -3679,7 +3680,7 @@ async function startServer(listener = app.listen.bind(app)) {
       subject: ENV_PUSH_VAPID_SUBJECT
     });
   } catch (err) {
-    console.error("[notify] VAPID provisioning failed:", err.message);
+    logger.error("[notify] VAPID provisioning failed:", err.message);
   }
   // Start the daily notification scheduler. Always-on: the scheduler
   // itself respects the runtime `enabled` flag from app-config so
@@ -3687,7 +3688,7 @@ async function startServer(listener = app.listen.bind(app)) {
   try {
     await dailyNotificationScheduler.start();
   } catch (err) {
-    console.error("[notify] scheduler boot failed:", err);
+    logger.error("[notify] scheduler boot failed:", err);
   }
   // Restart recovery for timed-challenge sessions: any session whose
   // time budget already expired during the downtime gets marked
@@ -3718,29 +3719,29 @@ async function startServer(listener = app.listen.bind(app)) {
             score
           });
         } catch (updateErr) {
-          console.warn(`[challenge] could not settle stuck session ${session.id}:`, updateErr.message);
+          logger.warn(`[challenge] could not settle stuck session ${session.id}:`, updateErr.message);
         }
       }
     } catch (err) {
-      console.error("[challenge] boot recovery failed:", err);
+      logger.error("[challenge] boot recovery failed:", err);
     }
   }
   const httpServer = listener(PORT, HOST, () => {
-    console.log(`local-hosted-wordle server running at http://localhost:${PORT}`);
-    console.log(`Definitions mode: ${getDefinitionsMode()}`);
+    logger.info(`local-hosted-wordle server running at http://localhost:${PORT}`);
+    logger.info(`Definitions mode: ${getDefinitionsMode()}`);
     if (isPerfLoggingEnabled()) {
-      console.log(
+      logger.info(
         `Perf logging enabled (definition cache size=${getDefinitionCacheSize()}, ttlMs=${getDefinitionCacheTtlMs()})`
       );
     }
     if (!ADMIN_KEY && !REQUIRE_ADMIN_KEY) {
-      console.log("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
+      logger.info("Admin mode is open. Set ADMIN_KEY to protect /admin updates.");
     }
     if (!ADMIN_KEY && REQUIRE_ADMIN_KEY) {
-      console.warn("ADMIN_KEY is required for admin endpoints in production.");
+      logger.warn("ADMIN_KEY is required for admin endpoints in production.");
     }
     if (!TRUST_PROXY && NODE_ENV === "production") {
-      console.warn(
+      logger.warn(
         "TRUST_PROXY is disabled. If deployed behind a reverse proxy, load balancer, or Tailscale, set TRUST_PROXY=true (and configure TRUST_PROXY_HOPS as needed)."
       );
     }
@@ -3786,22 +3787,22 @@ async function gracefulShutdown(httpServer, signal) {
   if (shutdownInFlight) return 0;
   shutdownInFlight = true;
   const startedAt = Date.now();
-  console.log(`[shutdown] ${signal} received; draining (total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms)…`);
+  logger.info(`[shutdown] ${signal} received; draining (total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms)…`);
 
   // 1. Stop accepting new connections. server.close() resolves only
   //    after all open sockets have closed, which can be slow on
   //    keep-alive — we just initiate, then watch inflightRequestsRef.
-  console.log("[shutdown] step 1: closing HTTP listener");
+  logger.info("[shutdown] step 1: closing HTTP listener");
   if (httpServer && typeof httpServer.close === "function") {
     try {
       httpServer.close();
     } catch (err) {
-      console.warn("[shutdown] httpServer.close threw:", err.message);
+      logger.warn("[shutdown] httpServer.close threw:", err.message);
     }
   }
 
   // 2. Drain in-flight requests via the counter middleware.
-  console.log(
+  logger.info(
     `[shutdown] step 2: waiting for ${inflightRequestsRef.value} in-flight request(s)`
   );
   await waitForRef(
@@ -3811,38 +3812,38 @@ async function gracefulShutdown(httpServer, signal) {
   );
 
   // 3. Stop the schedulers so they don't enqueue more writes.
-  console.log("[shutdown] step 3: stopping schedulers");
-  try { stopSchedulerInterval(); } catch (err) { console.warn("[shutdown] stopSchedulerInterval threw:", err.message); }
-  try { dailyNotificationScheduler.shutdown(); } catch (err) { console.warn("[shutdown] notification scheduler shutdown threw:", err.message); }
+  logger.info("[shutdown] step 3: stopping schedulers");
+  try { stopSchedulerInterval(); } catch (err) { logger.warn("[shutdown] stopSchedulerInterval threw:", err.message); }
+  try { dailyNotificationScheduler.shutdown(); } catch (err) { logger.warn("[shutdown] notification scheduler shutdown threw:", err.message); }
 
   // 4. Let any active applyRestore complete so we don't kill it
   //    mid-atomic-rename. waitForRelease() is its own helper.
   if (restoreInProgressRef.value) {
-    console.log("[shutdown] step 4: waiting for active restore to complete");
+    logger.info("[shutdown] step 4: waiting for active restore to complete");
     try {
       await Promise.race([
         restoreInProgressRef.waitForRelease(),
         new Promise((resolve) => setTimeout(resolve, SHUTDOWN_STORE_FLUSH_TIMEOUT_MS))
       ]);
     } catch (err) {
-      console.warn("[shutdown] restore drain threw:", err.message);
+      logger.warn("[shutdown] restore drain threw:", err.message);
     }
   }
 
   // 5. Webhook service: stop accepting + wait for in-flight.
-  console.log("[shutdown] step 5: draining webhook pool");
+  logger.info("[shutdown] step 5: draining webhook pool");
   try {
     webhookService.shutdown();
     const drained = await webhookService.waitForDrain(SHUTDOWN_WEBHOOK_DRAIN_TIMEOUT_MS);
-    if (!drained) console.warn("[shutdown] webhook drain timeout — exiting with active deliveries");
+    if (!drained) logger.warn("[shutdown] webhook drain timeout — exiting with active deliveries");
   } catch (err) {
-    console.warn("[shutdown] webhook drain threw:", err.message);
+    logger.warn("[shutdown] webhook drain threw:", err.message);
   }
 
   // 6. Flush every store's writeQueue / commitQueue. Each store
   //    owns its own queue field; we don't dispatch a write from
   //    here, we just await the tail of whatever's already chained.
-  console.log("[shutdown] step 6: flushing store queues");
+  logger.info("[shutdown] step 6: flushing store queues");
   // Build the queue list lazily — re-read each store's queue field
   // RIGHT NOW so we see the current tail (some store ops may have
   // landed during the earlier steps' awaits).
@@ -3870,22 +3871,22 @@ async function gracefulShutdown(httpServer, signal) {
         ]);
         return { name, q: wrapped };
       } catch (err) {
-        console.warn(`[shutdown] reading ${name}.queue threw:`, err.message);
+        logger.warn(`[shutdown] reading ${name}.queue threw:`, err.message);
         return null;
       }
     })
     .filter((p) => p !== null);
-  console.log(`[shutdown] step 6: awaiting ${pendingQueues.length} store queue tail(s)`);
+  logger.info(`[shutdown] step 6: awaiting ${pendingQueues.length} store queue tail(s)`);
   const results = await Promise.all(pendingQueues.map((entry) => entry.q));
   const timedOut = results.filter((r) => r.timedOut);
   if (timedOut.length > 0) {
-    console.warn(`[shutdown] step 6: queue(s) timed out: ${timedOut.map((r) => r.name).join(", ")}`);
+    logger.warn(`[shutdown] step 6: queue(s) timed out: ${timedOut.map((r) => r.name).join(", ")}`);
   } else {
-    console.log("[shutdown] step 6: all store queues flushed cleanly");
+    logger.info("[shutdown] step 6: all store queues flushed cleanly");
   }
 
   const elapsedMs = Date.now() - startedAt;
-  console.log(`[shutdown] complete in ${elapsedMs}ms`);
+  logger.info(`[shutdown] complete in ${elapsedMs}ms`);
   shutdownInFlight = false;
   return elapsedMs;
 }
@@ -3894,7 +3895,7 @@ async function waitForRef(predicate, timeoutMs, label) {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start >= timeoutMs) {
-      console.warn(`[shutdown] ${label} timeout after ${timeoutMs}ms`);
+      logger.warn(`[shutdown] ${label} timeout after ${timeoutMs}ms`);
       return false;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -3908,7 +3909,7 @@ function installShutdownHandlers(httpServer) {
       // Hard-stop fallback: if drain takes longer than the total
       // budget, force-exit so the supervisor doesn't have to SIGKILL.
       const hardStop = setTimeout(() => {
-        console.error(`[shutdown] total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms exceeded; force-exit`);
+        logger.error(`[shutdown] total budget ${SHUTDOWN_TOTAL_TIMEOUT_MS}ms exceeded; force-exit`);
         process.exit(1);
       }, SHUTDOWN_TOTAL_TIMEOUT_MS);
       hardStop.unref();
@@ -3919,7 +3920,7 @@ function installShutdownHandlers(httpServer) {
         })
         .catch((err) => {
           clearTimeout(hardStop);
-          console.error(`[shutdown] handler threw for ${signal}:`, err);
+          logger.error(`[shutdown] handler threw for ${signal}:`, err);
           process.exit(1);
         });
     });
@@ -3936,7 +3937,7 @@ if (require.main === module) {
       installShutdownHandlers(httpServer);
     })
     .catch((err) => {
-      console.error("[boot] startServer failed:", err);
+      logger.error("[boot] startServer failed:", err);
       process.exit(1);
     });
 }

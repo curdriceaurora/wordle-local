@@ -162,12 +162,13 @@ describe("createLogger emit", () => {
     expect(lastRecord(out.lines).msg).toBe("bare");
   });
 
-  test("array field bag is ignored (not merged)", () => {
+  test("array as second arg is JSON-stringified into msg (console-compatible behavior)", () => {
     const out = captureWriter();
     const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
     logger.info("x", ["a", "b"]);
     const rec = lastRecord(out.lines);
-    expect(rec).toEqual({ ts: rec.ts, level: "info", msg: "x" });
+    expect(rec.msg).toBe('x ["a","b"]');
+    expect(rec.level).toBe("info");
   });
 });
 
@@ -180,5 +181,58 @@ describe("createNoopLogger", () => {
       noop.warn("z");
       noop.error("w");
     }).not.toThrow();
+  });
+});
+
+describe("variadic console-compatible shape", () => {
+  test("logger.warn('X:', err) captures the Error in fields.error", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    const err = new Error("boom");
+    logger.warn("scheduler tick failed:", err);
+    const rec = lastRecord(out.lines);
+    expect(rec.msg).toBe("scheduler tick failed:");
+    expect(rec.error.message).toBe("boom");
+    expect(typeof rec.error.stack).toBe("string");
+  });
+
+  test("logger.error(err) alone uses the error message as msg", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    logger.error(new Error("disk full"));
+    const rec = lastRecord(out.lines);
+    expect(rec.msg).toBe("disk full");
+    expect(rec.error.message).toBe("disk full");
+  });
+
+  test("logger.info('a', 'b', err) concatenates strings into msg, captures Error", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    const err = new Error("nope");
+    logger.info("step", "1", err);
+    const rec = lastRecord(out.lines);
+    expect(rec.msg).toBe("step 1");
+    expect(rec.error.message).toBe("nope");
+  });
+
+  test("logger.warn('x', err1, err2) collects multiple Errors into errors array", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    logger.warn("two failures:", new Error("a"), new Error("b"));
+    const rec = lastRecord(out.lines);
+    expect(Array.isArray(rec.errors)).toBe(true);
+    expect(rec.errors).toHaveLength(2);
+    expect(rec.errors[0].message).toBe("a");
+    expect(rec.errors[1].message).toBe("b");
+  });
+
+  test("structured shape (msg, {fields}) still works (2-arg, object second)", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    logger.info("structured", { keyA: 1, keyB: "two" });
+    const rec = lastRecord(out.lines);
+    expect(rec.msg).toBe("structured");
+    expect(rec.keyA).toBe(1);
+    expect(rec.keyB).toBe("two");
   });
 });

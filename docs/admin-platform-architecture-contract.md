@@ -99,6 +99,17 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
 - Accepting absolute or traversing relative paths in any persisted artifact path field.
 - Expanding deferred scope (`#9`, `#13`) before demand signals justify complexity.
 
+## Logging Contract (Locked for B2 / #121)
+
+Production paths (`server.js`, `routes/*.js`, `lib/*.js` excluding test/script files) emit logs through `lib/logger.js`'s structured JSON-line logger, never via bare `console.*`. Each line is `{ ts, level, msg, ...fields }` where:
+
+- `ts` is an ISO-8601 UTC timestamp.
+- `level` is one of `debug | info | warn | error`.
+- `msg` is the first positional argument (string-coerced).
+- Additional fields come from an optional second-positional object, or — for migrated `console.*`-style calls — extra positional strings concatenated into `msg` and any `Error` argument captured as `record.error = { message, name, stack }`.
+
+`LOG_LEVEL` env var filters output (`debug | info | warn | error | silent`, default `info`). Library code (every store/service constructor) accepts `options.logger` for test injection; the default is the singleton from `lib/logger.js`. A guardrail in the future can grep for `console\.` introductions in production paths to lock this in.
+
 ## Concrete Examples
 
 `data/admin-jobs.example.json`:

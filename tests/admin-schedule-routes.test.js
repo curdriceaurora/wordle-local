@@ -210,17 +210,20 @@ describe("audit logging", () => {
     const schedulePath = tempPath("schedule.json");
     const app = loadApp({ schedulePath });
     const captured = [];
-    const origLog = console.log;
-    console.log = (msg) => {
+    // Schedule audit calls now go through `lib/logger.js`'s
+    // `logger.info` (B2 / #121). Capture by spying on the logger
+    // singleton — its emit() walks the same input.
+    const loggerModule = require("../lib/logger");
+    const infoSpy = jest.spyOn(loggerModule.logger, "info").mockImplementation((msg) => {
       const str = typeof msg === "string" ? msg : String(msg);
       if (str.includes("[schedule]")) captured.push(str);
-    };
+    });
     try {
       await supertest(app)
         .post("/api/admin/schedule/entries")
         .send({ date: "2026-05-08", word: "CRANE", lang: "en" });
     } finally {
-      console.log = origLog;
+      infoSpy.mockRestore();
     }
     expect(captured.some((line) => line.includes("entries.add"))).toBe(true);
   });

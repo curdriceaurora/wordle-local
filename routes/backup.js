@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const nodeCrypto = require("node:crypto");
 const Busboy = require("busboy");
+const { logger } = require("../lib/logger");
 
 const {
   BackupError,
@@ -23,7 +24,7 @@ function logEvent(req, event, fields = {}) {
       ts: new Date().toISOString(),
       ...fields
     };
-    console.log(JSON.stringify(payload));
+    logger.info(JSON.stringify(payload));
   } catch {
     // best effort
   }
@@ -612,7 +613,7 @@ function createBackupRouter(deps) {
       try {
         await warmInScopeStores();
       } catch (warmErr) {
-        console.warn(
+        logger.warn(
           `[admin] Pre-restore warm of in-scope stores failed: ${warmErr?.message || String(warmErr)}`
         );
       }

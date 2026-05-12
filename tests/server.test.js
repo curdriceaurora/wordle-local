@@ -2978,10 +2978,20 @@ describe("Server startup", () => {
   // before invoking the listener — see scheduler issue #89). Tests
   // therefore await the returned Promise; the listener mock fires
   // inside the await, not synchronously at the call site.
+  //
+  // Log assertions are against the structured logger added in B2 /
+  // #121 — boot logs go through `lib/logger.js`'s `logger.info` /
+  // `logger.warn` rather than direct `console.*` calls.
+  function captureLogger() {
+    const loggerModule = require("../lib/logger");
+    const infoSpy = jest.spyOn(loggerModule.logger, "info").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(loggerModule.logger, "warn").mockImplementation(() => {});
+    return { infoSpy, warnSpy };
+  }
+
   test("logs admin warning when admin key is optional", async () => {
     const app = loadApp({ requireAdminKey: false });
-    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { infoSpy, warnSpy } = captureLogger();
     const listener = jest.fn((port, host, cb) => {
       cb();
       return { close: jest.fn() };
@@ -2990,22 +3000,21 @@ describe("Server startup", () => {
     await app.startServer(listener);
 
     expect(listener).toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining("local-hosted-wordle server running at http://localhost:")
     );
-    expect(logSpy).toHaveBeenCalledWith(
+    expect(infoSpy).toHaveBeenCalledWith(
       "Admin mode is open. Set ADMIN_KEY to protect /admin updates."
     );
     expect(warnSpy).not.toHaveBeenCalled();
 
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
   test("warns when admin key is required but missing", async () => {
     const app = loadApp({ requireAdminKey: true });
-    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { infoSpy, warnSpy } = captureLogger();
     const listener = jest.fn((port, host, cb) => {
       cb();
       return { close: jest.fn() };
@@ -3018,14 +3027,13 @@ describe("Server startup", () => {
       "ADMIN_KEY is required for admin endpoints in production."
     );
 
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
   test("warns when trust proxy is disabled in production", async () => {
     const app = loadApp({ nodeEnv: "production", adminKey: "secret", trustProxy: false });
-    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { infoSpy, warnSpy } = captureLogger();
     const listener = jest.fn((port, host, cb) => {
       cb();
       return { close: jest.fn() };
@@ -3038,7 +3046,7 @@ describe("Server startup", () => {
       "TRUST_PROXY is disabled. If deployed behind a reverse proxy, load balancer, or Tailscale, set TRUST_PROXY=true (and configure TRUST_PROXY_HOPS as needed)."
     );
 
-    logSpy.mockRestore();
+    infoSpy.mockRestore();
     warnSpy.mockRestore();
   });
 });

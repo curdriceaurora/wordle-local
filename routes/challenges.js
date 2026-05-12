@@ -3,6 +3,7 @@
 const express = require("express");
 const challengeEngine = require("../lib/challenge-engine");
 const { translateForRequest } = require("../lib/server-i18n");
+const { logger } = require("../lib/logger");
 
 /**
  * Player-facing timed-challenge endpoints.
@@ -60,7 +61,7 @@ function createChallengesRouter(deps) {
         : 503;
       return res.status(status).json({ error: err.message, code: err.code });
     }
-    console.error(`[challenge] ${context} failed:`, err);
+    logger.error(`[challenge] ${context} failed:`, err);
     return res.status(503).json({ error: "Challenge request failed.", code: "INTERNAL" });
   }
 
