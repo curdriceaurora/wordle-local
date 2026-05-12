@@ -51,6 +51,7 @@ const {
   FILTER_MODES: PROVIDER_FILTER_MODES
 } = require("./lib/provider-answer-filter");
 const { logger } = require("./lib/logger");
+const { createRequestIdMiddleware } = require("./lib/request-id-middleware");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -3001,6 +3002,16 @@ app.use(helmet({
     }
   }
 }));
+// Request-ID middleware (B3 / #122). Mounted as early as possible —
+// AFTER helmet (so CSP/HSTS headers still set first) but BEFORE the
+// global rate-limit so 429 rejections also carry `X-Request-ID` and
+// gain a `requestId` field in their error envelope. Reviewers Codex,
+// Copilot, and CodeRabbit all converged on this ordering when the
+// middleware originally sat after rate-limit. The middleware wraps
+// `res.json` exactly once per request, so even rate-limit's own
+// `res.status(429).json({ error: ... })` flows through the decorator.
+// See lib/request-id-middleware.js.
+app.use(createRequestIdMiddleware());
 app.use(
   rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
