@@ -587,11 +587,16 @@ body.high-contrast .tile.absent {
 }
 
 .key.wide {
-  flex: 2.4;
-  font-size: 0.7rem;
+  flex: 3.5;
+  font-size: 0.65rem;
   letter-spacing: 0;
-  padding-left: 0.3rem;
-  padding-right: 0.3rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  text-transform: uppercase;
+  /* Force ENTER label to fit on a single line; if it ever needs more
+     room than the column gives, shrink rather than wrap or overflow. */
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .key:hover {
@@ -899,8 +904,8 @@ body.high-contrast .key.absent {
   }
 
   .key.wide {
-    flex: 0 0 5.2rem;
-    min-width: 5.2rem;
+    flex: 0 0 6rem;
+    min-width: 6rem;
   }
 }
 

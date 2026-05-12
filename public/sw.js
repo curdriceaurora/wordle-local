@@ -1,14 +1,21 @@
+// v5: invalidates the stale styles.css + app.js cache on existing
+// installs. Two follow-ups landed simultaneously:
+//   - .key.wide (on-screen keyboard ENTER / ⌫) widened materially
+//     (flex 2.4 → 3.5, mobile fixed-width 5.2rem → 6rem) so the
+//     ENTER label has visible breathing room instead of touching
+//     the button edges.
+//   - The Backspace ⌫ glyph and ENTER aria-label hardening from
+//     f693dff (player + challenge keyboards).
+// Cache-first fetch handler would otherwise keep the old styles.
+//
 // v4: invalidates the stale app.js cache on existing installs. The Vercel
 // preview's app.js now reads dailyWordEnabled / leaderboardEnabled /
 // challengesEnabled flags from /api/meta and hides the matching header
-// nav links when each is false. SW's fetch handler is cache-first for
-// non-API requests, so without a cache-name bump, returning visitors
-// keep getting the pre-flag app.js, the Daily Word link stays visible,
-// and clicking it lands on /daily → 404 NOT_FOUND.
+// nav links when each is false.
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v4';
+const CACHE_NAME = 'wordle-cache-v5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

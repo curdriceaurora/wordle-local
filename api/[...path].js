@@ -193,7 +193,9 @@ const limiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many requests. Slow down." }
+  // Match server.js:3168 verbatim so the user-facing error copy is
+  // identical between local/Docker and Vercel preview.
+  message: { error: "Too many requests. Try again later." }
 });
 app.use(limiter);
 
@@ -203,7 +205,8 @@ app.use(express.json({ limit: "32kb" }));
 // (entity.too.large, malformed JSON). Front-end always expects JSON.
 app.use((err, req, res, next) => {
   if (err && err.type === "entity.too.large") {
-    return res.status(413).json({ error: "Request body too large." });
+    // Match server.js:3240 verbatim.
+    return res.status(413).json({ error: "Request payload is too large." });
   }
   if (err instanceof SyntaxError && "body" in err) {
     // Match server.js's wording so client error copy is consistent

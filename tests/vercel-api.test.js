@@ -113,7 +113,8 @@ describe("vercel api entrypoint", () => {
         .set("Content-Type", "application/json")
         .send(padded);
       expect(res.status).toBe(413);
-      expect(res.body.error).toMatch(/too large/i);
+      // Match server.js:3240 verbatim so error copy is consistent.
+      expect(res.body.error).toBe("Request payload is too large.");
       // Front-end always parses res.json(); a stray HTML response would
       // crash with SyntaxError instead of giving the user a clean
       // toast.
