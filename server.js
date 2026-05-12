@@ -2196,27 +2196,85 @@ function rebuildLanguageRuntimeCatalog() {
 initializeRuntimeConfig();
 rebuildLanguageRuntimeCatalog();
 
-// Boot-time orphan check: a previous restore that crashed mid-apply leaves
-// .restore-staging-* / .restore-rollback-* dirs in data/. Log them loudly
-// rather than auto-deleting — operators may need to inspect or rewind.
-// Honor BACKUP_PROJECT_ROOT so the scan path matches the restore handler's.
+// Boot-time orphan cleanup (B5 / #124).
+//
+// A previous restore that crashed mid-apply leaves
+// `.restore-staging-*` / `.restore-rollback-*` dirs in data/. They
+// take real disk space and accumulate over time if not cleaned. The
+// "find" function flags them and `cleanupOrphanedRestoreDirs` deletes
+// any that are older than RESTORE_ORPHAN_CLEANUP_AGE_HOURS (default
+// 24h). The age gate protects in-flight restores: a real restore
+// briefly has these dirs on disk before its own rm cleans them up, so
+// we never want to delete a dir younger than the threshold from boot.
+// Operators retain the option to inspect a freshly orphaned dir
+// inside that window before it auto-disappears.
+//
+// Set RESTORE_ORPHAN_CLEANUP_AGE_HOURS=0 to disable age-gating entirely
+// (auto-delete every orphan at boot). Useful in stateless CI containers
+// where mtime is unreliable or the operator-inspect window is moot.
+// Set to a very large number to effectively disable auto-cleanup.
+//
+// Honor BACKUP_PROJECT_ROOT so the scan path matches the restore
+// handler's.
+const RESTORE_ORPHAN_CLEANUP_AGE_HOURS = (() => {
+  const raw = process.env.RESTORE_ORPHAN_CLEANUP_AGE_HOURS;
+  if (raw === null || raw === undefined || raw === "") return 24;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 24;
+})();
 (async () => {
   try {
-    const { findOrphanedRestoreDirs } = require("./lib/backup-store.js");
+    const {
+      findOrphanedRestoreDirs,
+      cleanupOrphanedRestoreDirs
+    } = require("./lib/backup-store.js");
     const backupRoot = process.env.BACKUP_PROJECT_ROOT
       ? path.resolve(process.env.BACKUP_PROJECT_ROOT)
       : __dirname;
-    const orphans = await findOrphanedRestoreDirs(path.join(backupRoot, "data"));
-    if (orphans.length > 0) {
-      const list = orphans.map((entry) => entry.name).join(", ");
-      logger.warn(
-        `[backup-store] Found ${orphans.length} orphaned restore directory(ies) under data/: ${list}. ` +
-          "These are left over from a restore that did not complete. " +
-          "Inspect their contents before deleting; see docs/backup-restore.md."
-      );
+    const dataRoot = path.join(backupRoot, "data");
+    const orphans = await findOrphanedRestoreDirs(dataRoot);
+    if (orphans.length === 0) return;
+    const list = orphans.map((entry) => entry.name).join(", ");
+    logger.warn("backup-store.orphans.found", {
+      count: orphans.length,
+      names: orphans.map((entry) => entry.name),
+      summary: list
+    });
+    const result = await cleanupOrphanedRestoreDirs(dataRoot, {
+      ageThresholdMs: RESTORE_ORPHAN_CLEANUP_AGE_HOURS * 60 * 60 * 1000
+    });
+    if (result.cleaned.length > 0) {
+      logger.info("backup-store.orphans.cleaned", {
+        count: result.cleaned.length,
+        ageThresholdHours: RESTORE_ORPHAN_CLEANUP_AGE_HOURS,
+        cleaned: result.cleaned.map((entry) => ({
+          name: entry.name,
+          ageHours: entry.ageMs !== null ? Math.round(entry.ageMs / 3600000) : null
+        }))
+      });
+    }
+    if (result.retained.length > 0) {
+      logger.warn("backup-store.orphans.retained", {
+        count: result.retained.length,
+        ageThresholdHours: RESTORE_ORPHAN_CLEANUP_AGE_HOURS,
+        retained: result.retained.map((entry) => ({
+          name: entry.name,
+          ageHours: entry.ageMs !== null ? Math.round(entry.ageMs / 3600000) : null,
+          reason: entry.reason
+        })),
+        message:
+          "Inspect their contents before deleting; see docs/backup-restore.md " +
+          "(Operator runbook: Orphan restore directories)."
+      });
+    }
+    if (result.errors.length > 0) {
+      logger.error("backup-store.orphans.errors", {
+        count: result.errors.length,
+        errors: result.errors
+      });
     }
   } catch (err) {
-    logger.warn(`[backup-store] Orphan-dir check failed: ${err?.message || String(err)}`);
+    logger.warn("backup-store.orphan_check_failed", { error: err });
   }
 })();
 

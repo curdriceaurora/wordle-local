@@ -183,14 +183,111 @@ historical commits, raise `BACKUP_MAX_BYTES`.
 | `BACKUP_RATE_LIMIT_MAX` | `1` | Max calls per window per admin key against the strict backup limiter. **Only `GET /api/admin/backup` and `POST /api/admin/restore` are gated by this limiter** — `POST /api/admin/backup/preview` is read-only and falls through to the standard admin-write limit. |
 | `BACKUP_PROJECT_ROOT` | (server's `__dirname`) | Override for tests; should not be set in production. |
 
-## Boot-time orphan check
+## Boot-time orphan cleanup
 
-If the server starts and finds `data/.restore-staging-*` or
-`data/.restore-rollback-*` directories left over from a previous run,
-it logs a warning at boot but does not auto-delete. Inspect the
-contents before removing — they may contain partial state from a
-restore that was killed mid-apply, and rolling forward or back may
-need an operator decision.
+If a previous restore crashed mid-apply (SIGKILL, container OOM-kill,
+disk full mid-write), it can leave `data/.restore-staging-*` or
+`data/.restore-rollback-*` directories behind. They take real disk
+space and accumulate if never cleaned up.
+
+On boot, the server runs a two-pass check (B5 / #124):
+
+1. **Find**: list every orphan candidate and emit a structured
+   `backup-store.orphans.found` log at `warn` level.
+2. **Cleanup**: delete any orphan whose mtime is older than
+   `RESTORE_ORPHAN_CLEANUP_AGE_HOURS` (default 24h). Younger orphans
+   are retained and emit a `backup-store.orphans.retained` log so an
+   operator can inspect them before they auto-disappear.
+
+Why a threshold rather than "delete every orphan at boot": a real
+restore in flight (on another node sharing the same `data/` mount,
+or in a HA pair) briefly has these dirs on disk. If we auto-deleted
+unconditionally, we'd race that legitimate work. The 24h window is
+both a safety margin AND an explicit inspection window for the
+operator.
+
+Tunables:
+
+- `RESTORE_ORPHAN_CLEANUP_AGE_HOURS=24` — threshold in hours. Set to
+  `0` to auto-delete every orphan at boot regardless of age (useful
+  in stateless CI containers where mtime is unreliable). Set to a
+  very large number (e.g. `RESTORE_ORPHAN_CLEANUP_AGE_HOURS=87600` =
+  10 years) to effectively disable auto-cleanup and revert to the
+  pre-B5 behavior of warn-and-retain-forever.
+- `BACKUP_PROJECT_ROOT` — alternate scan root for non-default
+  deployments.
+
+Log events the operator can grep for:
+
+- `backup-store.orphans.found` (warn) — count + names.
+- `backup-store.orphans.cleaned` (info) — count + each entry's
+  approximate age in hours.
+- `backup-store.orphans.retained` (warn) — entries kept because
+  they're younger than the threshold. Operator action: inspect
+  before the next boot cycle if recovery is possible.
+- `backup-store.orphans.errors` (error) — individual rm failures
+  (permission, mount weirdness). Boot continues; manual cleanup
+  required.
+
+## Operator runbook: disaster recovery
+
+Three failure shapes the system can land in. Each one has a
+detection signal and a recovery path.
+
+### 1. SIGKILL / OOM-kill mid-restore
+
+**Symptom**: server crashes mid-apply. After restart, see
+`backup-store.orphans.found` in boot logs. Live `data/` files may be
+in the partially-applied state (some renamed, some not) — but the
+rollback dir contains the originals.
+
+**Detection**: boot log lines as above. The orphan staging dir name
+follows `.restore-staging-<timestamp>-<random>` and the matching
+rollback dir is `.restore-rollback-<timestamp>-<random>` from the
+same restore.
+
+**Recovery**:
+
+1. Stop the server.
+2. Inspect the rollback dir. Each in-scope file inside it is the
+   ORIGINAL bytes from before the restore tried to overwrite live.
+3. To **undo** the partial apply: move the rollback files back over
+   the live data file(s).
+4. To **complete** the apply (if you trust the restore was correct
+   up to the crash): examine the staging dir and finish the
+   remaining renames manually.
+5. Restart the server. Verify health (see
+   `docs/admin-platform-architecture-contract.md`).
+6. Delete the staging/rollback dirs (or let auto-cleanup do it on
+   the next boot cycle after the
+   `RESTORE_ORPHAN_CLEANUP_AGE_HOURS` window elapses).
+
+### 2. Archive corruption mid-stream
+
+**Symptom**: `applyRestore` fails with `BackupError` codes
+`SHA256_MISMATCH`, `BYTES_MISMATCH`, `MANIFEST_INCOMPLETE`, or
+`INVALID_MANIFEST_JSON`. The transient `.restore-staging-*` dir is
+auto-cleaned at the error path before phase 3 (no rollback dir is
+created because the live swap never started).
+
+**Detection**: the API response includes the BackupError code and
+message. Log line `applyRestore.failed` at `error` level.
+
+**Recovery**: rebuild the archive on a known-good source.
+`validateArchive` checks per-entry SHA256 (recomputed from
+decompressed bytes — not just zip CRC), so a corrupt entry won't
+slip through; the archive must be intact on upload. If you cannot
+recompute the manifest, use `scripts/restore-from-disk.js` with a
+different archive.
+
+### 3. Schema drift between archive and current server
+
+**Symptom**: restore aborts with `BackupError("SCHEMA_DRIFT", ...)`.
+
+**Detection**: error message names which schema's digest changed.
+
+**Recovery**: see *Schema drift between archive and current server*
+section below.
 
 ## Offline restore
 
