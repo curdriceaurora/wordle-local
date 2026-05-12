@@ -266,7 +266,7 @@ function buildRequestFactory(scenarioName, args) {
           return { url: `${baseUrl}/api/meta?lang=en`, options: { method: "GET" } };
         }
         return {
-          url: `${baseUrl}/api/stats/leaderboard?lang=en&range=7d`,
+          url: `${baseUrl}/api/stats/leaderboard?lang=en&range=weekly`,
           options: { method: "GET" }
         };
       };

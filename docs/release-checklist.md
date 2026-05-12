@@ -88,7 +88,7 @@ Output is JSON to stdout (also writable to `--output=path.json`).
 ### Scenarios
 
 - **player-read** — random GET across `/api/meta?lang=en` and
-  `/api/stats/leaderboard?lang=en&range=7d`. Both are PUBLIC routes
+  `/api/stats/leaderboard?lang=en&range=weekly`. Both are PUBLIC routes
   (no admin auth). Exercises helmet, request-id middleware, rate
   limiter, in-flight counter, and per-store snapshot read. No
   `ADMIN_KEY` needed.
