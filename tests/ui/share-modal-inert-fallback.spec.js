@@ -15,13 +15,15 @@ test("share modal hides Close from Tab when closed (inert path)", async ({ page 
   expect(hasInert).toBe(true);
 
   // Sanity: focus walk doesn't reach #shareModalClose while closed.
+  // "Reachable" = the button is focusable AND the modal isn't inert.
+  // Either disqualifier (already focused/tabbable while inert, or not
+  // focusable in the first place) means it's safely out of the tab
+  // sequence.
   const reachableClosed = await page.evaluate(() => {
     const close = document.getElementById("shareModalClose");
-    return close.matches(":focus") || close.tabIndex >= 0
-      ? document.getElementById("shareModal").hasAttribute("inert")
-        ? false
-        : true
-      : false;
+    const modal = document.getElementById("shareModal");
+    const focusable = close.matches(":focus") || close.tabIndex >= 0;
+    return focusable && !modal.hasAttribute("inert");
   });
   expect(reachableClosed).toBe(false);
 });
