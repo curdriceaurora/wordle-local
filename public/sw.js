@@ -1,8 +1,14 @@
+// v4: invalidates the stale app.js cache on existing installs. The Vercel
+// preview's app.js now reads dailyWordEnabled / leaderboardEnabled /
+// challengesEnabled flags from /api/meta and hides the matching header
+// nav links when each is false. SW's fetch handler is cache-first for
+// non-API requests, so without a cache-name bump, returning visitors
+// keep getting the pre-flag app.js, the Daily Word link stays visible,
+// and clicking it lands on /daily → 404 NOT_FOUND.
+//
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
-// Web Push notification flow (#92). Bumping the cache name forces a
-// service-worker update on existing installs so the new listeners
-// activate without a hard reload.
-const CACHE_NAME = 'wordle-cache-v3';
+// Web Push notification flow (#92).
+const CACHE_NAME = 'wordle-cache-v4';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
