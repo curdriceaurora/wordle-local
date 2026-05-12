@@ -2812,9 +2812,22 @@ async function startProviderImportQueueIfNeeded() {
   }
   providerImportQueueActiveRef.value = true;
 
+  // B4 / #123: small inline helper so every admin-jobs write in this
+  // queue loop bumps the backup busy-check slot counter. The provider-
+  // import-queue ref ALREADY gates the entire while-loop window, so
+  // exclusion is intact; this just makes each individual write visible
+  // to backup's direct-writer probe as well.
+  async function withSlotInQueue(fn) {
+    const release = await claimDirectDataWriteSlot();
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
   try {
     while (true) {
-      const job = await adminJobsStore.claimNextQueuedJob();
+      const job = await withSlotInQueue(() => adminJobsStore.claimNextQueuedJob());
       if (!job) {
         break;
       }
@@ -2823,12 +2836,12 @@ async function startProviderImportQueueIfNeeded() {
       let failure = null;
       try {
         result = await runProviderImportPipeline(job.request);
-        await adminJobsStore.markSucceeded(job.id, {
+        await withSlotInQueue(() => adminJobsStore.markSucceeded(job.id, {
           artifacts: result.artifacts
-        });
+        }));
       } catch (err) {
         failure = formatProviderJobError(err);
-        await adminJobsStore.markFailed(job.id, failure);
+        await withSlotInQueue(() => adminJobsStore.markFailed(job.id, failure));
       } finally {
         await cleanupManualUploadStaging(job.request?.manualUpload).catch(() => {});
         // True fire-and-forget emit so a slow/contended commitQueue can't
@@ -3518,7 +3531,11 @@ app.use(
     mapRegistryErrorToStats,
     mergeDailyResult,
     describeRange,
-    StatsApiError
+    StatsApiError,
+    // B4 / #123: thread the slot-claim helper so player POSTs bump
+    // the backup busy-check counter — see docs/lock-graph-audit.md
+    // discrepancy D1.
+    claimDirectDataWriteSlot
   })
 );
 
