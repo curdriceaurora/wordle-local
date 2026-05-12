@@ -1,5 +1,6 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
+const { logger } = require("../lib/logger");
 
 /**
  * Stats routes factory
@@ -105,7 +106,7 @@ function createStatsRouter(deps) {
           try {
             await classesStore.reconcileMissingProfiles(postIds);
           } catch (reconcileErr) {
-            console.warn(
+            logger.warn(
               `[stats] Profile creation pruned older profile(s) but class reconciliation failed: ${reconcileErr?.message || String(reconcileErr)}`
             );
           }

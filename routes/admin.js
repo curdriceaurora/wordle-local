@@ -1,5 +1,6 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
+const { logger } = require("../lib/logger");
 
 /**
  * Admin routes factory
@@ -228,12 +229,12 @@ function createAdminRouter(deps) {
     // log doesn't contain the secret itself; the requireAdminAccess
     // middleware already attaches the raw key on req for the duration of
     // the request, and we hash here at the call site.
+    //
+    // Pass `event` as the message and the audit payload as the field
+    // bag so aggregators see `action` / `actor` / `entryId` / etc. as
+    // top-level structured fields (Codex P2 on PR #149).
     try {
-      console.log(JSON.stringify({
-        event: `[schedule] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[schedule] ${action}`, fields);
     } catch (_err) {
       // best-effort; never block a write on logging failure
     }
@@ -367,7 +368,7 @@ function createAdminRouter(deps) {
       });
       return res.json({ ok: true, profiles });
     } catch (err) {
-      console.error("Admin profile list failed.", err);
+      logger.error("Admin profile list failed.", err);
       return res.status(503).json({ error: "Profile list unavailable right now. Try again soon." });
     }
   });
@@ -386,7 +387,7 @@ function createAdminRouter(deps) {
     try {
       snapshot = await leaderboardStore.getSnapshot();
     } catch (err) {
-      console.error("Analytics snapshot read failed.", err);
+      logger.error("Analytics snapshot read failed.", err);
       return res.status(503).json({
         error: "Analytics unavailable right now. Try again soon."
       });
@@ -423,7 +424,7 @@ function createAdminRouter(deps) {
       // 503 (not 500) so clients with retry semantics treat this as
       // transient unavailability — matches the snapshot-read failure
       // branch above and the rest of the admin endpoints.
-      console.error("Analytics aggregation failed.", err);
+      logger.error("Analytics aggregation failed.", err);
       return res.status(503).json({
         error: "Analytics aggregation failed."
       });
@@ -475,7 +476,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] read failed:", err);
+      logger.error("[schedule] read failed:", err);
       return res.status(503).json({
         error: "Schedule read failed.",
         code: "STORE_READ_FAILED"
@@ -535,7 +536,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] add entry failed:", err);
+      logger.error("[schedule] add entry failed:", err);
       return res.status(503).json({
         error: "Schedule write failed.",
         code: "STORE_WRITE_FAILED"
@@ -568,7 +569,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] update entry failed:", err);
+      logger.error("[schedule] update entry failed:", err);
       return res.status(503).json({
         error: "Schedule write failed.",
         code: "STORE_WRITE_FAILED"
@@ -591,7 +592,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] delete entry failed:", err);
+      logger.error("[schedule] delete entry failed:", err);
       return res.status(503).json({
         error: "Schedule write failed.",
         code: "STORE_WRITE_FAILED"
@@ -624,7 +625,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] config update failed:", err);
+      logger.error("[schedule] config update failed:", err);
       return res.status(503).json({
         error: "Schedule config update failed.",
         code: "STORE_WRITE_FAILED"
@@ -674,7 +675,7 @@ function createAdminRouter(deps) {
       if (err instanceof ScheduleStoreError) {
         return res.status(scheduleErrorStatus(err)).json(scheduleErrorBody(err));
       }
-      console.error("[schedule] prune failed:", err);
+      logger.error("[schedule] prune failed:", err);
       return res.status(503).json({
         error: "Schedule prune failed.",
         code: "STORE_WRITE_FAILED"
@@ -696,7 +697,7 @@ function createAdminRouter(deps) {
       });
       return res.json({ ok: true, result });
     } catch (err) {
-      console.error("[schedule] manual reconcile failed:", err);
+      logger.error("[schedule] manual reconcile failed:", err);
       return res.status(503).json({
         error: "Manual reconcile failed.",
         code: "RECONCILE_FAILED"
@@ -747,11 +748,7 @@ function createAdminRouter(deps) {
   }
   function webhookAudit(action, fields) {
     try {
-      console.log(JSON.stringify({
-        event: `[webhook] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[webhook] ${action}`, fields);
     } catch (_err) {
       // best-effort
     }
@@ -792,7 +789,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] list failed:", err);
+      logger.error("[webhook] list failed:", err);
       return res.status(503).json({
         error: "Webhook list failed.",
         code: "STORE_READ_FAILED"
@@ -824,7 +821,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] create failed:", err);
+      logger.error("[webhook] create failed:", err);
       return res.status(503).json({
         error: "Webhook create failed.",
         code: "STORE_WRITE_FAILED"
@@ -851,7 +848,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] update failed:", err);
+      logger.error("[webhook] update failed:", err);
       return res.status(503).json({
         error: "Webhook update failed.",
         code: "STORE_WRITE_FAILED"
@@ -870,7 +867,7 @@ function createAdminRouter(deps) {
           // path param can't inject %s-style format placeholders into
           // the format string. The store's pattern check rejects ids
           // outside [A-Za-z0-9_-], but defense in depth.
-          console.warn(
+          logger.warn(
             "[webhook] could not cascade-delete deliveries for %s:",
             req.params.id,
             cascadeErr.message
@@ -886,7 +883,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] delete failed:", err);
+      logger.error("[webhook] delete failed:", err);
       return res.status(503).json({
         error: "Webhook delete failed.",
         code: "STORE_WRITE_FAILED"
@@ -942,7 +939,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError || err instanceof WebhookDeliveryStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] test failed:", err);
+      logger.error("[webhook] test failed:", err);
       return res.status(503).json({
         error: "Webhook test failed.",
         code: "STORE_WRITE_FAILED"
@@ -981,7 +978,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookDeliveryStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] deliveries list failed:", err);
+      logger.error("[webhook] deliveries list failed:", err);
       return res.status(503).json({
         error: "Webhook deliveries fetch failed.",
         code: "STORE_READ_FAILED"
@@ -1030,7 +1027,7 @@ function createAdminRouter(deps) {
       if (err instanceof WebhookStoreError || err instanceof WebhookDeliveryStoreError) {
         return res.status(webhookErrorStatus(err)).json(webhookErrorBody(err));
       }
-      console.error("[webhook] retry failed:", err);
+      logger.error("[webhook] retry failed:", err);
       return res.status(503).json({
         error: "Webhook retry failed.",
         code: "STORE_WRITE_FAILED"
@@ -1044,11 +1041,7 @@ function createAdminRouter(deps) {
   // counts/timestamps and the broadcast control.
   function notificationAudit(action, fields) {
     try {
-      console.log(JSON.stringify({
-        event: `[notify] ${action}`,
-        ts: new Date().toISOString(),
-        ...fields
-      }));
+      logger.info(`[notify] ${action}`, fields);
     } catch (_err) {
       // best-effort
     }
@@ -1080,7 +1073,7 @@ function createAdminRouter(deps) {
         if (err instanceof PushSubscriptionStoreError) {
           return res.status(503).json({ error: err.message, code: err.code });
         }
-        console.error("[notify] subscriptions list failed:", err);
+        logger.error("[notify] subscriptions list failed:", err);
         return res.status(503).json({
           error: "Subscription list failed.",
           code: "STORE_READ_FAILED"
@@ -1146,7 +1139,7 @@ function createAdminRouter(deps) {
         });
         return res.json({ ok: true, dryRun, result });
       } catch (err) {
-        console.error("[notify] broadcast failed:", err);
+        logger.error("[notify] broadcast failed:", err);
         return res.status(503).json({
           error: "Broadcast failed.",
           code: "BROADCAST_FAILED"
@@ -1174,7 +1167,7 @@ function createAdminRouter(deps) {
           || err.code === "STORE_WRITE_FAILED"
           || err.code === "STORE_PARSE_FAILED";
         if (isStoreError) {
-          console.error(`[challenge:admin] ${context} ${err.code}:`, err);
+          logger.error(`[challenge:admin] ${context} ${err.code}:`, err);
           return res.status(status).json({
             error: "Challenge admin store unavailable. Try again later.",
             code: err.code
@@ -1182,7 +1175,7 @@ function createAdminRouter(deps) {
         }
         return res.status(status).json({ error: err.message, code: err.code });
       }
-      console.error(`[challenge:admin] ${context} failed:`, err);
+      logger.error(`[challenge:admin] ${context} failed:`, err);
       return res.status(503).json({ error: "Challenge admin request failed.", code: "INTERNAL" });
     }
 
@@ -1342,7 +1335,7 @@ function createAdminRouter(deps) {
         }
         return res.status(400).json({ error: err.message });
       }
-      console.error("Admin profile delete failed.", err);
+      logger.error("Admin profile delete failed.", err);
       return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
     }
     // Profile is gone from the leaderboard; pull it out of any class roster
@@ -1353,7 +1346,7 @@ function createAdminRouter(deps) {
       classCleanupTouched = await classesStore.removeMemberEverywhere(profileId);
     } catch (err) {
       classCleanupError = err;
-      console.warn(
+      logger.warn(
         `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
       );
     }
@@ -1407,7 +1400,7 @@ function createAdminRouter(deps) {
         }
         return res.status(400).json({ error: err.message });
       }
-      console.error("Admin profile merge failed.", err);
+      logger.error("Admin profile merge failed.", err);
       return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
     }
     // The source profile is gone; rewrite class memberships so a class that
@@ -1420,7 +1413,7 @@ function createAdminRouter(deps) {
       classMembershipsTransferred = result.touchedClassIds;
     } catch (err) {
       classCleanupError = err;
-      console.warn(
+      logger.warn(
         `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
       );
     }
@@ -1517,7 +1510,7 @@ function createAdminRouter(deps) {
           appConfigStore.replaceOverridesSync(previousOverrides);
           applyRuntimeConfig(previousOverrides);
         } catch (rollbackErr) {
-          console.error(
+          logger.error(
             "[runtime-config] Rollback after apply failure also failed.",
             rollbackErr
           );
@@ -1537,7 +1530,7 @@ function createAdminRouter(deps) {
           return res.status(400).json({ error: err.message });
         }
       }
-      console.error("Runtime config update failed.", err);
+      logger.error("Runtime config update failed.", err);
       return res.status(503).json({ error: "Runtime config update failed right now. Try again soon." });
     } finally {
       releaseSlot();
@@ -1566,7 +1559,7 @@ function createAdminRouter(deps) {
         jobs: jobs.map((job) => toAdminJobResponse(job))
       });
     } catch (err) {
-      console.error("Admin jobs request failed.", err);
+      logger.error("Admin jobs request failed.", err);
       return res.status(503).json({ error: "Import queue unavailable right now. Try again soon." });
     }
   });
@@ -1591,7 +1584,7 @@ function createAdminRouter(deps) {
         job: toAdminJobResponse(job)
       });
     } catch (err) {
-      console.error("Admin job lookup failed.", err);
+      logger.error("Admin job lookup failed.", err);
       return res.status(503).json({ error: "Import queue unavailable right now. Try again soon." });
     }
   });
@@ -1705,7 +1698,7 @@ function createAdminRouter(deps) {
                 artifacts: syncResult.artifacts
               })
               .catch((emitErr) => {
-                console.error("[webhook] emit failed for sync import:", emitErr);
+                logger.error("[webhook] emit failed for sync import:", emitErr);
               });
           } else if (syncError) {
             webhookService
@@ -1716,12 +1709,12 @@ function createAdminRouter(deps) {
                 error: { message: syncError?.message || String(syncError) }
               })
               .catch((emitErr) => {
-                console.error("[webhook] emit failed for sync import:", emitErr);
+                logger.error("[webhook] emit failed for sync import:", emitErr);
               });
           }
         }
         startProviderImportQueueIfNeeded().catch((queueErr) => {
-          console.error("Provider import queue processing failed.", queueErr);
+          logger.error("Provider import queue processing failed.", queueErr);
         });
       }
     }
@@ -1775,7 +1768,7 @@ function createAdminRouter(deps) {
     }
 
     startProviderImportQueueIfNeeded().catch((err) => {
-      console.error("Provider import queue processing failed.", err);
+      logger.error("Provider import queue processing failed.", err);
     });
 
     try {
@@ -1789,7 +1782,7 @@ function createAdminRouter(deps) {
         providers: buildProviderStatusRows()
       });
     } catch (err) {
-      console.error("Failed to fetch queued import job state.", err);
+      logger.error("Failed to fetch queued import job state.", err);
       return res.status(202).json({
         ok: true,
         action: "queued",
@@ -1970,7 +1963,7 @@ function createAdminRouter(deps) {
     if (err instanceof LeaderboardStoreError) {
       return res.status(400).json({ error: err.message });
     }
-    console.error(fallbackLogContext, err);
+    logger.error(fallbackLogContext, err);
     return res.status(503).json({ error: "Class operation unavailable right now. Try again soon." });
   }
 
@@ -2260,7 +2253,7 @@ function createAdminRouter(deps) {
             }
           }
         } catch (snapshotErr) {
-          console.warn(
+          logger.warn(
             `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
           );
         }
@@ -2284,7 +2277,7 @@ function createAdminRouter(deps) {
         removedProfileIds = tentativeRemoved;
       } catch (err) {
         leaderboardCleanupError = err;
-        console.warn(
+        logger.warn(
           `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
         );
       }
@@ -2509,7 +2502,7 @@ function createAdminRouter(deps) {
       const liveIds = new Set(recheck.profiles.map((profile) => profile.id));
       membersToAdd = resolvedProfileIds.filter((id) => liveIds.has(id));
     } catch (recheckErr) {
-      console.warn(
+      logger.warn(
         `[admin] Bulk add could not revalidate profile IDs against the leaderboard; proceeding with the resolved set: ${recheckErr?.message || String(recheckErr)}`
       );
     }
@@ -2543,7 +2536,7 @@ function createAdminRouter(deps) {
               }
             }
           } catch (snapshotErr) {
-            console.warn(
+            logger.warn(
               `[admin] Bulk add rollback could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
             );
           }
@@ -2562,7 +2555,7 @@ function createAdminRouter(deps) {
             });
           }
         } catch (rollbackErr) {
-          console.warn(
+          logger.warn(
             `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
           );
         }

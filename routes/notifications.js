@@ -1,6 +1,7 @@
 "use strict";
 
 const express = require("express");
+const { logger } = require("../lib/logger");
 
 /**
  * Player-facing notification endpoints.
@@ -68,13 +69,13 @@ function createNotificationsRouter(deps) {
         // read/persist subscriptions store at <path>." message). Mask
         // those for the public endpoint and log the raw error
         // server-side. The error code is generic enough to keep.
-        console.error(`[notify] subscribe ${err.code}:`, err);
+        logger.error(`[notify] subscribe ${err.code}:`, err);
         return res.status(503).json({
           error: "Subscription failed. Try again later.",
           code: err.code
         });
       }
-      console.error("[notify] subscribe failed:", err);
+      logger.error("[notify] subscribe failed:", err);
       return res.status(503).json({
         error: "Subscription failed. Try again later.",
         code: "STORE_WRITE_FAILED"
@@ -93,13 +94,13 @@ function createNotificationsRouter(deps) {
         }
         // Same masking as subscribe — STORE_* messages carry the
         // store filepath and shouldn't reach unauthenticated callers.
-        console.error(`[notify] unsubscribe ${err.code}:`, err);
+        logger.error(`[notify] unsubscribe ${err.code}:`, err);
         return res.status(503).json({
           error: "Unsubscribe failed. Try again later.",
           code: err.code
         });
       }
-      console.error("[notify] unsubscribe failed:", err);
+      logger.error("[notify] unsubscribe failed:", err);
       return res.status(503).json({
         error: "Unsubscribe failed. Try again later.",
         code: "STORE_WRITE_FAILED"

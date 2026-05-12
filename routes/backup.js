@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const nodeCrypto = require("node:crypto");
 const Busboy = require("busboy");
+const { logger } = require("../lib/logger");
 
 const {
   BackupError,
@@ -17,13 +18,11 @@ const RESTORE_CONFIRM_HEADER = "x-admin-confirm";
 const RESTORE_CONFIRM_VALUE = "I-UNDERSTAND";
 
 function logEvent(req, event, fields = {}) {
+  // Pass `event` as the message and `fields` as the field bag so
+  // aggregators see them as queryable top-level keys; the logger
+  // adds its own `ts` (Codex P2 + Copilot on PR #149).
   try {
-    const payload = {
-      event,
-      ts: new Date().toISOString(),
-      ...fields
-    };
-    console.log(JSON.stringify(payload));
+    logger.info(event, fields);
   } catch {
     // best effort
   }
@@ -612,7 +611,7 @@ function createBackupRouter(deps) {
       try {
         await warmInScopeStores();
       } catch (warmErr) {
-        console.warn(
+        logger.warn(
           `[admin] Pre-restore warm of in-scope stores failed: ${warmErr?.message || String(warmErr)}`
         );
       }
