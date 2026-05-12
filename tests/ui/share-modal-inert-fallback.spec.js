@@ -2,7 +2,7 @@
 // (inert-supporting) both paths behave correctly; we also forcibly
 // disable inert support to drive the tabindex fallback and confirm
 // the Close button is not Tab-reachable when the modal is closed.
-const { test, expect } = require("@playwright/test");
+const { test, expect } = require("./fixtures");
 
 test("share modal hides Close from Tab when closed (inert path)", async ({ page }) => {
   await page.goto("/");
