@@ -41,24 +41,25 @@
      label, 1.6rem on a panel head, 2rem on h1) intentionally stay as
      literals — normalizing them would be a visible visual change and
      is deferred to a follow-up. */
-  --fs-xs:   0.75rem;
-  --fs-sm:   0.85rem;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.85rem;
   --fs-base: 0.9rem;
-  --fs-md:   1rem;
-  --fs-lg:   1.25rem;
-  --fs-xl:   1.5rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.5rem;
 
   /* Spacing scale (issue #162). Same approach: token values match the
-     most-used raw rem literals. Migrated where the value appears as a
-     `gap:` (unambiguous layout-spacing context) or already-token-shaped
-     padding/margin. Wholesale padding/margin migration deferred to a
-     follow-up — too easy to false-positive on radii/sizing in this file. */
+     most-used raw rem literals. Migrated for `gap:` declarations only
+     (unambiguous layout-spacing context). Wholesale padding/margin
+     migration is deferred to a follow-up — values in this file mix
+     spacing with radii/sizing and false-positive-free migration needs
+     a per-rule semantic sweep, not a global find-replace. */
   --space-2xs: 0.2rem;
-  --space-xs:  0.4rem;
-  --space-sm:  0.5rem;
-  --space-md:  0.75rem;
-  --space-lg:  1rem;
-  --space-xl:  1.5rem;
+  --space-xs: 0.4rem;
+  --space-sm: 0.5rem;
+  --space-md: 0.75rem;
+  --space-lg: 1rem;
+  --space-xl: 1.5rem;
   --space-2xl: 2rem;
 
   color-scheme: dark;
