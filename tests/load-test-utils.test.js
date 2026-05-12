@@ -52,23 +52,25 @@ describe("summarize (C5 / #131)", () => {
   });
 
   test("computes a sensible shape for a real-looking latency vector", () => {
+    // Deterministic distribution (Copilot on PR #157 caught — random
+    // samples make rare-tail flakes hard to reproduce). 100 samples:
+    // 90% fast (3ms), 10% warm (25ms). Linear-interpolation
+    // percentiles land cleanly on the cluster values; no
+    // interpolation-edge surprises.
     const samples = [];
-    // Build a 1000-sample distribution: 90% fast (2-5ms), 9% warm
-    // (20-30ms), 1% long tail (100-150ms). p95 should land in or
-    // just past the warm cluster, p99 in the long tail.
-    for (let i = 0; i < 900; i += 1) samples.push(2 + Math.random() * 3);
-    for (let i = 0; i < 90; i += 1) samples.push(20 + Math.random() * 10);
-    for (let i = 0; i < 10; i += 1) samples.push(100 + Math.random() * 50);
+    for (let i = 0; i < 90; i += 1) samples.push(3);
+    for (let i = 0; i < 10; i += 1) samples.push(25);
     const out = summarize(samples);
-    expect(out.min).toBeGreaterThanOrEqual(2);
-    expect(out.min).toBeLessThan(5);
-    expect(out.p50).toBeGreaterThan(2);
-    expect(out.p50).toBeLessThan(8);
-    expect(out.p95).toBeGreaterThan(15); // 95th percentile lands in the warm cluster
-    expect(out.p99).toBeGreaterThan(20); // 99th in warm or long tail
-    expect(out.max).toBeGreaterThanOrEqual(100);
-    expect(out.mean).toBeGreaterThan(2);
-    expect(out.mean).toBeLessThan(20);
+    expect(out.min).toBe(3);
+    // p50: rank = 0.5 * 99 = 49.5; idx 49 and 50 both = 3 → 3
+    expect(out.p50).toBe(3);
+    // p95: rank = 0.95 * 99 = 94.05; idx 94 and 95 both = 25 → 25
+    expect(out.p95).toBe(25);
+    // p99: rank = 0.99 * 99 = 98.01; idx 98 and 99 both = 25 → 25
+    expect(out.p99).toBe(25);
+    expect(out.max).toBe(25);
+    // mean = (90*3 + 10*25) / 100 = (270 + 250) / 100 = 5.2
+    expect(out.mean).toBeCloseTo(5.2, 3);
   });
 
   test("sorts the input internally; does not mutate the caller's array", () => {

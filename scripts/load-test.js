@@ -25,7 +25,7 @@
 // Args
 // ----
 //
-//   --scenario=<name>      One of: player-read, admin-write, mixed, all
+//   --scenario=<name>      One of: player-read, admin-auth, mixed, all
 //                          (default: all)
 //   --duration=<seconds>   How long each scenario runs (default: 15)
 //   --concurrency=<N>      Concurrent in-flight requests per scenario
@@ -39,7 +39,7 @@
 // ---
 //
 //   BASE_URL         — server URL (default http://localhost:3000)
-//   ADMIN_KEY        — admin key for admin-write + mixed scenarios
+//   ADMIN_KEY        — admin key for admin-auth + mixed scenarios
 //
 // Output shape
 // ------------
@@ -168,12 +168,26 @@ function summarize(latencySamples) {
 
 // Single-shot HTTP request. Returns { latencyMs, status, error }.
 // Designed to never throw — errors are captured in the result.
+//
+// CR Major on PR #157: a per-request timeout is required so a
+// stalled socket doesn't hang a worker past the scenario deadline.
+// 10s is generous for any of our healthy endpoints; if the server
+// is hanging, errorRate will spike and the operator should
+// investigate rather than have the test compensate.
+const REQUEST_TIMEOUT_MS = 10_000;
+
 function makeRequest(target, options = {}) {
   return new Promise((resolve) => {
     const url = new URL(target);
     const lib = url.protocol === "https:" ? https : http;
     const agent = url.protocol === "https:" ? HTTPS_AGENT : HTTP_AGENT;
     const startedAt = performance.now();
+    let settled = false;
+    function finalize(result) {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    }
     const req = lib.request(
       {
         method: options.method || "GET",
@@ -181,20 +195,21 @@ function makeRequest(target, options = {}) {
         port: url.port || (url.protocol === "https:" ? 443 : 80),
         path: url.pathname + url.search,
         headers: options.headers || {},
-        agent
+        agent,
+        timeout: REQUEST_TIMEOUT_MS
       },
       (res) => {
         // Drain the body so the connection can be reused (keep-alive).
         res.resume();
         res.on("end", () => {
-          resolve({
+          finalize({
             latencyMs: performance.now() - startedAt,
             status: res.statusCode,
             error: null
           });
         });
         res.on("error", (err) => {
-          resolve({
+          finalize({
             latencyMs: performance.now() - startedAt,
             status: res.statusCode || 0,
             error: err.message
@@ -202,8 +217,11 @@ function makeRequest(target, options = {}) {
         });
       }
     );
+    req.on("timeout", () => {
+      req.destroy(new Error("request timeout"));
+    });
     req.on("error", (err) => {
-      resolve({
+      finalize({
         latencyMs: performance.now() - startedAt,
         status: 0,
         error: err.message
@@ -218,33 +236,41 @@ function makeRequest(target, options = {}) {
 
 // Returns a function that emits the NEXT request to fire for the
 // given scenario. The harness calls it on a tight loop per worker.
+//
+// Endpoint choice rationale (Codex P2 + Copilot + CR on PR #157):
+//
+// - player-read hits PUBLIC endpoints only. `/api/word` looked like
+//   the obvious target but is admin-protected (`requireAdminAccess`,
+//   see server.js:3657), so running the recommended
+//   `REQUIRE_ADMIN_KEY=true` config would record 401s instead of
+//   exercising the player path. `/api/meta` and
+//   `/api/stats/leaderboard` are both public.
+//
+// - admin-auth (renamed from admin-write — Copilot caught: we never
+//   POST any writes; we just hit admin-gated GETs to exercise the
+//   admin auth gate + admin rate-limit stack). True admin writes
+//   would need a body crafted for each endpoint; deferred.
 function buildRequestFactory(scenarioName, args) {
   const { baseUrl, adminKey } = args;
   const adminHeaders = adminKey ? { "x-admin-key": adminKey } : {};
   switch (scenarioName) {
     case "player-read":
       return () => {
-        // Random pick across two read endpoints.
         const pick = Math.random();
         if (pick < 0.5) {
-          return { url: `${baseUrl}/api/word?lang=en`, options: { method: "GET" } };
+          return { url: `${baseUrl}/api/meta?lang=en`, options: { method: "GET" } };
         }
         return {
           url: `${baseUrl}/api/stats/leaderboard?lang=en&range=7d`,
           options: { method: "GET" }
         };
       };
-    case "admin-write": {
+    case "admin-auth": {
       if (!adminKey) {
         throw new Error(
-          "admin-write scenario requires ADMIN_KEY env var; got empty. Set it or run --scenario=player-read."
+          "admin-auth scenario requires ADMIN_KEY env var; got empty. Set it or run --scenario=player-read."
         );
       }
-      // Mix two admin GET endpoints — they go through the admin auth
-      // gate which exercises the most expensive middleware stack
-      // (admin rate-limit + key check + structured logger). Pure
-      // admin-WRITE would require crafting valid POST bodies for
-      // every endpoint, which is brittle and overkill for a baseline.
       return () => {
         const pick = Math.random();
         if (pick < 0.5) {
@@ -260,15 +286,21 @@ function buildRequestFactory(scenarioName, args) {
       };
     }
     case "mixed": {
+      // CR Major on PR #157: do not silently downgrade `mixed` to
+      // pure player-read when ADMIN_KEY is missing — that produces a
+      // misleading "mixed" baseline that doesn't reflect the
+      // intended 10:1 read:admin ratio.
+      if (!adminKey) {
+        throw new Error(
+          "mixed scenario requires ADMIN_KEY env var; got empty. Set it or run --scenario=player-read."
+        );
+      }
       const playerRead = buildRequestFactory("player-read", args);
-      const adminWrite = adminKey ? buildRequestFactory("admin-write", args) : null;
-      // 10:1 read-to-admin ratio per #131 spec.
+      const adminAuth = buildRequestFactory("admin-auth", args);
       return () => {
         const pick = Math.random();
-        if (pick < 0.91 || !adminWrite) {
-          return playerRead();
-        }
-        return adminWrite();
+        if (pick < 0.91) return playerRead();
+        return adminAuth();
       };
     }
     default:
@@ -326,7 +358,7 @@ async function runScenario(scenarioName, args) {
 async function main() {
   const args = parseArgs(process.argv);
   const scenariosToRun =
-    args.scenario === "all" ? ["player-read", "admin-write", "mixed"] : [args.scenario];
+    args.scenario === "all" ? ["player-read", "admin-auth", "mixed"] : [args.scenario];
   const wallStart = Date.now();
   const report = {
     summary: {
@@ -360,7 +392,7 @@ async function main() {
 
 // Library exports (for tests). When the script is executed directly,
 // the `require.main === module` check fires main(). The exports let
-// tests/scripts.load-test.test.js exercise the pure helpers without
+// `tests/load-test-utils.test.js` exercise the pure helpers without
 // spinning up a server.
 module.exports = { parseArgs, percentile, summarize, round };
 

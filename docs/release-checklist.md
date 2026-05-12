@@ -51,17 +51,21 @@ machine to detect throughput regressions.
 
 ### Running
 
+`BASE_URL` is the load-runner's target URL — it's NOT a server-side
+env var; the runner reads it from its own process environment. It's
+documented in `.env.example` for discoverability.
+
 ```bash
 # Terminal 1 — start the server with production-ish flags:
 ADMIN_KEY=secret REQUIRE_ADMIN_KEY=true NODE_ENV=production \
   PORT=3000 node server.js
 
 # Terminal 2 — drive the load:
-BASE_URL=http://localhost:3000 ADMIN_KEY=secret \   <!-- claim:skip -->
+BASE_URL=http://localhost:3000 ADMIN_KEY=secret \
   node scripts/load-test.js --duration=15 --concurrency=8
 
 # Or just one scenario:
-BASE_URL=http://localhost:3000 ADMIN_KEY=secret \   <!-- claim:skip -->
+BASE_URL=http://localhost:3000 \
   node scripts/load-test.js --scenario=player-read --duration=30
 ```
 
@@ -69,15 +73,21 @@ Output is JSON to stdout (also writable to `--output=path.json`).
 
 ### Scenarios
 
-- **player-read** — random GET across `/api/word?lang=en` and
-  `/api/stats/leaderboard?lang=en&range=7d`. Exercises the common
-  read path through helmet, request-id middleware, rate limiter,
-  in-flight counter, and per-store snapshot read.
-- **admin-write** — random GET across `/api/admin/providers` and
+- **player-read** — random GET across `/api/meta?lang=en` and
+  `/api/stats/leaderboard?lang=en&range=7d`. Both are PUBLIC routes
+  (no admin auth). Exercises helmet, request-id middleware, rate
+  limiter, in-flight counter, and per-store snapshot read. No
+  `ADMIN_KEY` needed.
+- **admin-auth** — random GET across `/api/admin/providers` and
   `/api/admin/jobs`. Exercises the admin auth gate + admin rate
-  limiter + structured logger. Requires `ADMIN_KEY` env var.
-- **mixed** — 10:1 ratio of player-read to admin-write. Approximates
-  a moderate-traffic deployment with periodic admin checks.
+  limiter + structured logger. Read-only (no writes performed —
+  exercising real writes would need a body crafted per endpoint
+  and would mutate live state). Requires `ADMIN_KEY` env var; fails
+  fast if absent.
+- **mixed** — 10:1 ratio of player-read to admin-auth. Approximates
+  a moderate-traffic deployment with periodic admin checks. Also
+  requires `ADMIN_KEY`; refuses to run without one rather than
+  silently downgrading to player-read.
 
 ### Interpreting the output
 
