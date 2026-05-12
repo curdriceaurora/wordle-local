@@ -99,6 +99,49 @@ Why: this prevents orphaned in-flight jobs after restarts and preserves operator
 - Accepting absolute or traversing relative paths in any persisted artifact path field.
 - Expanding deferred scope (`#9`, `#13`) before demand signals justify complexity.
 
+## Health Endpoints (Locked for B7 / #126)
+
+Two endpoints, mounted at the top of the request pipeline (before
+rate-limit + body parsers so probes never get throttled or blocked
+on parser state):
+
+| Endpoint   | Purpose                                                      | 200 condition                                                                                                       | 503 condition                                                            |
+| ---------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `/healthz` | Liveness probe. Use for "restart on hang".                   | Always (process is up and event loop is responsive).                                                                | n/a — never 503 from this endpoint.                                      |
+| `/readyz`  | Readiness probe. Use for "withhold traffic during shutdown". | `shutdownInFlight=false` AND `restoreInProgressRef.value=false` AND `dataMutationLockRef.value=false`.              | Any of the above is true. Response body lists the active reasons array.  |
+
+The `/readyz` 503 body shape is:
+
+```json
+{
+  "status": "not_ready",
+  "version": "<package version>",
+  "reasons": ["shutting_down", "restore_in_progress", "data_mutation_locked"]
+}
+```
+
+Operator runbook:
+
+- **Docker / docker-compose**: `docker-compose.yml` healthcheck is
+  wired to `/readyz`. During backup phase 3 (the brief swap window)
+  or during a restore, the container will briefly report
+  `unhealthy` — this is intentional. The supervisor should NOT
+  restart on `unhealthy` from `/readyz`; only from `/healthz` failure.
+- **Kubernetes**: map `livenessProbe` to `/healthz`,
+  `readinessProbe` to `/readyz`.
+- **Behind a reverse proxy**: configure the upstream health check to
+  hit `/readyz` so a graceful-shutdown drain (B1 / #120) stops
+  receiving traffic.
+
+What `/readyz` does NOT probe (out of scope per #126):
+
+- Per-store deep health (file readable, schema-valid). A corrupt
+  store on disk will still return 200 from `/readyz` — the bytes
+  aren't probed here.
+- Outbound dependency health (webhook upstreams, web-push gateway).
+
+These are tracked as follow-ups when there's a demand signal.
+
 ## Logging Contract (Locked for B2 / #121)
 
 Production paths (`server.js`, `routes/*.js`, `lib/*.js` excluding test/script files) emit logs through `lib/logger.js`'s structured JSON-line logger, never via bare `console.*`. Each line is `{ ts, level, msg, ...fields }` where:
