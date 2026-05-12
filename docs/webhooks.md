@@ -78,6 +78,23 @@ def verify(raw_body: bytes, header: str, secret: str) -> bool:
     return hmac.compare_digest(header, expected)
 ```
 
+## Outbound-call retry/timeout audit
+
+Three outbound-call paths in this codebase. Snapshot of each as of
+B6 / #125:
+
+| Path | File:lines | HTTP client | Timeout | Retry | Intervals | Jitter | Concurrency cap |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Webhook delivery** | `lib/webhook-service.js` | Node `fetch` (optional undici) | `WEBHOOK_REQUEST_TIMEOUT_MS` (default 10s) | Per-sub `maxAttempts` (default 5) | `[1s, 5s, 30s, 2m, 10m]` | 0–25% additive (B6) | `WEBHOOK_GLOBAL_INFLIGHT_LIMIT=4` for in-flight; `WEBHOOK_MAX_CONCURRENT_RETRIES=16` for retry budget (B6) |
+| **Provider artifact fetch** | `lib/provider-fetch.js:97-171` | Node `fetch` | `DEFAULT_FETCH_TIMEOUT_MS=15s` | Single-shot (admin can re-upload) | n/a | n/a | None (single per-import event) |
+| **Web-push send** | `lib/notification-service.js:110-141` | `web-push` npm | Delegated to library | Fire-and-forget; next daily fire retries | n/a | n/a | `maxConcurrent` worker pool (default 8) |
+
+Web-push deliberately does NOT retry within a single fire — failure
+modes are tracked via `failureStreak` and the next daily fire
+retries. See `docs/notifications.md` for the failure-mode table.
+Provider fetch is admin-initiated and re-invokable; adding retry
+there would mask transient errors operators need to see.
+
 ## Retries and backoff
 
 Failed deliveries are retried with exponential backoff. The default
@@ -89,6 +106,44 @@ failed delivery from the Webhooks tab.
 A `Retry-After` header on the response (numeric seconds OR HTTP-date) is
 honored, but capped at 10 minutes so a misbehaving recipient cannot
 strand a delivery forever.
+
+### Jitter (B6 / #125)
+
+The retry schedule above is the BASE; every retry interval has 0–25%
+additive random jitter applied on top. So an attempt-3 retry whose
+base slot is 30s lands somewhere in `[30s, 37.5s]`. A fleet of
+deliveries all failing at the same moment (e.g., the upstream
+endpoint returned 503 for everyone) therefore smears the next attempt
+across a 7.5-second window rather than synchronously hammering the
+upstream as it tries to recover.
+
+Jitter is `Math.floor(base * 0.25 * Math.random())` — pure additive,
+never below the base. The thundering-herd argument is one-sided:
+jittering above the base is always safe; jittering below would let a
+delivery retry sooner than the operator configured, which we treat
+as a contract violation.
+
+### Aggregate retry-budget cap (B6 / #125)
+
+In addition to the per-subscription `maxAttempts` cap, the dispatcher
+enforces a **system-wide cap on concurrent retrying deliveries**.
+Each delivery sitting in its inter-retry backoff sleep counts against
+`WEBHOOK_MAX_CONCURRENT_RETRIES` (default 16). When a new attempt
+fails and would enter retry state but the budget is full, the
+delivery is marked `failed` with `lastError: "retry budget exhausted
+(>=N retries inflight)"` and an operator-visible `[webhook] retry
+budget exhausted` warn-log fires.
+
+This caps memory and timer usage during a system-wide upstream
+outage — without it, every failing delivery would queue an
+indefinitely-extending retry timer, blowing the timer table and
+delaying graceful shutdown. The default (16 = 4x `globalInflight=4`)
+gives ample headroom for normal transient errors while still capping
+a runaway.
+
+If you observe `retry budget exhausted` logs and no upstream outage,
+either raise the env var or investigate why so many deliveries are
+piling up at once.
 
 ### HTTP status classification
 
@@ -142,6 +197,7 @@ backup also restores webhook subscriptions and recent deliveries.
 | `WEBHOOK_DELIVERY_HISTORY_MAX`     | `200`   | 10–10000         | Retention cap for `data/webhook-deliveries.json`.                    |
 | `WEBHOOK_MAX_ATTEMPTS_DEFAULT`     | `5`     | 1–20             | Default `maxAttempts` for new subscriptions.                         |
 | `WEBHOOK_GLOBAL_INFLIGHT_LIMIT`    | `4`     | 1–64             | Concurrent in-flight delivery cap across all subscriptions.          |
+| `WEBHOOK_MAX_CONCURRENT_RETRIES`   | `16`    | 1–256            | Aggregate retry-budget cap (B6 / #125). See *Aggregate retry-budget cap* above. |
 | `WEBHOOK_ALLOW_PRIVATE_NETWORKS`   | `false` | bool             | Bypass SSRF guard. Local dev only — never enable in production.      |
 | `WEBHOOKS_STORE_PATH`              | `data/webhooks.json` | path | Override the subscription store location (e.g. for tests). |
 | `WEBHOOK_DELIVERIES_STORE_PATH`    | `data/webhook-deliveries.json` | path | Override the delivery store location.            |

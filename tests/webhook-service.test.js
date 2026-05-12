@@ -93,10 +93,37 @@ describe("signature + helper functions", () => {
     expect(classifyHttpStatus(502)).toEqual({ ok: false, retriable: true });
   });
 
-  test("nextBackoffMs uses schedule index and caps at last slot", () => {
-    expect(nextBackoffMs(1)).toBe(DEFAULT_BACKOFF_MS[0]);
-    expect(nextBackoffMs(5)).toBe(DEFAULT_BACKOFF_MS[4]);
-    expect(nextBackoffMs(99)).toBe(DEFAULT_BACKOFF_MS[4]);
+  test("nextBackoffMs uses schedule index and caps at last slot (jitter off for determinism)", () => {
+    expect(nextBackoffMs(1, undefined, { jitter: false })).toBe(DEFAULT_BACKOFF_MS[0]);
+    expect(nextBackoffMs(5, undefined, { jitter: false })).toBe(DEFAULT_BACKOFF_MS[4]);
+    expect(nextBackoffMs(99, undefined, { jitter: false })).toBe(DEFAULT_BACKOFF_MS[4]);
+  });
+
+  // B6 / #125
+  test("nextBackoffMs default applies 0-25% additive jitter", () => {
+    const trials = 200;
+    const observed = new Set();
+    for (let i = 0; i < trials; i += 1) {
+      const value = nextBackoffMs(1);
+      expect(value).toBeGreaterThanOrEqual(DEFAULT_BACKOFF_MS[0]);
+      expect(value).toBeLessThanOrEqual(Math.floor(DEFAULT_BACKOFF_MS[0] * 1.25));
+      observed.add(value);
+    }
+    // Spread check: jitter should produce more than a single value
+    // across 200 trials with 250 possible integer outcomes.
+    expect(observed.size).toBeGreaterThan(20);
+  });
+
+  test("nextBackoffMs respects injected random()", () => {
+    expect(nextBackoffMs(1, undefined, { random: () => 0 })).toBe(DEFAULT_BACKOFF_MS[0]);
+    expect(nextBackoffMs(1, undefined, { random: () => 0.999999 })).toBe(
+      DEFAULT_BACKOFF_MS[0] + Math.floor(DEFAULT_BACKOFF_MS[0] * 0.25 * 0.999999)
+    );
+  });
+
+  test("nextBackoffMs jitterFraction=0 disables jitter even without jitter:false flag", () => {
+    expect(nextBackoffMs(1, undefined, { jitterFraction: 0 })).toBe(DEFAULT_BACKOFF_MS[0]);
+    expect(nextBackoffMs(3, undefined, { jitterFraction: 0 })).toBe(DEFAULT_BACKOFF_MS[2]);
   });
 });
 
@@ -566,5 +593,250 @@ describe("WebhookService.shutdown", () => {
     svc.shutdown();
     expect(svc.scheduledTimers.size).toBe(0);
     expect(svc.shutdownRequested).toBe(true);
+  });
+});
+
+// B6 / #125: aggregate retry-budget cap. The default is 16 concurrent
+// retries in flight, configurable via WEBHOOK_MAX_CONCURRENT_RETRIES.
+// When the cap is hit, scheduleDelivery({ isRetry: true }) marks the
+// delivery as failed rather than queueing it.
+describe("retry budget cap (B6 / #125)", () => {
+  test("scheduleDelivery with isRetry=true counts against the cap", async () => {
+    const { svc } = await buildService({ maxConcurrentRetries: 3 });
+    expect(svc.retryInflightCount).toBe(0);
+    // Long delay so the timers don't fire before we observe state.
+    svc.scheduleDelivery("delivery-a", 60_000, null, { isRetry: true });
+    svc.scheduleDelivery("delivery-b", 60_000, null, { isRetry: true });
+    svc.scheduleDelivery("delivery-c", 60_000, null, { isRetry: true });
+    expect(svc.retryInflightCount).toBe(3);
+    svc.shutdown();
+  });
+
+  test("first-attempt schedules (isRetry omitted) do NOT count against the retry cap", async () => {
+    const { svc } = await buildService({ maxConcurrentRetries: 2 });
+    svc.scheduleDelivery("delivery-a", 60_000, null); // no isRetry → first-attempt
+    svc.scheduleDelivery("delivery-b", 60_000, null);
+    svc.scheduleDelivery("delivery-c", 60_000, null);
+    expect(svc.retryInflightCount).toBe(0);
+    svc.shutdown();
+  });
+
+  test("exceeding the budget marks the delivery as failed instead of scheduling", async () => {
+    const fetchImpl = async () => ({
+      status: 500,
+      headers: { get: () => null },
+      body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+    });
+    const { svc, subs, deliveries } = await buildService({
+      fetchImpl,
+      maxConcurrentRetries: 1,
+      // 60s backoff so the first delivery stays in the retry budget
+      // while we issue the second one.
+      backoffSchedule: [60_000]
+    });
+    const sub = await subs.create({
+      url: "https://a.example/webhook",
+      events: ["e"],
+      maxAttempts: 3
+    });
+    await svc.emit("e", {});
+    // Wait for first delivery to fail-and-schedule-retry.
+    await waitForCondition(() => svc.retryInflightCount >= 1);
+    expect(svc.retryInflightCount).toBe(1);
+    // Issue a second emit; its first attempt also fails, would schedule
+    // a retry — but the retry budget (=1) is already exhausted.
+    await svc.emit("e", {});
+    await waitForCondition(async () => {
+      const recent = await deliveries.findRecent({ subscriptionId: sub.id, limit: 5 });
+      return recent.some((d) => d.status === "failed" && /retry budget exhausted/.test(d.lastError || ""));
+    });
+    const recent = await deliveries.findRecent({ subscriptionId: sub.id, limit: 5 });
+    const exhausted = recent.find((d) => /retry budget exhausted/.test(d.lastError || ""));
+    expect(exhausted).toBeTruthy();
+    expect(exhausted.status).toBe("failed");
+    svc.shutdown();
+  });
+
+  test("a completing retry frees budget for the next one", async () => {
+    const { svc } = await buildService({ maxConcurrentRetries: 1 });
+    // Fast timer — let it fire so the counter decrements.
+    svc.scheduleDelivery("first", 10, null, { isRetry: true });
+    expect(svc.retryInflightCount).toBe(1);
+    await waitForCondition(() => svc.retryInflightCount === 0, { timeoutMs: 1000 });
+    expect(svc.retryInflightCount).toBe(0);
+    // Now the budget is free again.
+    svc.scheduleDelivery("second", 60_000, null, { isRetry: true });
+    expect(svc.retryInflightCount).toBe(1);
+    svc.shutdown();
+  });
+
+  test("constructor clamps non-positive / non-integer maxConcurrentRetries to default", async () => {
+    const { svc: svcNeg } = await buildService({ maxConcurrentRetries: -5 });
+    expect(svcNeg.maxConcurrentRetries).toBe(16);
+    svcNeg.shutdown();
+    const { svc: svcNaN } = await buildService({ maxConcurrentRetries: NaN });
+    expect(svcNaN.maxConcurrentRetries).toBe(16);
+    svcNaN.shutdown();
+    const { svc: svcStr } = await buildService({ maxConcurrentRetries: "8" });
+    // Non-integer (string) falls back to default — caller must pass int.
+    expect(svcStr.maxConcurrentRetries).toBe(16);
+    svcStr.shutdown();
+  });
+
+  // Helper: seed a delivery in the persisted store with arbitrary
+  // attempts/status to simulate a crash-recovered row. enqueue() always
+  // creates with status=queued/attempts=0; update() advances state.
+  async function seedDelivery(deliveries, sub, { attempts, nextAttemptAt, status } = {}) {
+    const created = await deliveries.enqueue({
+      subscriptionId: sub.id,
+      event: "e",
+      url: sub.url,
+      nextAttemptAt: nextAttemptAt || undefined,
+      payload: {}
+    });
+    if (attempts !== undefined || status) {
+      await deliveries.update(created.id, {
+        ...(attempts !== undefined ? { attempts } : {}),
+        ...(status ? { status } : {})
+      });
+    }
+    return created;
+  }
+
+  // Codex P2 + Copilot on PR #154
+  test("recoverOnBoot counts persisted-retry deliveries against the budget", async () => {
+    const { svc, subs, deliveries } = await buildService({
+      maxConcurrentRetries: 2,
+      // Far-future nextAttemptAt so the schedule doesn't fire and
+      // unwind the budget before we observe.
+      backoffSchedule: [60_000]
+    });
+    const sub = await subs.create({
+      url: "https://a.example/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    const nowFar = new Date(Date.now() + 60_000).toISOString();
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    await seedDelivery(deliveries, sub, { attempts: 2, nextAttemptAt: nowFar });
+    expect(svc.retryInflightCount).toBe(0);
+    await svc.recoverOnBoot();
+    // Two get scheduled (budget=2); the third hits the budget cap
+    // and is marked failed instead of scheduled.
+    expect(svc.retryInflightCount).toBe(2);
+    await waitForCondition(async () => {
+      const all = (await deliveries.load()).deliveries;
+      return all.some((d) => /retry budget exhausted/.test(d.lastError || "") && d.status === "failed");
+    });
+    const all = (await deliveries.load()).deliveries;
+    const exhausted = all.find((d) => /retry budget exhausted/.test(d.lastError || ""));
+    expect(exhausted).toBeTruthy();
+    expect(exhausted.status).toBe("failed");
+    // Copilot on PR #154: nextAttemptAt must be cleared when the
+    // budget-exhaust path marks the row failed, not left as a
+    // phantom future timestamp.
+    expect(exhausted.nextAttemptAt === null || exhausted.nextAttemptAt === undefined || exhausted.nextAttemptAt === "").toBe(true);
+    svc.shutdown();
+  });
+
+  test("recoverOnBoot treats first-attempt persisted deliveries (attempts=0) as NOT retries", async () => {
+    const { svc, subs, deliveries } = await buildService({
+      maxConcurrentRetries: 1,
+      backoffSchedule: [60_000]
+    });
+    const sub = await subs.create({
+      url: "https://a.example/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    // Fill the retry budget with a real retry (attempts=2).
+    await seedDelivery(deliveries, sub, {
+      attempts: 2,
+      nextAttemptAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    // And a first-attempt-scheduled row (attempts=0 — default from enqueue).
+    await seedDelivery(deliveries, sub, {});
+    await svc.recoverOnBoot();
+    expect(svc.retryInflightCount).toBe(1); // only the attempts=2 row counted
+    // The attempts=0 row should NOT have been marked failed —
+    // first-attempt schedules bypass the retry budget entirely.
+    const all = (await deliveries.load()).deliveries;
+    const firstAttempt = all.find((d) => (d.attempts || 0) === 0);
+    expect(firstAttempt).toBeTruthy();
+    expect(firstAttempt.status).not.toBe("failed");
+    svc.shutdown();
+  });
+});
+
+// B6 / #125: jitter is on by default. Inject a deterministic random
+// to exercise an exact backoff value; verify that the next-attempt
+// timestamp written by executeOnce reflects the jittered delay.
+describe("jitter applied to retry backoff (B6 / #125)", () => {
+  test("retry backoff uses the WebhookService's injected random()", async () => {
+    let attempts = 0;
+    const fetchImpl = async () => {
+      attempts += 1;
+      return {
+        status: 500,
+        headers: { get: () => null },
+        body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+      };
+    };
+    const { svc, subs, deliveries } = await buildService({
+      fetchImpl,
+      backoffSchedule: [1000],
+      random: () => 0.5  // halfway through the jitter window
+    });
+    const sub = await subs.create({
+      url: "https://example.com/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    const before = Date.now();
+    await svc.emit("e", {});
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && typeof d.nextAttemptAt === "string" && d.nextAttemptAt.length > 0;
+    });
+    const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+    const nextMs = new Date(d.nextAttemptAt).getTime();
+    // random=0.5, jitterFraction=0.25, base=1000 → jitter = floor(1000 * 0.25 * 0.5) = 125.
+    // nextAttemptAt should land ~before + 1125ms (give 1500ms slack
+    // for I/O + timer scheduling).
+    expect(nextMs - before).toBeGreaterThanOrEqual(1100);
+    expect(nextMs - before).toBeLessThan(2600);
+    expect(attempts).toBeGreaterThanOrEqual(1);
+    svc.shutdown();
+  });
+
+  test("WebhookService respects jitterFraction=0 (deterministic backoff)", async () => {
+    const fetchImpl = async () => ({
+      status: 500,
+      headers: { get: () => null },
+      body: { getReader: () => ({ read: async () => ({ done: true }) }) }
+    });
+    const { svc, subs, deliveries } = await buildService({
+      fetchImpl,
+      backoffSchedule: [777],
+      jitterFraction: 0
+    });
+    const sub = await subs.create({
+      url: "https://example.com/",
+      events: ["e"],
+      maxAttempts: 5
+    });
+    const before = Date.now();
+    await svc.emit("e", {});
+    await waitForCondition(async () => {
+      const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+      return d && typeof d.nextAttemptAt === "string" && d.nextAttemptAt.length > 0;
+    });
+    const d = (await deliveries.findRecent({ subscriptionId: sub.id, limit: 1 }))[0];
+    const delay = new Date(d.nextAttemptAt).getTime() - before;
+    // With jitterFraction=0, backoff is exactly 777ms (plus I/O slack).
+    expect(delay).toBeGreaterThanOrEqual(700);
+    expect(delay).toBeLessThan(2500);
+    svc.shutdown();
   });
 });
