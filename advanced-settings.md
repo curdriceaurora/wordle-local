@@ -2,6 +2,8 @@
 
 Use these settings if you want admin controls or are hosting behind a VPN/proxy. Otherwise, you can ignore this file.
 
+> **Note on hosting paths.** Most settings on this page only apply when you run the full Node/Docker server. The gameplay-only [Vercel deploy path](README.md#deploy-to-vercel-gameplay-only) ignores admin auth, rate-limit env vars, definitions mode, performance logging, and most of the Server block — it ships a fixed-config serverless function. Run the full server for anything beyond Create-a-puzzle gameplay.
+
 ## Admin Auth
 
 Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <value>` on admin requests.
@@ -74,3 +76,13 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 - `APP_CONFIG_PATH` — optional override path for persisted runtime overrides (`data/app-config.json` by default).
 - `ADMIN_JOBS_STORE_PATH` — optional override path for persisted admin queue jobs (`data/admin-jobs.json` by default).
 - Language registry file: `data/languages.json` (auto-recovers to baked defaults if missing/invalid).
+
+## Vercel (gameplay-only deploy)
+
+The repo includes `vercel.json` and `api/[...path].js`. Importing the repo into Vercel gets you a public gameplay-only preview with zero config.
+
+- No env vars are read by the serverless function. `ADMIN_KEY`, `REQUIRE_ADMIN_KEY`, `TRUST_PROXY`, the rate-limit envs, `DEFINITIONS_MODE`, `PERF_LOGGING`, and the `*_PATH` overrides on this page have no effect there — the function uses hard-coded defaults (rate limit at 300 req / 15 min per IP, definitions off, trust 1 proxy hop).
+- The bundle ships only `data/dictionaries/en.txt`. `en-definitions.json` and the runtime state JSONs are excluded by `.vercelignore`.
+- Only English is exposed (the front-end auto-hides the language dropdown when `/api/meta` reports a single language).
+- Stateful endpoints (`/api/word`, `/api/stats/*`, `/api/challenges/*`, `/api/admin/*`, `/api/notifications/*`, `/api/backup`, `/api/restore`) return `404 {"code": "STATIC_DEPLOY_ENDPOINT_MISSING"}`.
+- See [README — Deploy to Vercel](README.md#deploy-to-vercel-gameplay-only) for the full scope of what works.

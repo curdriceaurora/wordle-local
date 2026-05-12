@@ -39,6 +39,8 @@ Open `http://localhost:3000`.
 
 > `npm start` doesn't load `.env`, so admin endpoints run **open** by default — fine for a local game on `localhost`. To lock the server down before exposing it beyond your machine, see [Locking it down](#locking-it-down) under Admin Console.
 
+…or one-click public preview via Vercel — gameplay only, no admin or persistent state. See [Deploy to Vercel](#deploy-to-vercel-gameplay-only) below.
+
 ### 2. Create and share a puzzle
 
 1. On the home page, type a word into **Word** (3–12 letters, A–Z), or click **Random word**.
@@ -71,6 +73,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **More player features** — timed challenges, notifications, classroom rosters: see [Highlights](#highlights).
 - **Operator controls** — BYOD (bring your own dictionary), scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
 - **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](advanced-settings.md).
+- **Public preview without a server** — gameplay-only deploy on Vercel: see [Deploy to Vercel](#deploy-to-vercel-gameplay-only).
 
 ## Highlights
 
@@ -90,6 +93,24 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 - Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
 - Hosting behind a proxy or running with admin features? See [advanced-settings.md](advanced-settings.md).
+
+## Deploy to Vercel (gameplay-only)
+
+The repo ships with `vercel.json` + `api/[...path].js` so you can deploy a public preview that runs the core game without standing up your own host. Import the repo on Vercel ("New Project" → pick this repo → keep defaults → Deploy); no env vars required, no build step runs.
+
+**What works on a Vercel deploy.** Create-a-puzzle, share links, Random word, on-screen keyboard, theme + UI language switcher. The four stateless gameplay endpoints — `/api/encode`, `/api/random`, `/api/puzzle`, `/api/guess` — run as a single serverless function and the English word list (`data/dictionaries/en.txt`) is bundled into it. `/api/meta` reports a one-language registry, which makes the front-end hide the language dropdown automatically (one option = no real choice).
+
+**What doesn't work on Vercel** (because each requires persistent disk state or scheduled timers, neither of which Vercel's stateless serverless runtime provides):
+
+- `/daily` and `POST /api/word` — needs a stored daily word that survives between requests.
+- `/admin` shell loads but every admin API returns 404. Provider import, runtime config, scheduler, backup/restore, webhooks — all need the long-lived process and the `data/` directory.
+- Family leaderboard / profiles (`/api/stats/*`) — needs writes to `data/leaderboard.json`.
+- Timed challenges (`/api/challenges/*`), classroom mode, push notifications (`/api/notifications/*`).
+- Word definitions on win/reveal — `en-definitions.json` (5.1 MB) is intentionally excluded from the bundle to keep the function small.
+
+All of the above return JSON `{error, code: "STATIC_DEPLOY_ENDPOINT_MISSING"}` rather than HTML, so the front-end handles them as expected.
+
+**When to use this path.** Quick public showcase, classroom demo without a server, link to share with friends. **Don't** use it as a real install — the moment you want a daily word, a leaderboard, or any admin feature, run `npm start` or `docker compose up` instead.
 
 ## Admin Console
 
@@ -239,6 +260,7 @@ Daily word endpoints remain available:
 
 - Nothing loads at `http://localhost:3000`: confirm the server is running and your port is free.
 - Daily link says no puzzle set: set one via `POST /api/word` (Quick Start step 3). If you locked the server down, pass `x-admin-key` — see [Locking it down](#locking-it-down).
+- On a Vercel deploy, `/daily` 404s, the leaderboard is hidden, and admin actions return `STATIC_DEPLOY_ENDPOINT_MISSING`. These features need a long-lived process with persistent `data/`; see [Deploy to Vercel](#deploy-to-vercel-gameplay-only) for the full scope of what works there.
 - Share link doesn't work: make sure the link wasn't truncated and is from the Create screen.
 - `/challenges` link is missing from the header: either no challenges are configured (the admin Challenges tab can create one), **or** challenge mode is disabled at the deploy level (`CHALLENGE_MODE_ENABLED=false` in the environment, which makes `/api/challenges` return `CHALLENGE_MODE_DISABLED` and the client hides the link).
 - Notifications toggle is hidden: page is loaded over plain HTTP, or the browser lacks `PushManager` / Service Worker. Use HTTPS (or `localhost`) and a modern browser.
