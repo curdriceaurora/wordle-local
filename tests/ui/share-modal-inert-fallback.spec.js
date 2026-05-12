@@ -45,16 +45,23 @@ test("share modal hides Close from Tab when closed (tabindex fallback)", async (
     document.getElementById("shareModalClose").getAttribute("data-inert-tabindex") !== null
   );
 
-  // Fallback should set tabindex="-1" + remember prior absence.
+  // Fallback should set tabindex="-1" + remember prior absence, AND
+  // the `inert` attribute must still mirror the inactive state (the
+  // function now always toggles inert regardless of browser support so
+  // the DOM stays internally consistent — fix for PR #160 Copilot
+  // review on public/app.js:147).
   const state = await page.evaluate(() => {
     const close = document.getElementById("shareModalClose");
+    const modal = document.getElementById("shareModal");
     return {
       tabindex: close.getAttribute("tabindex"),
-      remembered: close.getAttribute("data-inert-tabindex")
+      remembered: close.getAttribute("data-inert-tabindex"),
+      modalHasInert: modal.hasAttribute("inert")
     };
   });
   expect(state.tabindex).toBe("-1");
   expect(state.remembered).toBe("__none__");
+  expect(state.modalHasInert).toBe(true);
 
   // Opening should restore (no tabindex; data-inert-tabindex cleared).
   await page.evaluate(() => {

@@ -140,14 +140,24 @@ const SUPPORTS_INERT =
 
 function setShareModalInactive(inactive) {
   if (!shareModal) return;
-  if (SUPPORTS_INERT) {
-    if (inactive) shareModal.setAttribute("inert", "");
-    else shareModal.removeAttribute("inert");
-    return;
-  }
-  // Fallback: save/restore tabindex on every focusable descendant so a
-  // closed modal can't trap focus or get announced by an AT walker that
-  // skips visibility:hidden. Sentinel "__none__" remembers absence.
+  // Always toggle the `inert` attribute so DOM state mirrors the logical
+  // active/inactive intent regardless of browser support. On
+  // inert-supporting browsers this is the entire fix; on browsers where
+  // `inert` is silently ignored, the attribute is still correct for any
+  // future polyfill / feature-detect callsite that reads it (including
+  // our own tests). Inert-supporting browsers (Chrome/Edge 102+, Safari
+  // 15.5+, Firefox 112+) cover the modern fleet.
+  if (inactive) shareModal.setAttribute("inert", "");
+  else shareModal.removeAttribute("inert");
+
+  if (SUPPORTS_INERT) return;
+
+  // Belt-and-braces fallback for the long tail: explicitly tab-isolate
+  // every focusable descendant so a Tab walker can't land on the Close
+  // button. CSS visibility:hidden + opacity:0 already removes them
+  // visually, but some AT × browser combos still announce focusables
+  // across visibility:hidden if keyboard nav reaches them. Sentinel
+  // "__none__" remembers prior absence so open() restores cleanly.
   const focusables = shareModal.querySelectorAll(
     'a[href], button, input, select, textarea, [tabindex]'
   );
