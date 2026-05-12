@@ -4,9 +4,11 @@
 // Server load baseline test (C5 / #131).
 //
 // Drives a running wordle-local server against three scenarios —
-// player read, admin write, mixed — and reports RPS + latency
-// percentiles. Self-contained: no autocannon / wrk / k6 dependency.
-// Uses Node's built-in `http(s)` module + the Performance API.
+// player-read, admin-auth (read-only — exercises the admin auth +
+// rate-limit stack without performing real writes), and mixed —
+// and reports RPS + latency percentiles. Self-contained: no
+// autocannon / wrk / k6 dependency. Uses Node's built-in `http(s)`
+// module + the Performance API.
 //
 // Usage
 // -----
