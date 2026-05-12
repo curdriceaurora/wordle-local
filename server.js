@@ -2877,15 +2877,19 @@ async function startProviderImportQueueIfNeeded() {
 }
 
 function buildImportQueueSummary(snapshot) {
-  const totals = {
+  // Null-prototype container so `totals[job.status]` lookups can't
+  // resolve to a polluteable inherited property (A2 / #115). Even
+  // though `job.status` is admin-sourced enum-bounded today, defense
+  // in depth keeps the dynamic-write site honest.
+  const totals = Object.assign(Object.create(null), {
     queued: 0,
     running: 0,
     succeeded: 0,
     failed: 0,
     canceled: 0
-  };
+  });
   snapshot.jobs.forEach((job) => {
-    if (totals[job.status] !== undefined) {
+    if (Object.hasOwn(totals, job.status)) {
       totals[job.status] += 1;
     }
   });
