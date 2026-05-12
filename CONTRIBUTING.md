@@ -50,6 +50,17 @@ When CI surfaces a new advisory, you have two paths:
 
 When an advisory eventually gets fixed in our dependency tree, its baseline entry becomes dead. The next person who touches the baseline removes it.
 
+### Prototype-pollution AST gate
+
+`npm run proto:check` (wired into `npm run check`) walks every `.js` file under `routes/`, `lib/`, and `server.js` with `acorn` and flags any `obj[expr] = value` site where the key isn't a known-safe shape (string/number literal, array-index identifier, arithmetic on the above) AND the destination isn't a null-prototype container (`Object.create(null)`, `{__proto__: null, ...}`, `Object.assign(Object.create(null), {...})`, `new Uint8Array(...)`, `Buffer.alloc(...)`). The full list of recognized shapes is documented at the top of `scripts/check-proto-pollution.js`.
+
+When the gate fails, fix the offending site by either:
+
+- Routing the key through a sentinel check (e.g., `if (UNSAFE_OBJECT_KEYS.has(key))` — pattern in `lib/leaderboard-store.js`).
+- Constructing the destination as `Object.create(null)` (or `Object.assign(Object.create(null), { defaults })` if you need initial keys).
+- Switching to a `Map` (then serialize via `Object.fromEntries(...)` if persisting JSON).
+- Adding the site to `ALLOWLIST_SITES` in `scripts/check-proto-pollution.js` with a written rationale and a substring signature that matches the offending line. Reviewers should treat allowlist additions as security decisions — comment on the PR with the threat model.
+
 ### Client-side HTML rendering
 
 The admin and player shells render all dynamic content via `node.textContent = value` (or DOM-construction APIs — `createElement` + `appendChild`). Bare `element.innerHTML = value` is prohibited when `value` is anything other than an empty-string literal.
