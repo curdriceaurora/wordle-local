@@ -52,6 +52,10 @@ describe("isNullProtoObjectLiteral", () => {
     const expr = firstStatementExpr(parse('({ foo: 1 })'));
     expect(isNullProtoObjectLiteral(expr)).toBe(false);
   });
+  test("does NOT match computed-key `{ [\"__proto__\"]: null }` — JS treats that as a regular own-property assignment, not a prototype set (Codex P2)", () => {
+    const expr = firstStatementExpr(parse('({ ["__proto__"]: null })'));
+    expect(isNullProtoObjectLiteral(expr)).toBe(false);
+  });
 });
 
 describe("isLikelyArrayIndexKey", () => {
@@ -78,6 +82,10 @@ describe("isLikelyArrayIndexKey", () => {
   test("accepts simple arithmetic on index names", () => {
     const ast = parse("a[i + 1] = 1;");
     expect(isLikelyArrayIndexKey(ast.body[0].expression.left.property)).toBe(true);
+  });
+  test("rejects mixed-source arithmetic (Copilot: `obj[req.body.key + 1]` must NOT pass)", () => {
+    const ast = parse("a[req.body.key + 1] = 1;");
+    expect(isLikelyArrayIndexKey(ast.body[0].expression.left.property)).toBe(false);
   });
 });
 
@@ -146,17 +154,26 @@ describe("check-proto-pollution CLI end-to-end", () => {
     expect(result).toMatch(/OK/);
   });
 
-  test("exits 1 when a planted bare `obj[req.body.key] = v` is added to routes/admin.js", () => {
-    const target = path.resolve(__dirname, "..", "routes", "admin.js");
-    const original = fs.readFileSync(target, "utf8");
+  test("exits 1 when a planted bare `obj[req.body.key] = v` is dropped under routes/", () => {
+    // Plant the bypass in a NEW file inside routes/ rather than
+    // mutating routes/admin.js — jest runs test files in parallel
+    // and other suites do `require("../server")` which transitively
+    // loads routes/admin.js, so in-place mutation could cause
+    // cross-worker races (Copilot caught this on PR #145).
+    const tempFile = path.resolve(
+      __dirname,
+      "..",
+      "routes",
+      `__proto_pollution_test_harness_${process.pid}_${Date.now()}.js`
+    );
     try {
       fs.writeFileSync(
-        target,
-        original +
-          "\nfunction __testHarnessProtoPollution__(req) {\n" +
+        tempFile,
+        "module.exports = function injectedUnsafe(req) {\n" +
           "  const dest = {};\n" +
           "  dest[req.body.key] = req.body.value;\n" +
-          "}\n"
+          "  return dest;\n" +
+          "};\n"
       );
       let exitCode = 0;
       let stderr = "";
@@ -169,7 +186,7 @@ describe("check-proto-pollution CLI end-to-end", () => {
       expect(exitCode).toBe(1);
       expect(stderr).toMatch(/dest\[req\.body\.key\]/);
     } finally {
-      fs.writeFileSync(target, original);
+      try { fs.unlinkSync(tempFile); } catch (_err) { /* best effort */ }
     }
   });
 });

@@ -27,7 +27,9 @@
 //      pollute a prototype.
 //   3. Skip if the object expression is null-prototype-protected:
 //        - LHS root identifier was declared with `= Object.create(null)`
-//          or `= new Map()` (with `.set()` we never see `[]=` anyway).
+//          (or one of the equivalents recognized by `isNullProtoExpression`).
+//          `Map` containers don't appear here — by convention they
+//          use `.set()`, which is not an `obj[key] = ...` site at all.
 //        - LHS property signature (e.g., `draft.resultsByProfile`) is
 //          assigned `Object.create(null)` anywhere in the same file —
 //          conservative but matches every current site.
@@ -70,13 +72,13 @@ const ALLOWLIST_SITES = [
     signature: "draft.resultsByProfile[payload.profileId]",
     rationale:
       "draft.resultsByProfile is constructed as Object.create(null) by " +
-      "leaderboard-store's createEmptyLeaderboardState (lib/leaderboard-store.js:191), " +
-      "and every code path that assigns to draft.resultsByProfile = ... in that " +
-      "store also uses Object.create(null). The destination is null-prototype " +
-      "by upstream contract — a proto-pollution attempt via payload.profileId " +
+      "leaderboard-store's createEmptyLeaderboardState function, and every " +
+      "code path that assigns to draft.resultsByProfile = ... in that store " +
+      "also uses Object.create(null). The destination is null-prototype by " +
+      "upstream contract — a proto-pollution attempt via payload.profileId " +
       "would set an own property on the null-prototype object, not poison " +
-      "Object.prototype. Cross-file AST flow analysis is out of scope for this " +
-      "guard; the audit is captured here so the dependency is documented."
+      "Object.prototype. Cross-file AST flow analysis is out of scope for " +
+      "this guard; the audit is captured here so the dependency is documented."
   }
 ];
 
@@ -120,7 +122,11 @@ function walk(dir, out) {
 
 function parseSource(source) {
   return acorn.parse(source, {
-    ecmaVersion: "latest",
+    // Pinned year (not "latest") so the gate's behavior stays
+    // predictable across acorn upgrades — new syntax / node types
+    // can't silently widen what the check accepts. Bump when the
+    // codebase intentionally adopts a newer syntax.
+    ecmaVersion: 2024,
     sourceType: "script",
     allowReturnOutsideFunction: true,
     locations: true
@@ -181,12 +187,17 @@ function isObjectCreateNull(node) {
 }
 
 function isNullProtoObjectLiteral(node) {
+  // Critical: only NON-COMPUTED `__proto__` keys actually set the
+  // object's prototype to null. `{ ["__proto__"]: null }` is a
+  // regular own-property assignment with a `__proto__` name and
+  // does NOT change the prototype. Codex P2 caught this on PR #145.
   return (
     node &&
     node.type === "ObjectExpression" &&
     node.properties.some(
       (p) =>
         p.type === "Property" &&
+        !p.computed &&
         ((p.key.type === "Identifier" && p.key.name === "__proto__") ||
           (p.key.type === "Literal" && p.key.value === "__proto__")) &&
         p.value.type === "Literal" &&
@@ -263,9 +274,13 @@ function isLikelyArrayIndexKey(keyNode) {
   if (!keyNode) return false;
   if (keyNode.type === "Literal" && typeof keyNode.value === "number") return true;
   if (keyNode.type === "Identifier") return ARRAY_INDEX_IDENT_RE.test(keyNode.name);
-  // Allow simple arithmetic like `i + 1`, `len - 1` (recursive).
+  // Require BOTH sides of an arithmetic expression to be index-safe.
+  // The earlier permissive form (`||`) would accept
+  // `obj[req.body.key + 1]` because the right side is a number,
+  // even though the left is request-influenced. Copilot caught
+  // this false-negative on PR #145.
   if (keyNode.type === "BinaryExpression") {
-    return isLikelyArrayIndexKey(keyNode.left) || isLikelyArrayIndexKey(keyNode.right);
+    return isLikelyArrayIndexKey(keyNode.left) && isLikelyArrayIndexKey(keyNode.right);
   }
   if (keyNode.type === "UpdateExpression") return isLikelyArrayIndexKey(keyNode.argument);
   return false;
@@ -355,9 +370,11 @@ function checkProtoPollution(errors) {
       errors.push(
         `${relPath}:${line} dynamic-key write to a plain object — route the key ` +
           "through an UNSAFE_OBJECT_KEYS sentinel check, store the container as " +
-          "`Object.create(null)` (or `new Map()`), or add the file to " +
-          "ALLOWLIST_FILES in scripts/check-proto-pollution.js with a rationale " +
-          `(rules 11 + 12 / A2 / #115). Site: ${snippet}`
+          "`Object.create(null)` (or `Object.assign(Object.create(null), {...})` " +
+          "for default keys; switching to a `Map` removes the `[]=` site " +
+          "entirely via `.set()`), or add the site to ALLOWLIST_SITES in " +
+          "scripts/check-proto-pollution.js with a rationale (rules 11 + 12 / " +
+          `A2 / #115). Site: ${snippet}`
       );
     });
   }
