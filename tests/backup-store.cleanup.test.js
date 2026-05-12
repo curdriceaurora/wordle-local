@@ -135,38 +135,40 @@ describe("cleanupOrphanedRestoreDirs (B5 / #124)", () => {
   });
 
   test("partial failure is collected, not thrown", async () => {
+    // CR Minor + Copilot on PR #153 caught that the previous shape
+    // only asserted the response SHAPE on the success path. Now we
+    // deterministically force one dir's rm to throw via jest.spyOn
+    // on the shared fsp module. cleanupOrphanedRestoreDirs's internal
+    // fsp.rm call sees the spy because Node's module cache returns
+    // the same `node:fs/promises` instance to both the lib and the
+    // test.
     const { dir, dataRoot } = await makeTempDataRoot();
+    const goodName = ".restore-staging-good";
+    const badName = ".restore-rollback-bad";
+    const realRm = fsp.rm;
+    const rmSpy = jest.spyOn(fsp, "rm").mockImplementation((target, opts) => {
+      if (typeof target === "string" && target.endsWith(badName)) {
+        const err = new Error("EACCES: permission denied (simulated)");
+        err.code = "EACCES";
+        return Promise.reject(err);
+      }
+      return realRm(target, opts);
+    });
     try {
-      await makeOrphanDir(dataRoot, ".restore-staging-good", {
-        ageMs: 48 * 60 * 60 * 1000
-      });
-      await makeOrphanDir(dataRoot, ".restore-rollback-bad", {
-        ageMs: 48 * 60 * 60 * 1000
-      });
-      // Simulate "bad" being undeletable. The most reliable way to force
-      // a delete failure without root: replace fsp.rm temporarily. We
-      // can't intercept the module-internal binding from outside, so
-      // instead make the dir contain something unrm'able? On Linux a
-      // chmod-000 dir still rm's fine. The cleanest path is to mock
-      // fsp.rm; but to keep this test simple and portable, we just
-      // verify the SHAPE of the response on the success path and trust
-      // the implementation collects errors via the try/catch around
-      // `fsp.rm`. (Exhaustive failure-mode coverage lives in
-      // tests/fs-faulty.test.js which already has an `fsp.rm`-throwing
-      // fixture for the broader stores layer.)
+      await makeOrphanDir(dataRoot, goodName, { ageMs: 48 * 60 * 60 * 1000 });
+      await makeOrphanDir(dataRoot, badName, { ageMs: 48 * 60 * 60 * 1000 });
       const result = await cleanupOrphanedRestoreDirs(dataRoot, { ageThresholdMs: 0 });
-      expect(result.cleaned.length + result.errors.length).toBe(2);
-      expect(result.cleaned.length).toBeGreaterThanOrEqual(1);
-      // ensure both were attempted
-      const attemptedNames = [
-        ...result.cleaned.map((e) => e.name),
-        ...result.errors.map((e) => e.name)
-      ].sort();
-      expect(attemptedNames).toEqual([
-        ".restore-rollback-bad",
-        ".restore-staging-good"
-      ]);
+
+      // Function resolves (does not throw) even when one rm fails.
+      // Good dir lands in `cleaned`; bad dir lands in `errors` with
+      // the simulated message.
+      expect(result.cleaned.map((entry) => entry.name)).toEqual([goodName]);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].name).toBe(badName);
+      expect(result.errors[0].message).toMatch(/permission denied/);
+      expect(result.retained).toEqual([]);
     } finally {
+      rmSpy.mockRestore();
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });

@@ -32,8 +32,22 @@ const {
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
+// Track every mkdtemp output across the suite so afterAll can clean
+// them up (Copilot + CR on PR #156 caught the temp-dir leak — every
+// run otherwise left a `wordle-c4-pr98-*` dir in os.tmpdir()).
+const TEMP_PROJECT_ROOTS = [];
+
+afterAll(async () => {
+  await Promise.all(
+    TEMP_PROJECT_ROOTS.map((dir) =>
+      fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
+    )
+  );
+});
+
 async function tempProjectWithSchemas() {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "wordle-c4-pr98-"));
+  TEMP_PROJECT_ROOTS.push(dir);
   await fsp.mkdir(path.join(dir, "data"), { recursive: true });
   const schemaFiles = [
     "data/backup-manifest.schema.json",
@@ -94,8 +108,18 @@ describe("P1 fixture: PR #98 — duplicate archive paths rejected pre-stage", ()
       { name: "manifest.json" }
     );
     archive.append(evilContent, { name: "data/leaderboard.json" });
+    // Wire up reject paths on both the archive (archiver) and the
+    // file-system output stream (Copilot + CR on PR #156 caught the
+    // close-only wait — if either side errors, the test would hang
+    // until Jest's timeout). The race below resolves on the FIRST
+    // close OR error from either source.
+    const archiveDone = new Promise((resolve, reject) => {
+      out.once("close", resolve);
+      out.once("error", reject);
+      archive.once("error", reject);
+    });
     await archive.finalize();
-    await new Promise((resolve) => out.on("close", resolve));
+    await archiveDone;
 
     await expect(validateArchive(archivePath, { projectRoot })).rejects.toMatchObject({
       code: "MANIFEST_DUPLICATE_PATH"

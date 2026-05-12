@@ -2233,11 +2233,33 @@ rebuildLanguageRuntimeCatalog();
 // handler's.
 const RESTORE_ORPHAN_CLEANUP_AGE_HOURS = (() => {
   const raw = process.env.RESTORE_ORPHAN_CLEANUP_AGE_HOURS;
-  if (raw === null || raw === undefined || raw === "") return 24;
+  if (raw === null || raw === undefined || raw === "") {
+    // Single source of truth — derive the default from
+    // DEFAULT_ORPHAN_AGE_THRESHOLD_MS in lib/backup-store.js
+    // (Copilot on PR #153 caught the duplicate 24h literal). Lazy-
+    // require here because server.js is still loading when this top-
+    // level const evaluates.
+    const { DEFAULT_ORPHAN_AGE_THRESHOLD_MS } = require("./lib/backup-store.js");
+    return DEFAULT_ORPHAN_AGE_THRESHOLD_MS / 3600000;
+  }
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 24;
+  if (Number.isFinite(n) && n >= 0) return n;
+  const { DEFAULT_ORPHAN_AGE_THRESHOLD_MS } = require("./lib/backup-store.js");
+  return DEFAULT_ORPHAN_AGE_THRESHOLD_MS / 3600000;
 })();
-(async () => {
+
+// Boot-time orphan dir cleanup, awaited from startServer (B5 / #124).
+//
+// CR Major on PR #153 caught the previous fire-and-forget IIFE:
+// running this in the background can race a real in-flight restore
+// (especially with RESTORE_ORPHAN_CLEANUP_AGE_HOURS=0), which would
+// delete the active staging/rollback dirs of a restore that's still
+// going. Moved into the explicit startup sequence so the cleanup
+// completes BEFORE the HTTP listener comes up and BEFORE any
+// inbound traffic can trigger a parallel restore. The age threshold
+// also still protects against the cross-node-shared-mount case
+// where another process might be in the middle of a restore.
+async function runBootOrphanCleanup() {
   try {
     const {
       findOrphanedRestoreDirs,
@@ -2255,8 +2277,13 @@ const RESTORE_ORPHAN_CLEANUP_AGE_HOURS = (() => {
       names: orphans.map((entry) => entry.name),
       summary: list
     });
+    // Reuse the orphan list we just computed — pass it through to
+    // cleanupOrphanedRestoreDirs so it doesn't re-scan the dir
+    // (Copilot on PR #153 caught the double walk + state-skew risk
+    // when the dir listing changed between the two passes).
     const result = await cleanupOrphanedRestoreDirs(dataRoot, {
-      ageThresholdMs: RESTORE_ORPHAN_CLEANUP_AGE_HOURS * 60 * 60 * 1000
+      ageThresholdMs: RESTORE_ORPHAN_CLEANUP_AGE_HOURS * 60 * 60 * 1000,
+      orphans
     });
     if (result.cleaned.length > 0) {
       logger.info("backup-store.orphans.cleaned", {
@@ -2291,7 +2318,7 @@ const RESTORE_ORPHAN_CLEANUP_AGE_HOURS = (() => {
   } catch (err) {
     logger.warn("backup-store.orphan_check_failed", { error: err });
   }
-})();
+}
 
 if (getDefinitionsMode() === "memory") {
   getOrLoadFullDefinitionsMap();
@@ -3778,6 +3805,10 @@ function renderDailyMissing(message) {
 }
 
 async function startServer(listener = app.listen.bind(app)) {
+  // CR Major on PR #153: orphan cleanup awaited HERE — before any
+  // restore route can become reachable — so the cleanup can't race
+  // an in-flight restore.
+  await runBootOrphanCleanup();
   // Await the single boot reconcile BEFORE invoking listener() so the
   // first GET /api/word and /daily can't observe pre-reconcile state.
   // The earlier fire-and-forget form raced app.listen with the still-

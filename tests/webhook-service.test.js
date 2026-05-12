@@ -125,6 +125,24 @@ describe("signature + helper functions", () => {
     expect(nextBackoffMs(1, undefined, { jitterFraction: 0 })).toBe(DEFAULT_BACKOFF_MS[0]);
     expect(nextBackoffMs(3, undefined, { jitterFraction: 0 })).toBe(DEFAULT_BACKOFF_MS[2]);
   });
+
+  // CR Major on PR #154
+  test("nextBackoffMs clamps jitterFraction > 0.25 down to the 0–25% policy ceiling", () => {
+    // Without the clamp, jitterFraction=1 would give base..2*base.
+    // With it, the max possible is base + floor(base * 0.25 * 0.999...).
+    const maxJittered = nextBackoffMs(1, undefined, {
+      jitterFraction: 1,
+      random: () => 0.999999
+    });
+    const expectedMax = DEFAULT_BACKOFF_MS[0] + Math.floor(DEFAULT_BACKOFF_MS[0] * 0.25 * 0.999999);
+    expect(maxJittered).toBe(expectedMax);
+    // Floor of the clamped range is just `base` (random=0).
+    const minJittered = nextBackoffMs(1, undefined, {
+      jitterFraction: 1,
+      random: () => 0
+    });
+    expect(minJittered).toBe(DEFAULT_BACKOFF_MS[0]);
+  });
 });
 
 describe("SSRF guard (isPrivateIPv4 / isPrivateIPv6 / assertOutboundUrlAllowed)", () => {
@@ -667,6 +685,21 @@ describe("retry budget cap (B6 / #125)", () => {
     // Now the budget is free again.
     svc.scheduleDelivery("second", 60_000, null, { isRetry: true });
     expect(svc.retryInflightCount).toBe(1);
+    svc.shutdown();
+  });
+
+  // CR Major on PR #154
+  test("constructor clamps maxConcurrentRetries > 256 down to the 256 ceiling", async () => {
+    const { svc } = await buildService({ maxConcurrentRetries: 100_000 });
+    expect(svc.maxConcurrentRetries).toBe(256);
+    svc.shutdown();
+  });
+
+  // CR Major on PR #154: also enforce that the per-service jitterFraction
+  // is clamped (not just the standalone helper).
+  test("constructor clamps jitterFraction > 0.25 down to 0.25", async () => {
+    const { svc } = await buildService({ jitterFraction: 0.9 });
+    expect(svc.jitterFraction).toBe(0.25);
     svc.shutdown();
   });
 

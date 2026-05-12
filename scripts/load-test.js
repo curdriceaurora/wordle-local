@@ -185,9 +185,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 function makeRequest(target, options = {}) {
   return new Promise((resolve) => {
-    const url = new URL(target);
-    const lib = url.protocol === "https:" ? https : http;
-    const agent = url.protocol === "https:" ? HTTPS_AGENT : HTTP_AGENT;
     const startedAt = performance.now();
     let settled = false;
     function finalize(result) {
@@ -195,7 +192,29 @@ function makeRequest(target, options = {}) {
       settled = true;
       resolve(result);
     }
-    const req = lib.request(
+    // Copilot on PR #157 caught: the doc comment says "never throws"
+    // but `new URL(target)` and `http(s).request(...)` construction
+    // both throw synchronously on bad input — which would reject the
+    // promise and abort the whole scenario instead of being counted
+    // in `errors`. Catching here keeps the contract.
+    let url;
+    let lib;
+    let agent;
+    try {
+      url = new URL(target);
+      lib = url.protocol === "https:" ? https : http;
+      agent = url.protocol === "https:" ? HTTPS_AGENT : HTTP_AGENT;
+    } catch (err) {
+      finalize({
+        latencyMs: performance.now() - startedAt,
+        status: 0,
+        error: err && err.message ? err.message : String(err)
+      });
+      return;
+    }
+    let req;
+    try {
+      req = lib.request(
       {
         method: options.method || "GET",
         hostname: url.hostname,
@@ -224,6 +243,17 @@ function makeRequest(target, options = {}) {
         });
       }
     );
+    } catch (err) {
+      // http.request can throw synchronously on malformed options
+      // (e.g., invalid header chars). Close the same path as a
+      // network error.
+      finalize({
+        latencyMs: performance.now() - startedAt,
+        status: 0,
+        error: err && err.message ? err.message : String(err)
+      });
+      return;
+    }
     req.on("timeout", () => {
       req.destroy(new Error("request timeout"));
     });
@@ -304,9 +334,13 @@ function buildRequestFactory(scenarioName, args) {
       }
       const playerRead = buildRequestFactory("player-read", args);
       const adminAuth = buildRequestFactory("admin-auth", args);
+      // Copilot on PR #157 caught: `0.91` yields a 10.1:1 ratio.
+      // The exact 10:1 cutoff is 10/11 (~0.9090909). Using the
+      // expression directly so the intent is grep-able.
+      const PLAYER_READ_CUTOFF = 10 / 11;
       return () => {
         const pick = Math.random();
-        if (pick < 0.91) return playerRead();
+        if (pick < PLAYER_READ_CUTOFF) return playerRead();
         return adminAuth();
       };
     }
