@@ -13,9 +13,11 @@
 // directly since it's already a factory taking pure-function deps.
 
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const fs = require("node:fs");
 const path = require("node:path");
 const createGameRouter = require("../routes/game");
+const createMetaRouter = require("../routes/meta");
 
 const KEY = "WORDLE";
 const MIN_LEN = 3;
@@ -165,8 +167,60 @@ function lookupAnswerMeaning() {
   return null;
 }
 
+// Single-entry language registry. Front-end's loadMeta() uses this list
+// to populate the dictionary dropdown; with one entry it hides the
+// dropdown row.
+const AVAILABLE_LANGUAGES = new Map([
+  ["en", { id: "en", label: "English", minLength: MIN_LEN }]
+]);
+
 const app = express();
+
+// Vercel terminates TLS / load balances before the function runs, so the
+// originating IP is in x-forwarded-for. Trust one hop so express-rate-limit
+// keys by the real client address instead of the proxy.
+app.set("trust proxy", 1);
+
+// Match server.js's default global limiter (300 req per 15 min per IP).
+// Public deploy → /api/guess and /api/random would otherwise be free to
+// hammer.
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Slow down." }
+});
+app.use(limiter);
+
 app.use(express.json({ limit: "32kb" }));
+
+// Send JSON, not Express's default HTML, when body parsing fails
+// (entity.too.large, malformed JSON). Front-end always expects JSON.
+app.use((err, req, res, next) => {
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large." });
+  }
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ error: "Invalid JSON body." });
+  }
+  return next(err);
+});
+
+app.use(
+  createMetaRouter({
+    getAvailableLanguages: () => AVAILABLE_LANGUAGES,
+    isLanguageAvailable: (lang) => AVAILABLE_LANGUAGES.has(lang),
+    MIN_LEN,
+    MAX_LEN,
+    MIN_GUESSES,
+    MAX_GUESSES,
+    DEFAULT_GUESSES,
+    DEFAULT_LANG: "en",
+    isPerfLoggingEnabled: () => false,
+    getDefinitionsMode: () => "off"
+  })
+);
 
 app.use(
   createGameRouter({

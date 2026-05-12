@@ -1069,6 +1069,13 @@ async function loadMeta() {
         ? defaultLang
         : data.languages[0]?.id || "en";
     }
+    // Hide the dictionary picker row when only one language is on offer —
+    // the user has no real choice to make. The select still carries the
+    // selected value for downstream code that reads langSelect.value.
+    const langRow = langSelect.closest("label");
+    if (langRow) {
+      langRow.classList.toggle("hidden", data.languages.length <= 1);
+    }
     updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = false;
 
