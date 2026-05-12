@@ -54,5 +54,5 @@ Use this checklist for any release that touches `/api/admin/*`, provider imports
 
 - Leaving `ADMIN_KEY` empty in production and assuming admin endpoints are still protected.
 - Treating encoded share links as secrets (they are convenience encoding only).
-- Raising `JSON_BODY_LIMIT` without reviewing upload limits and rate limits together.
+- Raising `JSON_BODY_LIMIT` without reviewing upload limits and rate limits together. See [`docs/security/throughput-budget.md`](security/throughput-budget.md) for the tabulated body × rate-limit pairs and the small-body pre-check that gates player API paths separately from the global cap.
 - Running behind proxy/VPN without `TRUST_PROXY=true`, causing poor IP attribution for rate limiting.
