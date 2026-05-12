@@ -326,6 +326,17 @@ const ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT = clampEnvBounded(
   64,
   "WEBHOOK_GLOBAL_INFLIGHT_LIMIT"
 );
+// B6 / #125: cap concurrent deliveries sitting in inter-retry backoff
+// sleep so a system-wide upstream failure doesn't pile up unbounded
+// retries. New deliveries that hit this cap are marked failed with
+// `retry budget exhausted` rather than being scheduled.
+const ENV_WEBHOOK_MAX_CONCURRENT_RETRIES = clampEnvBounded(
+  process.env.WEBHOOK_MAX_CONCURRENT_RETRIES,
+  16,
+  1,
+  256,
+  "WEBHOOK_MAX_CONCURRENT_RETRIES"
+);
 
 // Web Push notifications. Disabled at the runtime level via the
 // notifications.enabled config flag, set through `PUT
@@ -1413,6 +1424,9 @@ const webhookService = new WebhookService({
   timeoutMs: ENV_WEBHOOK_REQUEST_TIMEOUT_MS,
   maxBodyBytes: ENV_WEBHOOK_MAX_BODY_BYTES,
   globalInflight: ENV_WEBHOOK_GLOBAL_INFLIGHT_LIMIT,
+  // B6 / #125: aggregate retry-budget cap. Default 16 = 4x
+  // globalInflight, configurable via WEBHOOK_MAX_CONCURRENT_RETRIES.
+  maxConcurrentRetries: ENV_WEBHOOK_MAX_CONCURRENT_RETRIES,
   logger: console
 });
 const pushSubscriptionStore = new PushSubscriptionStore({
