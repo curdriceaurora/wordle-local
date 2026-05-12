@@ -162,6 +162,31 @@ describe("createRequestIdMiddleware", () => {
   });
 });
 
+describe("middleware ordering: 429 from upstream rate-limit still carries the ID", () => {
+  test("res.json invoked by an upstream middleware (after request-id, before route) is decorated", async () => {
+    // Simulates the express-rate-limit case: an upstream middleware
+    // short-circuits with res.status(429).json({ error }). The
+    // request-id middleware must run first so its res.json wrapper is
+    // installed before the rate-limit middleware reaches for it.
+    // Reviewers on PR #150 (Codex P2, Copilot, CodeRabbit) all flagged
+    // the original "mounted after rate-limit" ordering as a bug; this
+    // test locks the corrected ordering in.
+    const app = express();
+    app.use(createRequestIdMiddleware());
+    app.use((req, res, _next) => {
+      res.status(429).json({ error: "Too many requests. Try again later." });
+    });
+    app.get("/anything", (_req, res) => res.json({ ok: true }));
+
+    const res = await request(app).get("/anything");
+    expect(res.status).toBe(429);
+    expect(res.headers["x-request-id"]).toBeTruthy();
+    expect(isValidExternalId(res.headers["x-request-id"])).toBe(true);
+    expect(res.body.error).toMatch(/Too many requests/);
+    expect(res.body.requestId).toBe(res.headers["x-request-id"]);
+  });
+});
+
 describe("end-to-end: failure response requestId matches the emitted log line (acceptance test)", () => {
   test("logger.error inside a failing handler tags the log with the same requestId echoed to the client", async () => {
     const lines = [];

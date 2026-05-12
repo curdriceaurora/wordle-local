@@ -3002,6 +3002,16 @@ app.use(helmet({
     }
   }
 }));
+// Request-ID middleware (B3 / #122). Mounted as early as possible —
+// AFTER helmet (so CSP/HSTS headers still set first) but BEFORE the
+// global rate-limit so 429 rejections also carry `X-Request-ID` and
+// gain a `requestId` field in their error envelope. Reviewers Codex,
+// Copilot, and CodeRabbit all converged on this ordering when the
+// middleware originally sat after rate-limit. The middleware wraps
+// `res.json` exactly once per request, so even rate-limit's own
+// `res.status(429).json({ error: ... })` flows through the decorator.
+// See lib/request-id-middleware.js.
+app.use(createRequestIdMiddleware());
 app.use(
   rateLimit({
     windowMs: RATE_LIMIT_WINDOW_MS,
@@ -3025,15 +3035,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-// Request-ID middleware (B3 / #122). Mounted AFTER the in-flight
-// counter so an early reject (rate-limit, malformed request) doesn't
-// allocate an ID we never log against, but BEFORE the body parsers
-// and all downstream routes so every log line emitted during request
-// handling — including JSON-parse error responses below — shares the
-// correlation ID. The middleware also wraps res.json to decorate
-// 4xx/5xx error envelopes with `requestId` for the admin UI to
-// surface. See lib/request-id-middleware.js.
-app.use(createRequestIdMiddleware());
 // Per-route-class body-size enforcement. The global
 // `express.json({ limit: JSON_BODY_LIMIT })` accepts payloads up to
 // 12 MiB to accommodate the admin manual-provider-upload path
