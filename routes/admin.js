@@ -2233,15 +2233,80 @@ function createAdminRouter(deps) {
     let carveOutIds = [];
     let removedProfileIds = [];
     let leaderboardCleanupError = null;
+    let eligibleForCleanup = [];
     try {
       if (deleteProfilesFlag) {
-        // Atomic in classes-store: drops the class, computes which member
-        // IDs are NOT in any other non-archived class, and removes those
-        // from every (archived) class that still references them. The
-        // classes-side state is consistent before we touch the leaderboard.
-        // B4 / #123: bump slot for classes delete-with-carve-out.
-        const result = await withSlot(() => classesStore.deleteClassWithCarveOut(classId));
-        carveOutIds = result.carveOutIds;
+        // Hold one slot across the entire carve-out sequence — Codex
+        // P2 on PR #151. If we released the slot after
+        // deleteClassWithCarveOut returned and re-acquired it for the
+        // leaderboard mutate, a backup arriving in that gap would pass
+        // the busy-check and archive a half-applied delete (class gone
+        // from disk while the carved-out profiles/results are still
+        // live). Bracketing both steps under one slot makes the busy-
+        // check see this as one logical operation.
+        await withSlot(async () => {
+          // Atomic in classes-store: drops the class, computes which
+          // member IDs are NOT in any other non-archived class, and
+          // removes those from every (archived) class that still
+          // references them. The classes-side state is consistent
+          // before we touch the leaderboard.
+          const result = await classesStore.deleteClassWithCarveOut(classId);
+          carveOutIds = result.carveOutIds;
+          if (carveOutIds.length === 0) return;
+          // Class is already deleted at this point. If the leaderboard
+          // mutate fails, returning an error would mislead the client
+          // into retrying a delete that's already happened (404 on
+          // retry). Capture the failure as a partial-success signal so
+          // callers can reconcile. Track tentative removals separately
+          // so we don't expose them to the caller until persist
+          // completes — a mutator that runs but fails to persist would
+          // otherwise leak unpersisted IDs into deletedProfileIds.
+          //
+          // Cross-store race: between deleteClassWithCarveOut
+          // returning and the leaderboard mutate running, a concurrent
+          // bulk-add could have added one of these carve-out IDs to a
+          // different class. Re-read the classes-store snapshot and
+          // skip IDs that are now class members so we don't strip a
+          // profile that another class legitimately needs.
+          try {
+            const referencedNow = new Set();
+            try {
+              const classesSnapshot = await classesStore.getSnapshot();
+              for (const entry of classesSnapshot.classes) {
+                for (const memberId of entry.memberProfileIds) {
+                  referencedNow.add(memberId);
+                }
+              }
+            } catch (snapshotErr) {
+              logger.warn(
+                `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+              );
+            }
+            eligibleForCleanup = carveOutIds.filter((id) => !referencedNow.has(id));
+            const tentativeRemoved = [];
+            await leaderboardStore.mutate((draft) => {
+              for (const memberId of eligibleForCleanup) {
+                const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
+                if (idx !== -1) {
+                  draft.profiles.splice(idx, 1);
+                  if (
+                    draft.resultsByProfile
+                    && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
+                  ) {
+                    delete draft.resultsByProfile[memberId];
+                  }
+                  tentativeRemoved.push(memberId);
+                }
+              }
+            });
+            removedProfileIds = tentativeRemoved;
+          } catch (err) {
+            leaderboardCleanupError = err;
+            logger.warn(
+              `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
+            );
+          }
+        });
       } else {
         // Just delete the class without touching profiles.
         // B4 / #123: bump slot for classes delete.
@@ -2249,62 +2314,6 @@ function createAdminRouter(deps) {
       }
     } catch (err) {
       return handleClassesStoreError(res, err, "Class delete failed.");
-    }
-
-    let eligibleForCleanup = [];
-    if (deleteProfilesFlag && carveOutIds.length > 0) {
-      // Class is already deleted at this point. If the leaderboard mutate
-      // fails, returning an error would mislead the client into retrying a
-      // delete that's already happened (404 on retry). Instead capture the
-      // failure as a partial-success signal so callers can reconcile.
-      // Track tentative removals separately so we don't expose them to the
-      // caller until persist completes — a mutator that runs but fails to
-      // persist would otherwise leak unpersisted IDs into deletedProfileIds.
-      //
-      // Cross-store race: between deleteClassWithCarveOut returning and the
-      // leaderboard mutate running, a concurrent bulk-add could have added
-      // one of these carve-out IDs to a different class. Re-read the
-      // classes-store snapshot and skip IDs that are now class members so
-      // we don't strip a profile that another class legitimately needs.
-      try {
-        const referencedNow = new Set();
-        try {
-          const classesSnapshot = await classesStore.getSnapshot();
-          for (const entry of classesSnapshot.classes) {
-            for (const memberId of entry.memberProfileIds) {
-              referencedNow.add(memberId);
-            }
-          }
-        } catch (snapshotErr) {
-          logger.warn(
-            `[admin] Carve-out could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
-          );
-        }
-        eligibleForCleanup = carveOutIds.filter((id) => !referencedNow.has(id));
-        const tentativeRemoved = [];
-        // B4 / #123: bump slot for the leaderboard carve-out write.
-        await withSlot(() => leaderboardStore.mutate((draft) => {
-          for (const memberId of eligibleForCleanup) {
-            const idx = draft.profiles.findIndex((profile) => profile.id === memberId);
-            if (idx !== -1) {
-              draft.profiles.splice(idx, 1);
-              if (
-                draft.resultsByProfile
-                && Object.prototype.hasOwnProperty.call(draft.resultsByProfile, memberId)
-              ) {
-                delete draft.resultsByProfile[memberId];
-              }
-              tentativeRemoved.push(memberId);
-            }
-          }
-        }));
-        removedProfileIds = tentativeRemoved;
-      } catch (err) {
-        leaderboardCleanupError = err;
-        logger.warn(
-          `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
-        );
-      }
     }
 
     const responseBody = {
