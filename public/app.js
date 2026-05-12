@@ -129,6 +129,44 @@ let leaderboardState = {
 };
 let statsServiceUnavailable = false;
 
+// Feature-detect `inert` (Chrome/Edge 102+, Safari 15.5+, FF 112+).
+// In the rare browser/AT combo that doesn't support inert, falling back
+// to CSS `visibility:hidden` alone leaves the Close button reachable in
+// some screen-reader walkers. We explicitly tabindex="-1" each focusable
+// descendant as belt-and-braces (and stash the prior tabindex in a
+// data-* attribute so reopening can restore it verbatim).
+const SUPPORTS_INERT =
+  typeof HTMLElement !== "undefined" && "inert" in HTMLElement.prototype;
+
+function setShareModalInactive(inactive) {
+  if (!shareModal) return;
+  if (SUPPORTS_INERT) {
+    if (inactive) shareModal.setAttribute("inert", "");
+    else shareModal.removeAttribute("inert");
+    return;
+  }
+  // Fallback: save/restore tabindex on every focusable descendant so a
+  // closed modal can't trap focus or get announced by an AT walker that
+  // skips visibility:hidden. Sentinel "__none__" remembers absence.
+  const focusables = shareModal.querySelectorAll(
+    'a[href], button, input, select, textarea, [tabindex]'
+  );
+  focusables.forEach((el) => {
+    if (inactive) {
+      const cur = el.getAttribute("tabindex");
+      el.setAttribute("data-inert-tabindex", cur === null ? "__none__" : cur);
+      el.setAttribute("tabindex", "-1");
+    } else {
+      const prev = el.getAttribute("data-inert-tabindex");
+      if (prev !== null) {
+        if (prev === "__none__") el.removeAttribute("tabindex");
+        else el.setAttribute("tabindex", prev);
+        el.removeAttribute("data-inert-tabindex");
+      }
+    }
+  });
+}
+
 function isShareModalOpen() {
   return Boolean(shareModal && shareModal.classList.contains("is-open"));
 }
@@ -141,8 +179,9 @@ function openShareModal() {
   // instead of `aria-hidden=true` avoids the aria-hidden-focus
   // violation: an aria-hidden subtree mustn't contain focusable
   // descendants (the Close button is one), but `inert` properly
-  // suspends them without the contradiction.
-  shareModal.removeAttribute("inert");
+  // suspends them without the contradiction. Browsers without `inert`
+  // get the tabindex-fallback inside setShareModalInactive.
+  setShareModalInactive(false);
   if (shareModalClose) {
     shareModalClose.focus();
   }
@@ -151,10 +190,18 @@ function openShareModal() {
 function closeShareModal() {
   if (!shareModal) return;
   shareModal.classList.remove("is-open");
-  shareModal.setAttribute("inert", "");
+  setShareModalInactive(true);
   if (lastFocusedElement && typeof lastFocusedElement.focus === "function") {
     lastFocusedElement.focus();
   }
+}
+
+// Apply the fallback at module load. On inert-supporting browsers
+// this is a no-op (`inert` is already on the element in HTML). On
+// non-supporting browsers, it tab-isolates the modal's focusables so
+// Tab doesn't land on the Close button before any user opens the modal.
+if (!SUPPORTS_INERT) {
+  setShareModalInactive(true);
 }
 
 function setCreateStatus(text) {

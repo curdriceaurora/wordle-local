@@ -199,16 +199,21 @@ test("share link info modal opens and closes", async ({ page, browserName }) => 
   const infoButton = page.locator("#shareInfoBtn");
   const closeButton = page.locator("#shareModalClose");
 
-  await expect(modal).toHaveAttribute("aria-hidden", "true");
+  // Switched from `aria-hidden=true|false` to `inert` (presence/absence)
+  // in commit 023cab6 to fix the aria-hidden-focus a11y violation —
+  // an aria-hidden subtree mustn't contain focusable descendants
+  // (the Close button is one), `inert` properly suspends them without
+  // the contradiction.
+  await expect(modal).toHaveAttribute("inert", "");
   await infoButton.click();
   await expect(modal).toHaveClass(/is-open/);
-  await expect(modal).toHaveAttribute("aria-hidden", "false");
+  await expect(modal).not.toHaveAttribute("inert", /.*/);
   await expect(page.locator("#shareModalDesc")).toContainText("puzzle word");
   await expect(closeButton).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(modal).not.toHaveClass(/is-open/);
-  await expect(modal).toHaveAttribute("aria-hidden", "true");
+  await expect(modal).toHaveAttribute("inert", "");
   if (browserName !== "webkit") {
     await expect(infoButton).toBeFocused();
   }

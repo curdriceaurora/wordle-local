@@ -1,3 +1,10 @@
+// v7: invalidates stale app.js for the share-modal inert fallback.
+// Modern browsers (Chrome/Edge 102+, Safari 15.5+, FF 112+) ignore
+// the change — they already honored the `inert` attribute. Older
+// browsers + AT combos now get an explicit tabindex="-1" sweep on
+// every focusable descendant when the modal is inactive, so a Tab
+// walker can't land on the Close button while the modal is closed.
+//
 // v6: invalidates the stale app.js + styles.css cache after the
 // deploy-flag audit landed:
 //   - styles.css gained `[hidden] { display: none !important }` so
@@ -32,7 +39,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v6';
+const CACHE_NAME = 'wordle-cache-v7';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
