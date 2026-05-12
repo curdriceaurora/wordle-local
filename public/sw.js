@@ -1,3 +1,15 @@
+// v6: invalidates the stale app.js + styles.css cache after the
+// deploy-flag audit landed:
+//   - styles.css gained `[hidden] { display: none !important }` so
+//     elements like the challenges nav link and notification toggle
+//     actually disappear when their `hidden` attribute is set
+//     (the .admin-link rule had display:flex which previously won).
+//   - app.js loadMeta now propagates the dailyWord / leaderboard /
+//     challenges / notifications flags from /api/meta to a global
+//     deployCaps record, then hides the matching nav affordances
+//     and short-circuits loadChallengeList() + refreshNotificationToggle()
+//     when the flag is false. No more 404 noise on cold load.
+//
 // v5: invalidates the stale styles.css + app.js cache on existing
 // installs. Two follow-ups landed in the same revision:
 //   - .key-row gained width:100%. The row had only max-width set,
@@ -20,7 +32,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v5';
+const CACHE_NAME = 'wordle-cache-v6';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

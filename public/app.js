@@ -77,6 +77,15 @@ let dailyDate = "";
 let dailyPuzzleKey = "";
 let physicalKeyboardBound = false;
 let perfLogging = false;
+// Deploy-capability flags from /api/meta. Default to enabled so a
+// missing /api/meta (older server) doesn't accidentally hide working
+// features; the Vercel deploy turns them off explicitly.
+let deployCaps = {
+  dailyWordEnabled: true,
+  leaderboardEnabled: true,
+  challengesEnabled: true,
+  notificationsEnabled: true
+};
 let tileGrid = [];
 let keyboardKeyEls = new Map();
 let profileState = {
@@ -1058,6 +1067,17 @@ function buildShareLink(code, lang, guessesCount, options = {}) {
   return url.toString();
 }
 
+// Cached single-flight for /api/meta. Both init() (gameplay path) and
+// initChallengesUI() (challenge bootstrap) need the deploy-cap flags
+// before they make their first network call; without sharing the
+// promise the two bootstraps race and the loser fires /api/challenges
+// before deployCaps.challengesEnabled has been set to false.
+let metaReadyPromise = null;
+function ensureMetaReady() {
+  if (!metaReadyPromise) metaReadyPromise = loadMeta();
+  return metaReadyPromise;
+}
+
 async function loadMeta() {
   try {
     const response = await fetch("/api/meta");
@@ -1099,14 +1119,39 @@ async function loadMeta() {
     if (langRow) {
       langRow.classList.toggle("hidden", data.languages.length <= 1);
     }
-    // Hide top-nav links pointing at backends the deploy didn't wire up.
-    // /api/meta on the Vercel preview returns dailyWordEnabled=false, etc.
-    // We only HIDE on an explicit `false`; older servers that don't ship
-    // the flag (undefined) keep the link visible so we don't break them.
+    // Hide top-nav affordances pointing at backends the deploy didn't
+    // wire up. /api/meta on the Vercel preview returns each flag as
+    // false. We only HIDE on an explicit `false`; older servers that
+    // don't ship the flag (undefined) keep the affordance visible so
+    // we don't break them.
     if (data.dailyWordEnabled === false) {
+      deployCaps.dailyWordEnabled = false;
       document
         .querySelectorAll('a.admin-link[href="/daily"]')
         .forEach((el) => el.classList.add("hidden"));
+    }
+    if (data.challengesEnabled === false) {
+      deployCaps.challengesEnabled = false;
+      // Use both `hidden` attribute and `.hidden` class — the attribute
+      // is the semantic signal; the class is the historical sibling
+      // selector. styles.css forces `[hidden] { display: none !important }`
+      // so the attribute alone wins against `.admin-link { display: flex }`.
+      const link = document.getElementById("challengesNavLink");
+      if (link) {
+        link.hidden = true;
+        link.classList.add("hidden");
+      }
+    }
+    if (data.notificationsEnabled === false) {
+      deployCaps.notificationsEnabled = false;
+      const toggle = document.getElementById("notificationToggle");
+      if (toggle) {
+        toggle.hidden = true;
+        toggle.classList.add("hidden");
+      }
+    }
+    if (data.leaderboardEnabled === false) {
+      deployCaps.leaderboardEnabled = false;
     }
     updateLanguageConstraints(langSelect.value);
     randomBtn.disabled = false;
@@ -1525,7 +1570,7 @@ async function init() {
   if (window.i18nReady) {
     try { await window.i18nReady; } catch (_e) { /* fall back to English */ }
   }
-  await loadMeta();
+  await ensureMetaReady();
   profileState = {
     profiles: [],
     activeProfileId: null,
@@ -1732,6 +1777,13 @@ async function getNotificationRegistration() {
 
 async function refreshNotificationToggle() {
   if (!notificationToggleEl) return;
+  // /api/meta said the deploy can't subscribe (no /api/notifications/*
+  // backend) — keep the toggle hidden. Without this, the toggle shows
+  // on the Vercel preview and clicking it 404s on the VAPID key fetch.
+  if (deployCaps.notificationsEnabled === false) {
+    notificationToggleEl.hidden = true;
+    return;
+  }
   if (!pushNotificationsSupported()) {
     notificationToggleEl.hidden = true;
     setNotificationStatus(
@@ -1989,10 +2041,26 @@ function challengeFetch(input, init) {
 }
 
 async function loadChallengeList() {
+  // /api/meta said challenges aren't available in this deploy — skip
+  // the fetch entirely so we don't paint a 404 into the network panel
+  // or the console on every cold load.
+  if (deployCaps.challengesEnabled === false) {
+    if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
+    return;
+  }
   try {
     const res = await challengeFetch('/api/challenges');
     if (!res.ok) {
-      if (res.status === 404 && (await res.json().catch(() => ({}))).code === 'CHALLENGE_MODE_DISABLED') {
+      const body = await res.json().catch(() => ({}));
+      // Either the legacy CHALLENGE_MODE_DISABLED code (full server
+      // with feature flag off) or the deploy-time
+      // STATIC_DEPLOY_ENDPOINT_MISSING (Vercel preview) means "no
+      // challenges here; hide the nav link and bail."
+      if (
+        res.status === 404
+        && (body.code === 'CHALLENGE_MODE_DISABLED'
+          || body.code === 'STATIC_DEPLOY_ENDPOINT_MISSING')
+      ) {
         if (challengesNavLinkEl) challengesNavLinkEl.hidden = true;
         return;
       }
@@ -2539,6 +2607,10 @@ async function initChallengesUI() {
   if (window.i18nReady) {
     try { await window.i18nReady; } catch (_e) { /* fall through with English fallback */ }
   }
+  // Also wait for /api/meta — without this, loadChallengeList races
+  // init() and fires /api/challenges before deployCaps.challengesEnabled
+  // has been set to false on a deploy that doesn't ship that backend.
+  await ensureMetaReady();
   loadChallengeList().then(() => {
     renderChallengeList();
     if (location.pathname === '/challenges') {

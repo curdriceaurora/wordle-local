@@ -91,6 +91,16 @@ body.high-contrast {
   box-sizing: border-box;
 }
 
+/* Force the HTML `hidden` attribute to always win against component
+   styles. Without this, rules like `.admin-link { display: inline-flex }`
+   override the UA-stylesheet `[hidden] { display: none }` and elements
+   marked hidden render anyway — caught by the simulated-Vercel audit
+   on PR #160 (the challenges nav link + notification toggle stayed
+   visible despite their `hidden` attribute being true). */
+[hidden] {
+  display: none !important;
+}
+
 html {
   overflow-x: clip;
 }
