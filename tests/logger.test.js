@@ -7,6 +7,7 @@ const {
   sanitizeFieldValue,
   LEVELS
 } = require("../lib/logger");
+const { runWithRequestId } = require("../lib/request-context");
 
 function captureWriter() {
   const lines = [];
@@ -231,6 +232,83 @@ describe("log alias on createLogger", () => {
     const rec = lastRecord(out.lines);
     expect(rec.level).toBe("info");
     expect(rec.msg).toBe("via log alias");
+  });
+});
+
+describe("requestId auto-attachment via AsyncLocalStorage (B3 / #122)", () => {
+  test("requestId from ALS lands on the emitted record", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    runWithRequestId("req-abc-001", () => {
+      logger.info("schedule.commit", { storeId: "S1" });
+    });
+    const rec = lastRecord(out.lines);
+    expect(rec.requestId).toBe("req-abc-001");
+    expect(rec.storeId).toBe("S1");
+  });
+
+  test("no requestId attached when outside any request context", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    logger.info("bootstrap", { stage: "load" });
+    const rec = lastRecord(out.lines);
+    expect(rec.requestId).toBeUndefined();
+    expect(rec.stage).toBe("load");
+  });
+
+  test("caller-supplied requestId in fields overrides the ALS value", () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    runWithRequestId("ambient", () => {
+      logger.info("xfer", { requestId: "explicit-override", payload: 1 });
+    });
+    const rec = lastRecord(out.lines);
+    expect(rec.requestId).toBe("explicit-override");
+    expect(rec.payload).toBe(1);
+  });
+
+  test("logs emitted via concurrent ALS contexts keep their own requestId", async () => {
+    const out = captureWriter();
+    const logger = createLogger({ level: "info", stdout: out.stream, stderr: out.stream });
+    await Promise.all([
+      new Promise((resolve) => {
+        runWithRequestId("alpha", () => {
+          setImmediate(() => {
+            logger.info("from-alpha");
+            resolve();
+          });
+        });
+      }),
+      new Promise((resolve) => {
+        runWithRequestId("beta", () => {
+          setImmediate(() => {
+            logger.info("from-beta");
+            resolve();
+          });
+        });
+      })
+    ]);
+    const recs = out.lines.map((l) => JSON.parse(l));
+    const alpha = recs.find((r) => r.msg === "from-alpha");
+    const beta = recs.find((r) => r.msg === "from-beta");
+    expect(alpha.requestId).toBe("alpha");
+    expect(beta.requestId).toBe("beta");
+  });
+
+  test("warn/error inside a request scope also pick up requestId", () => {
+    const out = captureWriter();
+    const stderr = captureWriter();
+    const logger = createLogger({
+      level: "debug",
+      stdout: out.stream,
+      stderr: stderr.stream
+    });
+    runWithRequestId("req-trace", () => {
+      logger.warn("noisy");
+      logger.error("oops");
+    });
+    const recs = stderr.lines.map((l) => JSON.parse(l));
+    expect(recs.every((r) => r.requestId === "req-trace")).toBe(true);
   });
 });
 

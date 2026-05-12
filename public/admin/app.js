@@ -713,6 +713,31 @@ function scheduleQueueRefresh() {
   }, JOB_REFRESH_INTERVAL_MS);
 }
 
+// Pull the request ID surfaced by the server (B3 / #122). Prefer the
+// JSON envelope field — every server-side error envelope is decorated
+// by lib/request-id-middleware.js so the body almost always has it —
+// and fall back to the X-Request-ID response header for non-JSON
+// errors (e.g., body unreadable, content-type mismatch). Returns null
+// when neither is present, in which case callers omit the suffix.
+function extractRequestIdFromResponse(payload, response) {
+  if (payload && typeof payload.requestId === "string" && payload.requestId.trim()) {
+    return payload.requestId.trim();
+  }
+  const headerId = response && response.headers ? response.headers.get("X-Request-ID") : null;
+  if (typeof headerId === "string" && headerId.trim()) {
+    return headerId.trim();
+  }
+  return null;
+}
+
+// Compact, copy-friendly suffix appended to error messages shown in
+// admin UI status text. Format `(req: <id>)` lets an operator double-
+// click-select the ID without grabbing surrounding prose.
+function formatRequestIdSuffix(requestId) {
+  if (!requestId) return "";
+  return ` (req: ${requestId})`;
+}
+
 async function requestAdminJson(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.adminKey) {
@@ -729,12 +754,15 @@ async function requestAdminJson(url, options = {}) {
     return payload;
   }
 
-  const message =
+  const requestId = extractRequestIdFromResponse(payload, response);
+  const baseMessage =
     typeof payload.error === "string" && payload.error.trim()
       ? payload.error
       : `Request failed with status ${response.status}`;
+  const message = `${baseMessage}${formatRequestIdSuffix(requestId)}`;
   const error = new Error(message);
   error.status = response.status;
+  if (requestId) error.requestId = requestId;
   throw error;
 }
 
@@ -2106,10 +2134,11 @@ async function fetchAdminBlob(path, init = {}) {
   const response = await fetch(path, Object.assign({}, init, { headers }));
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let payload = null;
     try {
       const contentType = response.headers.get("content-type") || "";
       if (contentType.includes("application/json")) {
-        const payload = await response.json();
+        payload = await response.json();
         if (payload && typeof payload.error === "string" && payload.error.trim()) {
           message = payload.error.trim();
         }
@@ -2120,8 +2149,10 @@ async function fetchAdminBlob(path, init = {}) {
     } catch {
       // Body unreadable or not the shape we expected — fall back to status line.
     }
-    const err = new Error(message);
+    const requestId = extractRequestIdFromResponse(payload, response);
+    const err = new Error(`${message}${formatRequestIdSuffix(requestId)}`);
     err.status = response.status;
+    if (requestId) err.requestId = requestId;
     throw err;
   }
   return response;

@@ -51,6 +51,7 @@ const {
   FILTER_MODES: PROVIDER_FILTER_MODES
 } = require("./lib/provider-answer-filter");
 const { logger } = require("./lib/logger");
+const { createRequestIdMiddleware } = require("./lib/request-id-middleware");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -3024,6 +3025,15 @@ app.use((req, res, next) => {
   });
   next();
 });
+// Request-ID middleware (B3 / #122). Mounted AFTER the in-flight
+// counter so an early reject (rate-limit, malformed request) doesn't
+// allocate an ID we never log against, but BEFORE the body parsers
+// and all downstream routes so every log line emitted during request
+// handling — including JSON-parse error responses below — shares the
+// correlation ID. The middleware also wraps res.json to decorate
+// 4xx/5xx error envelopes with `requestId` for the admin UI to
+// surface. See lib/request-id-middleware.js.
+app.use(createRequestIdMiddleware());
 // Per-route-class body-size enforcement. The global
 // `express.json({ limit: JSON_BODY_LIMIT })` accepts payloads up to
 // 12 MiB to accommodate the admin manual-provider-upload path
