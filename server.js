@@ -6,11 +6,11 @@ const nodeCrypto = require("node:crypto");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const { NAME_LENGTH_MAX, isValidProfileName } = require("./lib/profile-name");
 const {
   LeaderboardStore,
   LeaderboardStoreError,
-  parseDailyKey,
-  PROFILE_NAME_PATTERN
+  parseDailyKey
 } = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
 const { ClassesStore, ClassesStoreError } = require("./lib/classes-store");
@@ -2407,14 +2407,18 @@ class StatsApiError extends Error {
 }
 
 function normalizeProfileNameInput(rawName) {
+  // Single-space normalization first (collapses any internal runs of
+  // whitespace into one ASCII space — matches what NAME_PATTERN
+  // actually allows). Then validate via the shared rule from
+  // lib/profile-name.js (issue #174).
   const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }
-  if (cleaned.length > 24) {
-    throw new StatsApiError(400, "Player name must be 24 characters or fewer.");
+  if (cleaned.length > NAME_LENGTH_MAX) {
+    throw new StatsApiError(400, `Player name must be ${NAME_LENGTH_MAX} characters or fewer.`);
   }
-  if (!PROFILE_NAME_PATTERN.test(cleaned)) {
+  if (!isValidProfileName(cleaned)) {
     throw new StatsApiError(
       400,
       "Player name must start with a letter and use only letters, spaces, apostrophes, or hyphens."

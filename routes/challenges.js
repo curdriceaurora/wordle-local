@@ -3,6 +3,7 @@
 const express = require("express");
 const challengeEngine = require("../lib/challenge-engine");
 const { translateForRequest } = require("../lib/server-i18n");
+const { isValidProfileName } = require("../lib/profile-name");
 const { logger } = require("../lib/logger");
 
 /**
@@ -104,7 +105,14 @@ function createChallengesRouter(deps) {
     const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
     const profileName = typeof body?.profileName === "string" ? body.profileName.trim() : "";
     if (!profileId || profileId.length > 64) return null;
-    return { profileId, profileName: profileName.length >= 1 && profileName.length <= 64 ? profileName : undefined };
+    // Shared validator (issue #174): same regex + 32-cp cap as the
+    // leaderboard side. Reject malformed names rather than silently
+    // dropping; the client pre-fills with a regex-clean default so
+    // legitimate submissions always pass.
+    return {
+      profileId,
+      profileName: isValidProfileName(profileName) ? profileName : undefined
+    };
   }
 
   // Server-authoritative timeout settle: if the session has run out of

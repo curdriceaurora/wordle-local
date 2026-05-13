@@ -2181,11 +2181,57 @@ function setChallengeProfileName(name) {
   try { localStorage.setItem(CHALLENGE_PROFILE_NAME_KEY, name); } catch (_e) { /* ignore */ }
 }
 
+// Adjective + Animal random name generator (issue #174). Both
+// profile inputs prefill from this when the value + localStorage are
+// both empty, giving the user a regex-clean starting point. Every
+// `<Adjective> <Animal>` combination passes the shared NAME_PATTERN
+// in lib/profile-name.js (ASCII letters + one internal space, well
+// under the 32-codepoint cap). Curated lists; no profanity sweep
+// needed at this size.
+const RANDOM_NAME_ADJECTIVES = Object.freeze([
+  "Brave", "Bold", "Calm", "Clever", "Curious", "Daring", "Eager",
+  "Friendly", "Gentle", "Happy", "Jolly", "Keen", "Kind", "Lively",
+  "Lucky", "Merry", "Nimble", "Plucky", "Proud", "Quiet", "Quick",
+  "Sharp", "Silly", "Smart", "Steady", "Sunny", "Swift", "Witty"
+]);
+const RANDOM_NAME_ANIMALS = Object.freeze([
+  "Badger", "Beaver", "Falcon", "Ferret", "Fox", "Hare", "Hawk",
+  "Heron", "Jaguar", "Lynx", "Magpie", "Marten", "Mongoose", "Otter",
+  "Owl", "Panda", "Penguin", "Raven", "Robin", "Seal", "Shark",
+  "Sparrow", "Stoat", "Stork", "Tiger", "Toucan", "Vixen", "Walrus"
+]);
+function pickRandomName() {
+  const adj = RANDOM_NAME_ADJECTIVES[Math.floor(Math.random() * RANDOM_NAME_ADJECTIVES.length)];
+  const animal = RANDOM_NAME_ANIMALS[Math.floor(Math.random() * RANDOM_NAME_ANIMALS.length)];
+  return `${adj} ${animal}`;
+}
+
 if (challengeProfileInputEl) {
-  challengeProfileInputEl.value = getChallengeProfile().name;
+  // Prefill: keep any stored localStorage name; otherwise drop in a
+  // regex-clean random default so the input isn't blank on first
+  // visit. User can edit or replace freely; once they type, normal
+  // input listener takes over.
+  const storedChallengeName = getChallengeProfile().name;
+  challengeProfileInputEl.value = storedChallengeName || pickRandomName();
+  if (!storedChallengeName) {
+    // Persist the default so a refresh shows the same name rather
+    // than re-rolling (avoids the surprise of "wait, I had a different
+    // name a second ago"). User can still overwrite.
+    setChallengeProfileName(challengeProfileInputEl.value);
+  }
   challengeProfileInputEl.addEventListener('input', () => {
-    setChallengeProfileName(String(challengeProfileInputEl.value || '').trim().slice(0, 64));
+    setChallengeProfileName(String(challengeProfileInputEl.value || '').trim().slice(0, 32));
   });
+}
+
+if (profileNameInputEl) {
+  // Same prefill for the play (daily) name input. The leaderboard
+  // form uses multi-profile semantics so we don't persist the default
+  // here — it's just a typing-into starting point. User can edit
+  // before clicking "Use this name" to submit.
+  if (!profileNameInputEl.value) {
+    profileNameInputEl.value = pickRandomName();
+  }
 }
 
 // Wrap fetch() so challenge endpoints — the only routes wired into
