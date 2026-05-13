@@ -1,3 +1,11 @@
+/* global pickRandomName */
+// `pickRandomName` is provided by public/js/random-name.js, loaded
+// via `<script defer>` before this file in public/index.html. The
+// ESLint global directive above tells the linter to expect it as a
+// browser global rather than a missing identifier. Same UMD pattern
+// as escapeHtml from public/js/escape-html.js (which app.js doesn't
+// currently consume, but the script-tag loading chain is identical).
+
 const createPanel = document.getElementById("createPanel");
 const playPanel = document.getElementById("playPanel");
 
@@ -384,11 +392,42 @@ function enableStatsDegradedMode() {
   renderDailyPlayerPanels();
 }
 
+// Mirror of the server-side validator in lib/profile-name.js
+// (issue #174). Must stay in sync — the server rejects identically
+// so a name accepted here will always be accepted on submit. Without
+// this mirror, the client would block server-valid names (`José`,
+// `李明`, 25-32 char) before the request leaves the page.
+//
+// Notes:
+//   - Whitespace normalization collapses only LITERAL spaces, not
+//     `\s+`, so embedded tabs/newlines survive trim() and get
+//     rejected by the regex rather than silently flattening to a
+//     valid space.
+//   - Length cap uses `Array.from(cleaned).length` (Unicode
+//     codepoints) to match the validator + JSON-schema `maxLength`
+//     (both codepoints). Bare `.length` would be UTF-16 units and
+//     too strict for astral-plane letters that the schema accepts.
+//     Codex P2 on PR #180. The HTML `maxlength="32"` UI cap is
+//     UTF-16 (tighter for astral typing — intentional UI choice).
+//   - The regex quantifier is derived from PROFILE_NAME_LENGTH_MAX
+//     so the cap is defined in one place (matches lib/profile-name.js).
+const PROFILE_NAME_LENGTH_MAX = 32;
+const PROFILE_NAME_PATTERN = new RegExp(
+  `^\\p{L}[\\p{L}\\p{M}' -]{0,${PROFILE_NAME_LENGTH_MAX - 1}}$`,
+  "u"
+);
 function normalizeProfileName(rawName) {
-  const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
+  // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
+  // combining-acute) produce identical bytes — otherwise the server's
+  // dedup comparison sees them as distinct profiles. Codex P2 on
+  // PR #180. Both forms still pass the validator (the regex accepts
+  // `\p{L}` letters and `\p{M}` combining marks separately).
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) return "";
-  if (cleaned.length > 24) return "";
-  if (!/^[A-Za-z][A-Za-z '-]*$/.test(cleaned)) return "";
+  // Codepoint cap — matches the validator + JSON schema. See block
+  // comment above for the rationale.
+  if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
+  if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
 }
 
@@ -743,7 +782,7 @@ async function createOrSelectProfile(rawName) {
   if (!normalizedName) {
     return {
       ok: false,
-      error: "Use letters, spaces, apostrophes, or hyphens (max 24 chars)."
+      error: `Use letters, spaces, apostrophes, or hyphens (max ${PROFILE_NAME_LENGTH_MAX} chars).`
     };
   }
 
@@ -2181,11 +2220,70 @@ function setChallengeProfileName(name) {
   try { localStorage.setItem(CHALLENGE_PROFILE_NAME_KEY, name); } catch (_e) { /* ignore */ }
 }
 
+// `pickRandomName` is loaded as a UMD-style global from
+// public/js/random-name.js (issue #174). It's also exported as a
+// CommonJS module so tests/profile-name.test.js can iterate every
+// adjective/animal combination through the validator. The inline
+// definition used to live here; extracted so a single source of
+// truth governs the default-name lists.
+
 if (challengeProfileInputEl) {
-  challengeProfileInputEl.value = getChallengeProfile().name;
+  // Prefill: keep any stored localStorage name IF it still passes
+  // the unified validator; otherwise drop in a regex-clean random
+  // default. The validator-on-load step matters because localStorage
+  // may carry over a legacy 25-64 char name or one with characters
+  // the old regex allowed but the new one doesn't (digits in older
+  // challenge sessions). Starting in an invalid state would 400 on
+  // submit until the user manually edits. Caught by Copilot on
+  // PR #180.
+  const storedChallengeName = getChallengeProfile().name;
+  const initialName = normalizeProfileName(storedChallengeName) || pickRandomName();
+  challengeProfileInputEl.value = initialName;
+  if (initialName !== storedChallengeName) {
+    // Persist the default (or the normalized stored value) so a
+    // refresh shows the same name rather than re-rolling, and so a
+    // legacy invalid stored value is overwritten with one that
+    // submits cleanly.
+    setChallengeProfileName(initialName);
+  }
   challengeProfileInputEl.addEventListener('input', () => {
-    setChallengeProfileName(String(challengeProfileInputEl.value || '').trim().slice(0, 64));
+    // Match the same trim + space-collapse + codepoint-clamp that
+    // normalizeProfileName() does on load, so the persisted value
+    // is byte-identical to what the next page-load will display.
+    // Without this collapse, a user typing "Mary  Jane" (double
+    // space) would see one thing in the field, get something else
+    // persisted on submit, and see a third thing (collapsed by
+    // normalizeProfileName) after refresh. Caught by Copilot.
+    //
+    // Truncate by Unicode code points (Array.from) not UTF-16 code
+    // units (.slice); the validator's `{0,31}` quantifier under /u
+    // counts code points, so `.slice` would either truncate astral
+    // letters too aggressively or cut a surrogate pair and produce
+    // an invalid string. Caught by Copilot on PR #180.
+    // NFC-normalize here too — matches normalizeProfileName() so a
+    // user typing decomposed accents (NFD `José` = `e` + combining
+    // acute) stores the same bytes the next page-load prefill will
+    // display after running through normalizeProfileName. Without
+    // NFC here, the persisted value drifts after refresh. Caught by
+    // Copilot on PR #180.
+    const cleaned = String(challengeProfileInputEl.value || '')
+      .trim()
+      .replace(/ +/g, ' ')
+      .normalize('NFC');
+    setChallengeProfileName(
+      Array.from(cleaned).slice(0, PROFILE_NAME_LENGTH_MAX).join('')
+    );
   });
+}
+
+if (profileNameInputEl) {
+  // Same prefill for the play (daily) name input. The leaderboard
+  // form uses multi-profile semantics so we don't persist the default
+  // here — it's just a typing-into starting point. User can edit
+  // before clicking "Use this name" to submit.
+  if (!profileNameInputEl.value) {
+    profileNameInputEl.value = pickRandomName();
+  }
 }
 
 // Wrap fetch() so challenge endpoints — the only routes wired into
@@ -2304,10 +2402,32 @@ function renderChallengeList() {
 
 async function startChallenge(challengeId) {
   const profile = getChallengeProfile();
-  if (!profile.name && challengeProfileInputEl?.value) {
-    setChallengeProfileName(challengeProfileInputEl.value.trim());
+  // Normalize the field through the same validator the server uses.
+  // HTML `maxlength=32` caps user typing at 32 UTF-16 code units, but
+  // a programmatic .value assignment (e.g. legacy localStorage prefill
+  // from before the cap tightened) can still load a longer/invalid
+  // value; the input handler only clamps the localStorage copy, the
+  // field's own .value stays as-loaded. Without normalize-at-submit
+  // that legacy value would POST and 400 INVALID_PROFILE_NAME until
+  // the user manually edited. Codex P2 on PR #180.
+  const rawValue = (challengeProfileInputEl?.value || '').trim();
+  const normalized = normalizeProfileName(rawValue);
+  // Validate every step of the fallback chain — the input handler
+  // persists trim+space-collapse+clamp but doesn't run the regex,
+  // so `profile.name` from localStorage may itself be invalid (e.g.
+  // user typed "Alice123" earlier, "Alice123" hit localStorage, the
+  // regex rejects it on next session). Without normalizing the
+  // fallback, we'd POST the invalid stored name and get 400
+  // INVALID_PROFILE_NAME — same blocker the submit-normalize fix
+  // was supposed to close. Caught by Codex P2 on PR #180.
+  const finalName = normalized || normalizeProfileName(profile.name) || pickRandomName();
+  // Mirror the chosen name back into the field + storage so the
+  // user sees what's actually being submitted and a refresh shows
+  // the same value (not the rejected raw input).
+  if (challengeProfileInputEl && challengeProfileInputEl.value !== finalName) {
+    challengeProfileInputEl.value = finalName;
   }
-  const finalName = challengeProfileInputEl?.value?.trim() || profile.name || 'Player';
+  setChallengeProfileName(finalName);
   try {
     const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
       method: 'POST',

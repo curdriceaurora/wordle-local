@@ -1,3 +1,11 @@
+// v9: adds /js/random-name.js to the precache so the new pickRandomName
+// global (PR #180) is available offline. app.js calls pickRandomName()
+// during startup for both the daily and challenge profile defaults;
+// without this entry, a returning offline PWA visitor would fetch a
+// fresh /app.js from cache while /js/random-name.js 404s, leaving the
+// `pickRandomName` global undefined and the daily/challenge UI broken
+// with a ReferenceError before initialization. Codex P2 on PR #180.
+//
 // v8: invalidates stale app.js so the leaderboard-disabled gate
 // (Codex finding on PR #160) and the ensureMetaReady retry-on-failure
 // fix (Copilot finding on PR #160) reach returning visitors. Without
@@ -45,12 +53,15 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v8';
+const CACHE_NAME = 'wordle-cache-v9';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/js/escape-html.js',
+  '/js/i18n.js',
+  '/js/random-name.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

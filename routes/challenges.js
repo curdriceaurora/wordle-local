@@ -3,6 +3,7 @@
 const express = require("express");
 const challengeEngine = require("../lib/challenge-engine");
 const { translateForRequest } = require("../lib/server-i18n");
+const { isValidProfileName } = require("../lib/profile-name");
 const { logger } = require("../lib/logger");
 
 /**
@@ -102,9 +103,36 @@ function createChallengesRouter(deps) {
   // we accept that same shape here.
   function resolveProfile(body) {
     const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
-    const profileName = typeof body?.profileName === "string" ? body.profileName.trim() : "";
-    if (!profileId || profileId.length > 64) return null;
-    return { profileId, profileName: profileName.length >= 1 && profileName.length <= 64 ? profileName : undefined };
+    // NFC-normalize so `José` (composed) and `José` (decomposed)
+    // store as identical bytes; without this, two visually-identical
+    // names create two profile records on the challenge side too.
+    // Codex P2 on PR #180.
+    const profileName = typeof body?.profileName === "string"
+      ? body.profileName.trim().normalize("NFC")
+      : "";
+    if (!profileId) return { error: "PROFILE_ID_REQUIRED" };
+    // Distinct sentinel for present-but-too-long profileId so the
+    // route handler can return a more specific 400 than the generic
+    // "profileId is required." (the prior code returned plain null
+    // for both missing AND too-long, so the user got a misleading
+    // error). Caught by Copilot on PR #180.
+    if (profileId.length > 64) return { error: "PROFILE_ID_TOO_LONG" };
+    // Present-but-invalid profileName → reject (caller 400s on the
+    // INVALID_PROFILE_NAME sentinel). Previously this branch silently
+    // dropped to undefined, so a user typing `Alice<script>` would
+    // play the entire challenge anonymously without realizing — the
+    // name they intended to be recorded under was thrown away after
+    // the request landed. Now the contract matches the leaderboard
+    // side (which always throws on invalid). The client prefills
+    // with a regex-clean default (#174 Adj+Animal generator) so
+    // legitimate submissions always carry a valid name through.
+    if (profileName && !isValidProfileName(profileName)) {
+      return { error: "INVALID_PROFILE_NAME" };
+    }
+    return {
+      profileId,
+      profileName: profileName || undefined
+    };
   }
 
   // Server-authoritative timeout settle: if the session has run out of
@@ -157,8 +185,17 @@ function createChallengesRouter(deps) {
   router.post("/api/challenges/:id/start", async (req, res) => {
     if (!ensureEnabled(req, res)) return;
     const profile = resolveProfile(req.body);
-    if (!profile) {
+    if (profile.error === "PROFILE_ID_REQUIRED") {
       return res.status(400).json({ error: "profileId is required.", code: "INVALID_REQUEST" });
+    }
+    if (profile.error === "PROFILE_ID_TOO_LONG") {
+      return res.status(400).json({ error: "profileId must be 1-64 characters.", code: "INVALID_REQUEST" });
+    }
+    if (profile.error === "INVALID_PROFILE_NAME") {
+      return res.status(400).json({
+        error: "profileName must be 1-32 characters starting with a letter and using only letters, spaces, apostrophes, or hyphens.",
+        code: "INVALID_PROFILE_NAME"
+      });
     }
     try {
       const now = new Date();

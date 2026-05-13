@@ -6,11 +6,11 @@ const nodeCrypto = require("node:crypto");
 const compression = require("compression");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const { NAME_LENGTH_MAX, isValidProfileName } = require("./lib/profile-name");
 const {
   LeaderboardStore,
   LeaderboardStoreError,
-  parseDailyKey,
-  PROFILE_NAME_PATTERN
+  parseDailyKey
 } = require("./lib/leaderboard-store");
 const { AdminJobsStore } = require("./lib/admin-jobs-store");
 const { ClassesStore, ClassesStoreError } = require("./lib/classes-store");
@@ -2407,14 +2407,34 @@ class StatsApiError extends Error {
 }
 
 function normalizeProfileNameInput(rawName) {
-  const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
+  // Collapse only LITERAL spaces (not all whitespace) so embedded
+  // tabs / newlines survive trim() and get rejected by NAME_PATTERN
+  // rather than silently collapsing to a valid space.
+  //
+  // Length cap uses `Array.from(cleaned).length` (Unicode codepoints)
+  // to match the validator's regex `{0,31}` codepoint quantifier and
+  // the JSON-schema `maxLength: 32` on stored data (both codepoints).
+  // Bare `.length` is UTF-16 code units — using it here would reject
+  // valid astral-plane names that the schema accepts, causing silent
+  // drops on backup-restore. Codex P2 on PR #180. The HTML
+  // `maxlength="32"` UI cap is UTF-16 (tighter for astral typing,
+  // intentional UI choice — see lib/profile-name.js comment).
+  //
+  // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
+  // combining-acute) produce identical bytes for storage and the
+  // case-insensitive dedup comparison in routes/stats.js. Without
+  // this, two visually-identical names create two profile rows.
+  // Codex/Copilot review on PR #180.
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }
-  if (cleaned.length > 24) {
-    throw new StatsApiError(400, "Player name must be 24 characters or fewer.");
+  if (Array.from(cleaned).length > NAME_LENGTH_MAX) {
+    // Codepoint cap, matching `isValidProfileName` and JSON schema.
+    // Surfaces a length-specific 400 before the generic regex error.
+    throw new StatsApiError(400, `Player name must be ${NAME_LENGTH_MAX} characters or fewer.`);
   }
-  if (!PROFILE_NAME_PATTERN.test(cleaned)) {
+  if (!isValidProfileName(cleaned)) {
     throw new StatsApiError(
       400,
       "Player name must start with a letter and use only letters, spaces, apostrophes, or hyphens."

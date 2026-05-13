@@ -327,7 +327,9 @@ describe("challenge-config-store: admin-vs-user TOCTOU contract", () => {
           result: await resultsStore.createSession({
             challengeId,
             profileId: `user-${i}`,
-            profileName: `User${i}`,
+            // Letter-suffix instead of `User${i}` — the unified
+            // profile-name validator (issue #174) rejects digits.
+            profileName: `User ${String.fromCharCode(65 + (i % 26))}`,
             puzzles: [
               { index: 0, word: "ALPHA", guesses: [], solved: false }
             ]

@@ -1081,7 +1081,15 @@ async function mergeProfileFlow(sourceId) {
   });
   const targetName = window.prompt(promptLines.join("\n"));
   if (targetName === null) return;
-  const target = others.find((profile) => profile.name === targetName.trim());
+  // NFC-normalize both sides (and case-fold) so user-typed `José`
+  // matches a stored NFD `José` (post-#174 the server writes
+  // NFC, but the merge-profiles flow can run against legacy data
+  // that hasn't been re-written yet). Without this, the merge
+  // prompt silently fails to find visually-identical targets.
+  const targetKey = targetName.trim().normalize("NFC").toLowerCase();
+  const target = others.find(
+    (profile) => profile.name.normalize("NFC").toLowerCase() === targetKey
+  );
   if (!target) {
     setStatus(profilesStatusEl, "Merge cancelled — target name did not match.", "admin-status-off");
     return;

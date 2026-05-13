@@ -156,7 +156,9 @@ describe("challenge-results-store: single-in-flight invariant under concurrency"
         store.createSession({
           challengeId: makeChallengeId(),
           profileId: `p-${i}`,
-          profileName: `Tester${i}`,
+          // Letter-suffix instead of `Tester${i}` — the unified
+          // profile-name validator (issue #174) rejects digits.
+          profileName: `Tester ${String.fromCharCode(65 + (i % 26))}`,
           puzzles: basePuzzles()
         }),
       invariants: [

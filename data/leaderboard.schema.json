@@ -30,8 +30,8 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 24,
-            "pattern": "^[A-Za-z][A-Za-z '\\-]*$"
+            "maxLength": 32,
+            "pattern": "^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$"
           },
           "createdAt": {
             "type": "string",
