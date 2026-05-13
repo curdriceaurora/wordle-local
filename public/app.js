@@ -1,3 +1,11 @@
+/* global pickRandomName */
+// `pickRandomName` is provided by public/js/random-name.js, loaded
+// via `<script defer>` before this file in public/index.html. The
+// ESLint global directive above tells the linter to expect it as a
+// browser global rather than a missing identifier. Same UMD pattern
+// as escapeHtml from public/js/escape-html.js (which app.js doesn't
+// currently consume, but the script-tag loading chain is identical).
+
 const createPanel = document.getElementById("createPanel");
 const playPanel = document.getElementById("playPanel");
 
