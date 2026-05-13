@@ -2396,7 +2396,15 @@ async function startChallenge(challengeId) {
   // P2 on PR #180.
   const rawValue = (challengeProfileInputEl?.value || '').trim();
   const normalized = normalizeProfileName(rawValue);
-  const finalName = normalized || profile.name || pickRandomName();
+  // Validate every step of the fallback chain — the input handler
+  // persists trim+space-collapse+clamp but doesn't run the regex,
+  // so `profile.name` from localStorage may itself be invalid (e.g.
+  // user typed "Alice123" earlier, "Alice123" hit localStorage, the
+  // regex rejects it on next session). Without normalizing the
+  // fallback, we'd POST the invalid stored name and get 400
+  // INVALID_PROFILE_NAME — same blocker the submit-normalize fix
+  // was supposed to close. Caught by Codex P2 on PR #180.
+  const finalName = normalized || normalizeProfileName(profile.name) || pickRandomName();
   // Mirror the chosen name back into the field + storage so the
   // user sees what's actually being submitted and a refresh shows
   // the same value (not the rejected raw input).
