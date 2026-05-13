@@ -703,6 +703,26 @@ body.high-contrast .tile.absent {
   box-shadow: inset 0 0 0 2px var(--tile-contrast-shadow);
 }
 
+/* Skeleton state (issue #191). Shown briefly while /api/puzzle is in
+   flight — replaces the "Loading puzzle…" bare-text gap with a soft
+   pulsing 6×5 grid. Real `buildBoard()` clears the skeleton when
+   actual cols/maxGuesses arrive. */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.65; }
+}
+
+.tile.is-skeleton {
+  background: var(--tile-bg);
+  border-color: var(--tile-border);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tile.is-skeleton {
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+  }
+}
+
 .message {
   min-height: 1.5rem;
   color: var(--accent);

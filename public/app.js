@@ -895,6 +895,28 @@ function buildBoard() {
   });
 }
 
+/* Default 6×5 skeleton mounted between `showPlay()` and the
+   `/api/puzzle` response (typically <100ms). Replaces the empty-area
+   gap below "Loading puzzle…" with a softly pulsing grid. `buildBoard()`
+   in `resetGame()` clears this when real dimensions arrive. The
+   skeleton dims are the most-common Wordle shape; if the real puzzle
+   is 3- or 8-letter the grid resizes briefly when data lands —
+   acceptable for a sub-100ms transition. Issue #191. */
+function mountSkeletonBoard() {
+  if (!boardEl) return;
+  const refs = buildBoardGrid(boardEl, {
+    rows: 6,
+    cols: 5,
+    captureRefs: true
+  });
+  if (!refs) return;
+  for (const row of refs) {
+    for (const tile of row) {
+      if (tile) tile.classList.add("is-skeleton");
+    }
+  }
+}
+
 // Shared keyboard build helpers (issue #163, partial). Both the
 // play (#keyboard) and the challenge (#challengeKeyboard) on-screen
 // keyboards used to have parallel build code with copy-pasted
@@ -1658,6 +1680,7 @@ function applyTheme(preference, options = {}) {
 async function initPlay(code, lang, guessesCount, options = {}) {
   const initTimer = startPerfMeasure("ui.initPlay");
   showPlay();
+  mountSkeletonBoard();
   if (!physicalKeyboardBound) {
     document.addEventListener("keydown", handlePhysicalKey);
     physicalKeyboardBound = true;
