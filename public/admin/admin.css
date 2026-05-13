@@ -281,3 +281,35 @@
     gap: 0.4rem;
   }
 }
+
+/* ── classroom-report.html ─────────────────────────────────────────── */
+.report-page {
+  margin: 1.5rem;
+  font-family: system-ui, sans-serif;
+}
+.report-page .report-meta {
+  margin-bottom: 1rem;
+}
+.report-page table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.report-page th,
+.report-page td {
+  border: 1px solid #888;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.report-page thead {
+  background: #eee;
+}
+.report-page .status-won { color: #1a7f37; }
+.report-page .status-lost { color: #b32a2a; }
+.report-page .status-not-started { color: #666; }
+.report-page .key-input {
+  margin-bottom: 1rem;
+}
+@media print {
+  .report-page .key-input { display: none; }
+  .report-page button { display: none; }
+}
