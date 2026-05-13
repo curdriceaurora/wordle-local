@@ -1475,9 +1475,25 @@ body.high-contrast .key.absent {
 /* ─── Container queries: board + keyboard sizing (issue #189) ──────────
    Board and keyboard size against the `.panel` they live in, not the
    viewport. `.panel` is the container root (declared above with
-   `container-type: inline-size; container-name: play-panel`). Thresholds
-   approximate the legacy viewport breakpoints because panel width
-   tracks viewport via `width: min(56rem, 95vw)` on small screens.
+   `container-type: inline-size; container-name: play-panel`).
+
+   `container-type: inline-size` measures the **content box** inline
+   width of `.panel` — so thresholds reflect panel-width-minus-padding,
+   NOT raw viewport width. Each container threshold below = the content
+   width when its legacy `@media` breakpoint fires (panel width × 1 -
+   2 × panel padding at that viewport). Codex P2 review on PR #198.
+
+   | Legacy `@media` | content-box at that viewport | Container threshold |
+   |-----------------|------------------------------|---------------------|
+   | (max-width: 420px) | 420 − 2×8  = 404           | (max-width: 405px)  |
+   | (max-width: 375px) | 368 − 2×18 = 330           | (max-width: 332px)  |
+   | (max-width: 360px) | 353 − 2×15 = 322           | (max-width: 324px)  |
+   | (max-width: 320px) | 314 − 2×12 = 290           | (max-width: 292px)  |
+
+   Board widths inside container queries use `min(100%, …)` rather
+   than `min(98vw, …)` — `vw` would re-couple to viewport and weaken
+   the container contract in narrow-parent / split-pane scenarios.
+   CodeRabbit on PR #198.
 
    Page chrome (topbar, footer, h1/h2, panel padding, profile-panel,
    leaderboard-panel, player-stats columns) stays on viewport `@media`
@@ -1488,7 +1504,7 @@ body.high-contrast .key.absent {
    that breakpoint is about fitting a play surface into limited
    vertical space, not panel inline-size. */
 
-@container play-panel (max-width: 400px) {
+@container play-panel (max-width: 405px) {
   .keyboard {
     width: min(40rem, 100%);
     margin: 0 auto;
@@ -1513,7 +1529,7 @@ body.high-contrast .key.absent {
   }
 }
 
-@container play-panel (max-width: 360px) {
+@container play-panel (max-width: 332px) {
   .tile {
     font-size: var(--fs-xl);
     max-width: 3.5rem;
@@ -1521,7 +1537,7 @@ body.high-contrast .key.absent {
 
   .board {
     gap: var(--space-sm);
-    width: min(98vw, calc(var(--cols) * 3.8rem));
+    width: min(100%, calc(var(--cols) * 3.8rem));
   }
 
   .row {
@@ -1551,7 +1567,7 @@ body.high-contrast .key.absent {
   }
 }
 
-@container play-panel (max-width: 345px) {
+@container play-panel (max-width: 324px) {
   .tile {
     font-size: 1.45rem;
     max-width: 3.2rem;
@@ -1559,7 +1575,7 @@ body.high-contrast .key.absent {
 
   .board {
     gap: 0.45rem;
-    width: min(98vw, calc(var(--cols) * 3.5rem));
+    width: min(100%, calc(var(--cols) * 3.5rem));
   }
 
   .row {
@@ -1586,7 +1602,7 @@ body.high-contrast .key.absent {
   }
 }
 
-@container play-panel (max-width: 305px) {
+@container play-panel (max-width: 292px) {
   .tile {
     font-size: 1.4rem;
     max-width: 2.8rem;
@@ -1595,7 +1611,7 @@ body.high-contrast .key.absent {
 
   .board {
     gap: 0.35rem;
-    width: min(98vw, calc(var(--cols) * 3rem));
+    width: min(100%, calc(var(--cols) * 3rem));
   }
 
   .row {
