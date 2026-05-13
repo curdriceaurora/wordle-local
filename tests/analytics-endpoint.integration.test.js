@@ -7,6 +7,42 @@ const request = require("supertest");
 
 const ORIGINAL_ENV = { ...process.env };
 
+// Pin Date.now() / new Date() to a fixed moment INSIDE the fixtures'
+// rolling-window range. Without this, the seeded result dates
+// (`2026-05-06` etc.) fall outside `Date.now() - 7d` once the wall
+// clock rolls forward, and assertions like `gamesInWindow: 2` flip
+// to `0`. Fixes #169. Only `Date` is faked — every other timer
+// surface (setTimeout, setImmediate, hrtime, performance, …) stays
+// real so supertest's HTTP plumbing + the perf test's
+// `process.hrtime.bigint()` measurements keep working.
+const PINNED_NOW = new Date("2026-05-08T12:00:00.000Z");
+
+beforeAll(() => {
+  jest.useFakeTimers({
+    doNotFake: [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "setImmediate",
+      "clearImmediate",
+      "queueMicrotask",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "requestIdleCallback",
+      "cancelIdleCallback",
+      "hrtime",
+      "performance",
+      "nextTick"
+    ],
+    now: PINNED_NOW
+  });
+});
+
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 function resetEnv() {
   Object.keys(process.env).forEach((key) => {
     if (!(key in ORIGINAL_ENV)) {
@@ -275,6 +311,14 @@ describe("GET /api/admin/analytics", () => {
     await request(app).get("/api/admin/analytics?window=30d");
     const samples = [];
     for (let i = 0; i < 50; i += 1) {
+      // Advance the (faked) `Date.now()` past the 1ms cache TTL so the
+      // next request misses. Without this, the suite-level pinned
+      // clock would never advance and the cache would stay HIT for
+      // every iteration (originally, the cache expired naturally
+      // because each supertest call took >1ms of wall clock; the
+      // time-pinning fix for #169 froze that). 100ms keeps a generous
+      // margin over the 1ms TTL.
+      jest.setSystemTime(new Date(Date.now() + 100));
       const start = process.hrtime.bigint();
       const res = await request(app).get("/api/admin/analytics?window=30d");
       const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
