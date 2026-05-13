@@ -2386,10 +2386,24 @@ function renderChallengeList() {
 
 async function startChallenge(challengeId) {
   const profile = getChallengeProfile();
-  if (!profile.name && challengeProfileInputEl?.value) {
-    setChallengeProfileName(challengeProfileInputEl.value.trim());
+  // Normalize the field through the same validator the server uses.
+  // The input handler only clamps the localStorage copy; the field's
+  // own .value stays as the user typed it (clamping on every keystroke
+  // jumps the caret). Without this normalize-at-submit, a user typing
+  // 33+ codepoints (allowed up to maxlength=64 as a worst-case astral
+  // soft-cap) would POST the raw over-limit value and get a 400
+  // INVALID_PROFILE_NAME until they manually edited. Caught by Codex
+  // P2 on PR #180.
+  const rawValue = (challengeProfileInputEl?.value || '').trim();
+  const normalized = normalizeProfileName(rawValue);
+  const finalName = normalized || profile.name || pickRandomName();
+  // Mirror the chosen name back into the field + storage so the
+  // user sees what's actually being submitted and a refresh shows
+  // the same value (not the rejected raw input).
+  if (challengeProfileInputEl && challengeProfileInputEl.value !== finalName) {
+    challengeProfileInputEl.value = finalName;
   }
-  const finalName = challengeProfileInputEl?.value?.trim() || profile.name || 'Player';
+  setChallengeProfileName(finalName);
   try {
     const res = await challengeFetch(`/api/challenges/${encodeURIComponent(challengeId)}/start`, {
       method: 'POST',
