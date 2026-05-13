@@ -123,12 +123,18 @@ const classId = stringFromPool([...HEX_LOWER, "-"], 12, 32).map(
   (body) => `class-${body}`
 );
 
-// Leaderboard profile name. Schema: `^[A-Za-z][A-Za-z '\\-]*$`,
-// max 24 chars. Start with a letter then letters/spaces/hyphens/quotes.
-// Codex P2 PR #133 round 3 caught that names ending in a space pass
-// the schema but `normalizeProfile` trims and rejects when
-// `raw !== trimmed`. We anchor the LAST char to be non-space too —
-// the middle can have spaces/hyphens/quotes freely.
+// Leaderboard profile name. Schema (post-#174):
+// `^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$`, max 64 UTF-16 units (≤ 32
+// codepoints). Start with a Unicode letter then letters / combining
+// marks / spaces / hyphens / apostrophes. We restrict the arbitrary
+// to ASCII letters here (subset of valid inputs) for generation
+// stability and shrinking; the Unicode acceptance is pinned by the
+// dedicated lib/profile-name validator tests in
+// tests/profile-name.test.js. Codex P2 PR #133 round 3 caught that
+// names ending in a space pass the schema but `normalizeProfile`
+// trims and rejects when `raw !== trimmed`. We anchor the LAST char
+// to be non-space too — the middle can have spaces/hyphens/quotes
+// freely.
 const NAME_LETTERS = [
   ..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 ];
@@ -136,7 +142,7 @@ const NAME_MIDDLE_CHARS = [...NAME_LETTERS, " ", "'", "-"];
 const leaderboardProfileName = fc
   .tuple(
     fc.constantFrom(...NAME_LETTERS),
-    stringFromPool(NAME_MIDDLE_CHARS, 0, 22),
+    stringFromPool(NAME_MIDDLE_CHARS, 0, 30),
     fc.constantFrom(...NAME_LETTERS)
   )
   .map(([first, middle, last]) => `${first}${middle}${last}`);
@@ -516,7 +522,8 @@ const classesState = fc
 // Per data/leaderboard.schema.json (Copilot PR #133 caught the prior
 // generator's missing `updatedAt` and over-permissive `name`):
 //   - profiles entries require id, name, createdAt, updatedAt
-//   - name pattern `^[A-Za-z][A-Za-z '\\-]*$`, max 24 chars
+//   - name pattern `^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$`,
+//     max 64 UTF-16 units (≤ 32 codepoints, PR #180 / issue #174)
 //   - resultsByProfile is a map of profileId -> { dateKey -> result }
 //
 // Each per-date result entry must satisfy the schema's allOf
