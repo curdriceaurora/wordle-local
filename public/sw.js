@@ -51,9 +51,15 @@
 // challengesEnabled flags from /api/meta and hides the matching header
 // nav links when each is false.
 //
+// v11: invalidates stale app.js + styles.css for the playful tile
+// reactions (#182) + keyboard `:active` flash (#185) — adds five
+// keyframes + JS triggers + a CSS scale on `.key:active`/.is-pressed.
+// SW is cache-first for non-API, so without the bump returning users
+// keep getting the pre-motion app.js/styles.css.
+//
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v9';
+const CACHE_NAME = 'wordle-cache-v11';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

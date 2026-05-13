@@ -1087,13 +1087,19 @@ function triggerRowReveal(row, onSolveComplete) {
   if (onSolveComplete && lastTile) {
     /* Filter by animationName — without this, an unrelated animation
        on `lastTile` (e.g. a stale pop) could fire the chain before
-       the reveal completes. Codex P2 on PR #196. */
+       the reveal completes. Codex P2 on PR #196.
+       Listen for `animationcancel` too so the listener doesn't leak
+       if the reveal is interrupted (e.g. a fast re-init wipes the
+       board); matches `triggerOneShotAnim`'s dual-event cleanup
+       pattern. CodeRabbit nit on PR #196. */
     const chain = (event) => {
       if (event.animationName !== "tile-reveal") return;
       lastTile.removeEventListener("animationend", chain);
-      onSolveComplete();
+      lastTile.removeEventListener("animationcancel", chain);
+      if (event.type === "animationend") onSolveComplete();
     };
     lastTile.addEventListener("animationend", chain);
+    lastTile.addEventListener("animationcancel", chain);
   }
 }
 
