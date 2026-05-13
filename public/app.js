@@ -1674,28 +1674,45 @@ if (leaderboardRangeEl) {
 }
 
 let copyFlashTimeout = null;
+let copyFlashOriginalI18nKey = null;
 
-/* Swap the share-copy button to its "Copied ✓" state for 1.2s. Restoration
-   uses the button's `data-i18n` key, not a stashed textContent literal, so
-   a locale switch during the flash window still restores to the right
-   label. Re-entrant: a second click within 1.2s extends the flash, doesn't
-   stack restorations. */
+/* Swap the share-copy button to its "Copied ✓" state for 1.2s.
+
+   We remove `data-i18n` during the flash so a locale switch inside the
+   1.2s window won't re-translate the button back to "Copy link" mid-
+   flash via i18n's `updateDOM()` (it skips elements without
+   `data-i18n`). Restoration re-adds the attribute and re-translates,
+   so the post-flash label honors whatever locale is now active.
+
+   Re-entrant: a second flashCopied() within 1.2s extends the timer
+   without stacking restorations or losing the original key. */
 function flashCopied() {
   const i18n = window.i18n;
+  if (copyFlashOriginalI18nKey === null) {
+    copyFlashOriginalI18nKey = shareCopyBtn.getAttribute("data-i18n");
+  }
+  shareCopyBtn.removeAttribute("data-i18n");
   shareCopyBtn.textContent = i18n ? i18n.t("play.copied") : "Copied";
   shareCopyBtn.classList.add("is-copied");
   clearTimeout(copyFlashTimeout);
-  copyFlashTimeout = setTimeout(() => {
+  copyFlashTimeout = setTimeout(restoreCopyLabel, 1200);
+}
+
+/* Restore the copy button to its idle state. Idempotent — safe to call
+   even when no flash is in flight (used by both the timeout callback
+   and the failure branch to cancel an in-flight flash). */
+function restoreCopyLabel() {
+  clearTimeout(copyFlashTimeout);
+  copyFlashTimeout = null;
+  if (copyFlashOriginalI18nKey !== null) {
+    shareCopyBtn.setAttribute("data-i18n", copyFlashOriginalI18nKey);
     const i18nNow = window.i18n;
-    const originalKey = shareCopyBtn.getAttribute("data-i18n");
-    if (i18nNow && originalKey) {
-      shareCopyBtn.textContent = i18nNow.t(originalKey);
-    } else {
-      shareCopyBtn.textContent = "Copy link";
-    }
-    shareCopyBtn.classList.remove("is-copied");
-    copyFlashTimeout = null;
-  }, 1200);
+    shareCopyBtn.textContent = i18nNow
+      ? i18nNow.t(copyFlashOriginalI18nKey)
+      : "Copy link";
+    copyFlashOriginalI18nKey = null;
+  }
+  shareCopyBtn.classList.remove("is-copied");
 }
 
 shareCopyBtn.addEventListener("click", async () => {
@@ -1708,12 +1725,18 @@ shareCopyBtn.addEventListener("click", async () => {
     shareLinkInput.select();
     try { ok = document.execCommand("copy"); } catch (_e) { ok = false; }
   }
+  const i18n = window.i18n;
   if (ok) {
+    /* Clear any stale failure text in `#message` so the success-only
+       UI doesn't ship side-by-side with an old "Couldn't copy" line. */
+    setMessage("");
     flashCopied();
-    const i18n = window.i18n;
     setSrStatus(i18n ? i18n.t("play.copiedAnnouncement") : "Share link copied to clipboard");
   } else {
-    const i18n = window.i18n;
+    /* Cancel any in-flight success flash — otherwise the green "Copied ✓"
+       button and the red failure message would show simultaneously and
+       contradict each other. */
+    restoreCopyLabel();
     setMessage(i18n ? i18n.t("play.copyFailed") : "Couldn't copy — long-press the link to select");
   }
 });
