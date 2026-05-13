@@ -51,6 +51,11 @@
 // challengesEnabled flags from /api/meta and hides the matching header
 // nav links when each is false.
 //
+// v12: invalidates stale app.js + styles.css for the skeleton play
+// board (#191). Adds `mountSkeletonBoard` + a `tile-skeleton` keyframe;
+// without the bump returning PWA users would see the pre-skeleton
+// HTML/CSS that doesn't reference the new assets.
+//
 // v11: invalidates stale app.js + styles.css for the playful tile
 // reactions (#182) + keyboard `:active` flash (#185) — adds five
 // keyframes + JS triggers + a CSS scale on `.key:active`/.is-pressed.
@@ -59,7 +64,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v11';
+const CACHE_NAME = 'wordle-cache-v12';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

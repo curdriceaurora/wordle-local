@@ -909,12 +909,16 @@ function buildBoard() {
    - `aria-busy` marks the board as in-flight so AT doesn't announce
      30 bogus "Empty" cells during the skeleton window. Copilot on PR
      #197. */
-function mountSkeletonBoard(expectedRows) {
+function mountSkeletonBoard(expectedRows, expectedCols) {
   if (!boardEl) return;
   const rows = Math.max(3, Math.min(10, Number(expectedRows) || defaultGuesses));
+  /* The puzzle code is one ciphertext character per plaintext letter,
+     so `code.length` is also the column count. Falls back to 5 when
+     the caller doesn't pass it. CodeRabbit on PR #197. */
+  const cols = Math.max(3, Math.min(12, Number(expectedCols) || 5));
   const refs = buildBoardGrid(boardEl, {
     rows,
-    cols: 5,
+    cols,
     captureRefs: true
   });
   boardEl.setAttribute("aria-busy", "true");
@@ -1701,7 +1705,11 @@ async function initPlay(code, lang, guessesCount, options = {}) {
      `resetGame()` rebuilds. The existing grid stays visible until
      real data arrives. Copilot on PR #197. */
   if (boardEl && !boardEl.firstChild) {
-    mountSkeletonBoard(guessesCount);
+    /* `code.length` matches the eventual column count (puzzle codes
+       are one ciphertext character per plaintext letter), so the
+       skeleton lands on the right shape and the real board doesn't
+       reflow on data arrival. CodeRabbit on PR #197. */
+    mountSkeletonBoard(guessesCount, code ? code.length : null);
   }
   if (!physicalKeyboardBound) {
     document.addEventListener("keydown", handlePhysicalKey);
