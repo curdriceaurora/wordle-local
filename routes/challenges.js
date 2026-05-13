@@ -105,17 +105,21 @@ function createChallengesRouter(deps) {
     const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
     const profileName = typeof body?.profileName === "string" ? body.profileName.trim() : "";
     if (!profileId || profileId.length > 64) return null;
-    // Shared validator (issue #174): same regex + 32-cp cap as the
-    // leaderboard side. A profileName that doesn't pass is silently
-    // dropped to `undefined` — the session is recorded against the
-    // profileId, the leaderboard row just has no display name on it.
-    // Hard-rejecting (400) would block the gameplay path entirely on
-    // a name typo; this preserves the result while losing only the
-    // label. The client pre-fills with a regex-clean default so
+    // Present-but-invalid profileName → reject (caller 400s on the
+    // INVALID_PROFILE_NAME sentinel). Previously this branch silently
+    // dropped to undefined, so a user typing `Alice<script>` would
+    // play the entire challenge anonymously without realizing — the
+    // name they intended to be recorded under was thrown away after
+    // the request landed. Now the contract matches the leaderboard
+    // side (which always throws on invalid). The client prefills
+    // with a regex-clean default (#174 Adj+Animal generator) so
     // legitimate submissions always carry a valid name through.
+    if (profileName && !isValidProfileName(profileName)) {
+      return { error: "INVALID_PROFILE_NAME" };
+    }
     return {
       profileId,
-      profileName: isValidProfileName(profileName) ? profileName : undefined
+      profileName: profileName || undefined
     };
   }
 
@@ -171,6 +175,12 @@ function createChallengesRouter(deps) {
     const profile = resolveProfile(req.body);
     if (!profile) {
       return res.status(400).json({ error: "profileId is required.", code: "INVALID_REQUEST" });
+    }
+    if (profile.error === "INVALID_PROFILE_NAME") {
+      return res.status(400).json({
+        error: "profileName must be a valid profile name (1-32 codepoints, letters + spaces/apostrophes/hyphens).",
+        code: "INVALID_PROFILE_NAME"
+      });
     }
     try {
       const now = new Date();
