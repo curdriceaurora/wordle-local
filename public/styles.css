@@ -8,7 +8,12 @@
   font-style: normal;
   font-weight: 300 700;
   font-display: swap;
-  src: url("/fonts/space-grotesk-variable-latin.woff2") format("woff2-variations");
+  /* `format("woff2")` (not "woff2-variations") — Safari 14-15 and some
+     older browsers skip the source entirely when given the
+     "woff2-variations" identifier even though they support variable
+     woff2 files. Plain "woff2" is accepted everywhere and variable
+     fonts work natively. Copilot on PR #195. */
+  src: url("/fonts/space-grotesk-variable-latin.woff2") format("woff2");
 }
 
 @font-face {

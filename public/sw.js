@@ -51,6 +51,11 @@
 // challengesEnabled flags from /api/meta and hides the matching header
 // nav links when each is false.
 //
+// v13: invalidates stale index.html + styles.css for the Space Grotesk
+// + Bungee typography swap (#187, #188). New `<link rel="preload">` font
+// entries in index.html and new `@font-face` + tile font-family in
+// styles.css won't reach returning PWA users until the cache bumps.
+//
 // v12: invalidates stale app.js + styles.css for the skeleton play
 // board (#191). Adds `mountSkeletonBoard` + a `tile-skeleton` keyframe;
 // without the bump returning PWA users would see the pre-skeleton
@@ -64,7 +69,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v12';
+const CACHE_NAME = 'wordle-cache-v13';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
