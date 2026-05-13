@@ -571,13 +571,14 @@ function setProfileStatus(text) {
 
 // Shared leaderboard-table partial (issue #175). Both the play
 // (daily) leaderboard and the challenge leaderboard render the same
-// `<table>.<tbody>` shape with different column sets — 7 cols for
-// play (rank/name/wins/played/win%/best/streak) and 5 cols for
-// challenge (rank/name/score/solved/time). The shared helper builds
-// rows from a `cols` config so the row-construction code lives in
-// one place; each caller passes its own column accessors + empty-
-// state copy. Caller is responsible for showing/hiding the panel
-// chrome around the table.
+// <tbody> shape (one <tr> per row, one <td> per column) with
+// different column sets — 7 cols for play (rank/name/wins/played/
+// win%/best/streak) and 5 cols for challenge (rank/name/score/
+// solved/time). The shared helper builds rows from a `cols` config
+// so the row-construction code lives in one place; each caller
+// passes its own column accessors + empty-state copy. Caller is
+// responsible for the surrounding <table><thead> chrome and for
+// showing/hiding the panel around it.
 function renderLeaderboardTable(tbodyEl, options) {
   const { rows, cols, emptyText, emptyClass } = options;
   tbodyEl.innerHTML = "";
