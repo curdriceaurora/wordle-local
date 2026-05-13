@@ -33,7 +33,10 @@
   --modal-border: rgba(148, 163, 184, 0.2);
   --modal-shadow: rgba(2, 6, 23, 0.6);
   --danger: #ef4444;
-  --text-on-danger: #ffffff;
+  /* Dark slate on the red-500 fill so the .btn-danger:hover label
+     hits 5.5:1 contrast (WCAG AA: 4.5:1). White-on-red-500 only
+     lands at ~3.8:1 — caught by CodeRabbit + Codex review on PR #168. */
+  --text-on-danger: #0f172a;
   --focus-outline: var(--accent);
   --touch-target-min: 44.25px;
 
@@ -118,10 +121,19 @@ body.high-contrast {
   --absent: #475569;
   --present: #f97316;
   --correct: #22d3ee;
-  /* High-contrast danger: bright red distinct from --present (orange)
-     and --absent (slate). Keeps AA contrast on the dark hi-contrast bg. */
+  /* High-contrast + dark theme: bright red distinct from --present
+     (orange) and --absent (slate), readable on the dark hi-contrast bg. */
   --danger: #ff5d5d;
   --text-on-danger: #0f172a;
+}
+
+html.theme-light body.high-contrast {
+  /* High-contrast + light theme: the page bg stays light, so the
+     bright red #ff5d5d would only hit ~2.9:1 against white. Re-use the
+     darker red-700 from light theme (.b91c1c on white = 6.4:1).
+     Codex P2 review on PR #168. */
+  --danger: #b91c1c;
+  --text-on-danger: #ffffff;
 }
 
 * {
