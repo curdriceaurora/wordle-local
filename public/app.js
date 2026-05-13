@@ -403,12 +403,12 @@ function enableStatsDegradedMode() {
 //     `\s+`, so embedded tabs/newlines survive trim() and get
 //     rejected by the regex rather than silently flattening to a
 //     valid space.
-//   - Length cap uses `cleaned.length` (UTF-16 code units) to match
-//     HTML `maxlength="32"`, `data/leaderboard.schema.json`
-//     `maxLength: 32`, and the shared validator's internal check.
-//     The /u regex's `{0,31}` codepoint quantifier is the looser
-//     character-class anchor; UTF-16 length is the binding
-//     constraint for astral-plane characters.
+//   - Length cap uses `Array.from(cleaned).length` (Unicode
+//     codepoints) to match the validator + JSON-schema `maxLength`
+//     (both codepoints). Bare `.length` would be UTF-16 units and
+//     too strict for astral-plane letters that the schema accepts.
+//     Codex P2 on PR #180. The HTML `maxlength="32"` UI cap is
+//     UTF-16 (tighter for astral typing — intentional UI choice).
 //   - The regex quantifier is derived from PROFILE_NAME_LENGTH_MAX
 //     so the cap is defined in one place (matches lib/profile-name.js).
 const PROFILE_NAME_LENGTH_MAX = 32;
@@ -424,9 +424,9 @@ function normalizeProfileName(rawName) {
   // `\p{L}` letters and `\p{M}` combining marks separately).
   const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) return "";
-  // UTF-16 code units, matching HTML maxlength=32 and the validator
-  // in lib/profile-name.js (which uses the same cap).
-  if (cleaned.length > PROFILE_NAME_LENGTH_MAX) return "";
+  // Codepoint cap — matches the validator + JSON schema. See block
+  // comment above for the rationale.
+  if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
   if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
 }

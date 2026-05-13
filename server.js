@@ -2411,12 +2411,14 @@ function normalizeProfileNameInput(rawName) {
   // tabs / newlines survive trim() and get rejected by NAME_PATTERN
   // rather than silently collapsing to a valid space.
   //
-  // Length cap uses `cleaned.length` (UTF-16 code units) to match
-  // HTML `maxlength="32"`, `data/leaderboard.schema.json`
-  // `maxLength: 32`, and the shared validator's internal check.
-  // NAME_PATTERN's `{0,31}` codepoint quantifier (under /u) adds a
-  // character-class anchor but is the looser of the two — UTF-16
-  // length is the binding constraint for astral-plane characters.
+  // Length cap uses `Array.from(cleaned).length` (Unicode codepoints)
+  // to match the validator's regex `{0,31}` codepoint quantifier and
+  // the JSON-schema `maxLength: 32` on stored data (both codepoints).
+  // Bare `.length` is UTF-16 code units — using it here would reject
+  // valid astral-plane names that the schema accepts, causing silent
+  // drops on backup-restore. Codex P2 on PR #180. The HTML
+  // `maxlength="32"` UI cap is UTF-16 (tighter for astral typing,
+  // intentional UI choice — see lib/profile-name.js comment).
   //
   // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
   // combining-acute) produce identical bytes for storage and the
@@ -2427,13 +2429,9 @@ function normalizeProfileNameInput(rawName) {
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }
-  if (cleaned.length > NAME_LENGTH_MAX) {
-    // UTF-16 code units, matching `data/leaderboard.schema.json`'s
-    // `maxLength: 32`. The validator's `isValidProfileName` also
-    // checks this internally; the early throw here surfaces a
-    // length-specific 400 message instead of the generic
-    // "letters/spaces/apostrophes/hyphens" one from the regex
-    // branch below.
+  if (Array.from(cleaned).length > NAME_LENGTH_MAX) {
+    // Codepoint cap, matching `isValidProfileName` and JSON schema.
+    // Surfaces a length-specific 400 before the generic regex error.
     throw new StatsApiError(400, `Player name must be ${NAME_LENGTH_MAX} characters or fewer.`);
   }
   if (!isValidProfileName(cleaned)) {
