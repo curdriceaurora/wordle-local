@@ -139,10 +139,6 @@
     "loading": "Loading…",
     "errorPrefix": "Error: {message}"
   },
-  "footer": {
-    "tagline": "Custom Wordle · Local hosting",
-    "ready": "Ready"
-  },
   "share": {
     "modalTitle": "About share links",
     "modalBody1": "Encoding makes the URL travel-safe. Anyone with this link sees the puzzle word — there's no password.",

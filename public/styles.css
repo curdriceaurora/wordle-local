@@ -60,7 +60,6 @@
   --key-hover-bg: #334155;
   --key-absent-shadow: rgba(248, 250, 252, 0.18);
   --key-contrast-shadow: rgba(15, 23, 42, 0.4);
-  --footer-border: rgba(148, 163, 184, 0.2);
   --overlay-bg: rgba(2, 6, 23, 0.7);
   --modal-bg: rgba(15, 23, 42, 0.9);
   --modal-border: rgba(148, 163, 184, 0.2);
@@ -149,7 +148,6 @@ html.theme-light {
   --key-hover-bg: #cbd5e1;
   --key-absent-shadow: rgba(15, 23, 42, 0.14);
   --key-contrast-shadow: rgba(15, 23, 42, 0.16);
-  --footer-border: rgba(15, 23, 42, 0.12);
   --overlay-bg: rgba(15, 23, 42, 0.32);
   --modal-bg: rgba(255, 255, 255, 0.98);
   --modal-border: rgba(15, 23, 42, 0.16);
@@ -900,19 +898,6 @@ body.high-contrast .key.absent {
   box-shadow: inset 0 0 0 2px var(--key-contrast-shadow);
 }
 
-.footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  padding: 1rem clamp(1.5rem, 4vw, 4rem) 2rem;
-  color: var(--muted);
-  border-top: 1px solid var(--footer-border);
-  width: 100%;
-  min-width: 0;
-}
-
 .link-button {
   border: 1px solid var(--chip-border);
   background: transparent;
@@ -1143,12 +1128,6 @@ body.high-contrast .key.absent {
     padding: 0.85rem;
   }
 
-  .footer {
-    flex-direction: column;
-    gap: var(--space-xs);
-    padding: 0.85rem clamp(1rem, 3vw, 2rem) 1.5rem;
-  }
-
   .player-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1229,10 +1208,6 @@ body.high-contrast .key.absent {
     padding: 1.15rem;
   }
 
-  .footer {
-    padding: 0.65rem 0.85rem 1.25rem;
-  }
-
 }
 
 @media (max-width: 360px) {
@@ -1261,10 +1236,6 @@ body.high-contrast .key.absent {
   .leaderboard-panel {
     padding: 0.65rem;
     gap: 0.65rem;
-  }
-
-  .footer {
-    padding: 0.5rem 0.65rem 1rem;
   }
 
 }
@@ -1304,10 +1275,6 @@ body.high-contrast .key.absent {
   .modal-card {
     width: min(32rem, 98vw);
     padding: 0.85rem;
-  }
-
-  .footer {
-    padding: 0.45rem 0.5rem 0.85rem;
   }
 
   .stat-card {
@@ -1619,11 +1586,6 @@ body.high-contrast .key.absent {
 
   .share {
     gap: var(--space-sm);
-  }
-
-  .footer {
-    padding: 0.4rem clamp(0.75rem, 2.5vw, 1.5rem) 0.65rem;
-    font-size: var(--fs-sm);
   }
 
   .modal-card {
