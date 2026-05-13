@@ -64,6 +64,9 @@
     "sharePlaceholder": "El enlace para compartir aparece aquí",
     "shareLinkLabel": "Enlace para compartir",
     "copyLink": "Copiar enlace",
+    "copied": "Copiado ✓",
+    "copiedAnnouncement": "Enlace copiado al portapapeles",
+    "copyFailed": "No se pudo copiar — mantén pulsado el enlace para seleccionar",
     "aboutShareLinks": "Sobre los enlaces",
     "encodedNote": "Los enlaces codificados no son privados.",
     "solvedFormat": "¡Resuelto en {tries}/{max}!",
@@ -141,8 +144,6 @@
     "ready": "Listo"
   },
   "share": {
-    "copied": "¡Enlace copiado!",
-    "copyFailed": "No se pudo copiar. Mantén pulsado el enlace para copiarlo manualmente.",
     "modalTitle": "Sobre los enlaces para compartir",
     "modalBody1": "La codificación hace que la URL sea segura para enviar. Cualquiera con el enlace ve la palabra del puzle — no hay contraseña.",
     "modalBody2": "No compartas enlaces de puzles que no quieras que se decodifiquen.",

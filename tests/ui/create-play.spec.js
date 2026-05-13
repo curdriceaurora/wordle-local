@@ -233,10 +233,20 @@ test("invalid share link shows interstitial and redirects", async ({ page }) => 
   await page.waitForURL("/", { timeout: 2000 });
 });
 
-test("share link copy shows confirmation", async ({ page }) => {
+test("share link copy shows confirmation", async ({ page, context }) => {
   test.setTimeout(60000);
+  /* Headless Chromium needs clipboard-write granted explicitly for
+     `navigator.clipboard.writeText` to resolve. Without this the handler
+     falls into the `execCommand` fallback, which is fine but harder to
+     reason about in tests. */
+  await context.grantPermissions(["clipboard-write"]);
   await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)", { timeout: 10000 });
   await page.click("#shareCopyBtn");
-  await expect(page.locator("#message")).toContainText("Share link copied.");
+  /* Success path: button label swaps to "Copied ✓" + `.is-copied` class,
+     aria-live announcement lands in `#srStatus` (sr-only). The play-state
+     `#message` channel is intentionally untouched for share feedback. */
+  await expect(page.locator("#shareCopyBtn")).toHaveText("Copied ✓");
+  await expect(page.locator("#shareCopyBtn")).toHaveClass(/is-copied/);
+  await expect(page.locator("#srStatus")).toHaveText("Share link copied to clipboard");
 });

@@ -25,6 +25,12 @@
   --tile-text-strong: #f8fafc;
   --tile-text-on-fill: #0f172a;
   --tile-contrast-shadow: rgba(15, 23, 42, 0.6);
+  /* `--correct` is a saturated *fill* color (green-500), great as a
+     background. Used directly as text on the panel it lands ~5:1 on
+     dark but only ~3.0:1 on white in light theme — and even lower in
+     HC light (cyan-400). `--success-text` is the theme-aware *text*
+     companion: per-theme overrides below keep ≥4.5:1 everywhere. */
+  --success-text: #22c55e;
   --key-hover-bg: #334155;
   --key-absent-shadow: rgba(248, 250, 252, 0.18);
   --key-contrast-shadow: rgba(15, 23, 42, 0.4);
@@ -117,6 +123,9 @@ html.theme-light {
   /* Light theme needs a darker red for AA contrast on a light bg. */
   --danger: #b91c1c;
   --text-on-danger: #ffffff;
+  /* Green-700 — `--success-text` (#22c55e green-500) only hits ~3.0:1 on
+     white, fails AA. Green-700 lands ~5.4:1. */
+  --success-text: #15803d;
   --focus-outline: var(--accent);
   color-scheme: light;
 }
@@ -144,6 +153,9 @@ html.theme-light body.high-contrast {
      Codex P2 review on PR #168. */
   --danger: #b91c1c;
   --text-on-danger: #ffffff;
+  /* Cyan-700 — HC's `--success-text` default (cyan-400 #22d3ee) only
+     hits ~1.7:1 on white. Cyan-700 lands ~5.4:1. */
+  --success-text: #0e7490;
 }
 
 * {
@@ -436,6 +448,16 @@ p {
 .ghost:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* "Copied ✓" success flash on the share copy button. `.is-copied` is
+   added for 1.2s after a successful clipboard write (`flashCopied` in
+   app.js). Uses `--success-text` (theme-aware) rather than `--correct`
+   directly — the latter is a saturated *fill* color that fails WCAG AA
+   as text on light/HC-light backgrounds. */
+.ghost.is-copied {
+  border-color: var(--success-text);
+  color: var(--success-text);
 }
 
 button:disabled {

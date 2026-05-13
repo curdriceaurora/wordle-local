@@ -64,6 +64,9 @@
     "sharePlaceholder": "Share link appears here",
     "shareLinkLabel": "Share link",
     "copyLink": "Copy link",
+    "copied": "Copied ✓",
+    "copiedAnnouncement": "Share link copied to clipboard",
+    "copyFailed": "Couldn't copy — long-press the link to select",
     "aboutShareLinks": "About share links",
     "encodedNote": "Encoded links aren't private.",
     "solvedFormat": "Solved in {tries}/{max}!",
@@ -141,8 +144,6 @@
     "ready": "Ready"
   },
   "share": {
-    "copied": "Link copied!",
-    "copyFailed": "Couldn't copy. Long-press the link to copy manually.",
     "modalTitle": "About share links",
     "modalBody1": "Encoding makes the URL travel-safe. Anyone with this link sees the puzzle word — there's no password.",
     "modalBody2": "Don't share links to puzzles you don't want decoded.",
