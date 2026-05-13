@@ -893,6 +893,41 @@ function buildBoard() {
     // cellAt omitted — initial board is all empty; updateTile() and
     // paintRow() patch tiles incrementally as the user plays.
   });
+  /* Clear the skeleton's `aria-busy` marker — the real board is
+     announceable now. */
+  boardEl.removeAttribute("aria-busy");
+}
+
+/* Cold-load skeleton mounted between `showPlay()` and the
+   `/api/puzzle` response (typically <100ms). Replaces the empty-area
+   gap below "Loading puzzle…" with a softly pulsing grid. `buildBoard()`
+   in `resetGame()` clears this when real dimensions arrive. Issue #191.
+
+   - `expectedRows` uses the guessesCount the caller already knows, so
+     a non-default guesses puzzle doesn't get a 6→N reshape on data
+     arrival. CodeRabbit on PR #197.
+   - `aria-busy` marks the board as in-flight so AT doesn't announce
+     30 bogus "Empty" cells during the skeleton window. Copilot on PR
+     #197. */
+function mountSkeletonBoard(expectedRows, expectedCols) {
+  if (!boardEl) return;
+  const rows = Math.max(3, Math.min(10, Number(expectedRows) || defaultGuesses));
+  /* The puzzle code is one ciphertext character per plaintext letter,
+     so `code.length` is also the column count. Falls back to 5 when
+     the caller doesn't pass it. CodeRabbit on PR #197. */
+  const cols = Math.max(3, Math.min(12, Number(expectedCols) || 5));
+  const refs = buildBoardGrid(boardEl, {
+    rows,
+    cols,
+    captureRefs: true
+  });
+  boardEl.setAttribute("aria-busy", "true");
+  if (!refs) return;
+  for (const row of refs) {
+    for (const tile of row) {
+      if (tile) tile.classList.add("is-skeleton");
+    }
+  }
 }
 
 // Shared keyboard build helpers (issue #163, partial). Both the
@@ -1657,7 +1692,25 @@ function applyTheme(preference, options = {}) {
 
 async function initPlay(code, lang, guessesCount, options = {}) {
   const initTimer = startPerfMeasure("ui.initPlay");
+  /* Lock input through the skeleton + fetch window. Without this,
+     `handleKey()` could fire before `resetGame()` initializes
+     `guesses` / `currentRow`, and `guesses[currentRow]` would throw.
+     `resetGame()` clears `locked` when real data arrives. CodeRabbit
+     critical on PR #197. */
+  locked = true;
   showPlay();
+  /* Mount the skeleton only on cold loads. If `boardEl` already holds
+     a real grid (e.g. user navigated to a new puzzle mid-session),
+     wiping it now would point `tileGrid` at detached nodes until
+     `resetGame()` rebuilds. The existing grid stays visible until
+     real data arrives. Copilot on PR #197. */
+  if (boardEl && !boardEl.firstChild) {
+    /* `code.length` matches the eventual column count (puzzle codes
+       are one ciphertext character per plaintext letter), so the
+       skeleton lands on the right shape and the real board doesn't
+       reflow on data arrival. CodeRabbit on PR #197. */
+    mountSkeletonBoard(guessesCount, code ? code.length : null);
+  }
   if (!physicalKeyboardBound) {
     document.addEventListener("keydown", handlePhysicalKey);
     physicalKeyboardBound = true;
