@@ -569,6 +569,42 @@ function setProfileStatus(text) {
   profileStatusEl.textContent = text;
 }
 
+// Shared leaderboard-table partial (issue #175). Both the play
+// (daily) leaderboard and the challenge leaderboard render the same
+// <tbody> shape (one <tr> per row, one <td> per column) with
+// different column sets — 7 cols for play (rank/name/wins/played/
+// win%/best/streak) and 5 cols for challenge (rank/name/score/
+// solved/time). The shared helper builds rows from a `cols` config
+// so the row-construction code lives in one place; each caller
+// passes its own column accessors + empty-state copy. Caller is
+// responsible for the surrounding <table><thead> chrome and for
+// showing/hiding the panel around it.
+function renderLeaderboardTable(tbodyEl, options) {
+  const { rows, cols, emptyText, emptyClass } = options;
+  tbodyEl.innerHTML = "";
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    if (emptyClass) td.className = emptyClass;
+    td.colSpan = cols.length;
+    td.textContent = emptyText;
+    tr.appendChild(td);
+    tbodyEl.appendChild(tr);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  rows.forEach((row, index) => {
+    const tr = document.createElement("tr");
+    cols.forEach((col) => {
+      const cell = document.createElement("td");
+      cell.textContent = String(col.value(row, index));
+      tr.appendChild(cell);
+    });
+    fragment.appendChild(tr);
+  });
+  tbodyEl.appendChild(fragment);
+}
+
 function renderLeaderboard() {
   if (!leaderboardPanelEl || !leaderboardBodyEl || !leaderboardRangeEl || !leaderboardMetaEl) return;
   if (!dailyMode || statsServiceUnavailable) {
@@ -585,36 +621,20 @@ function renderLeaderboard() {
   const renderTimer = startPerfMeasure("ui.render.leaderboard");
   const rows = Array.isArray(leaderboardState.rows) ? leaderboardState.rows : [];
 
-  leaderboardBodyEl.innerHTML = "";
-  if (!rows.length) {
-    const row = document.createElement("tr");
-    row.innerHTML = '<td class="leaderboard-empty" colspan="7">No games in this period yet.</td>';
-    leaderboardBodyEl.appendChild(row);
-    endPerfMeasure(renderTimer, "rows=0");
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  rows.forEach((row, index) => {
-    const tr = document.createElement("tr");
-    const safeBest = row.bestAttempts ? String(row.bestAttempts) : "-";
-    const values = [
-      String(row.rank || index + 1),
-      String(row.name || "-"),
-      String(row.wins || 0),
-      String(row.played || 0),
-      `${Number.isFinite(row.winRate) ? row.winRate : 0}%`,
-      safeBest,
-      String(row.streak || 0)
-    ];
-    values.forEach((value) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      tr.appendChild(cell);
-    });
-    fragment.appendChild(tr);
+  renderLeaderboardTable(leaderboardBodyEl, {
+    rows,
+    emptyText: "No games in this period yet.",
+    emptyClass: "leaderboard-empty",
+    cols: [
+      { value: (row, i) => String(row.rank || i + 1) },
+      { value: (row) => String(row.name || "-") },
+      { value: (row) => String(row.wins || 0) },
+      { value: (row) => String(row.played || 0) },
+      { value: (row) => `${Number.isFinite(row.winRate) ? row.winRate : 0}%` },
+      { value: (row) => (row.bestAttempts ? String(row.bestAttempts) : "-") },
+      { value: (row) => String(row.streak || 0) }
+    ]
   });
-  leaderboardBodyEl.appendChild(fragment);
   endPerfMeasure(renderTimer, `rows=${rows.length}`);
 }
 
@@ -2623,26 +2643,23 @@ async function showChallengeLeaderboard(challengeId) {
         ? window.i18n.t("challenge.leaderboardHeader", { name: headerName, policy: headerPolicy })
         : `${headerName} · ${headerPolicy} replay`;
     }
-    if (!Array.isArray(json.rows) || json.rows.length === 0) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 5;
-      td.textContent = window.i18n ? window.i18n.t("challenge.noCompleted") : 'No completed sessions yet.';
-      tr.appendChild(td);
-      challengeLeaderboardTbodyEl.appendChild(tr);
-      return;
-    }
-    let rank = 1;
-    for (const row of json.rows) {
-      const tr = document.createElement('tr');
-      tr.appendChild(td(`#${rank}`));
-      tr.appendChild(td(row.profileName || row.profileId));
-      tr.appendChild(td(String(row.score)));
-      tr.appendChild(td(`${row.solvedCount}/${row.totalPuzzles}`));
-      tr.appendChild(td(`${row.elapsedSeconds}s`));
-      challengeLeaderboardTbodyEl.appendChild(tr);
-      rank += 1;
-    }
+    const rows = Array.isArray(json.rows) ? json.rows : [];
+    renderLeaderboardTable(challengeLeaderboardTbodyEl, {
+      rows,
+      emptyText: window.i18n ? window.i18n.t("challenge.noCompleted") : 'No completed sessions yet.',
+      // Defensive fallbacks match the play leaderboard's style — `||` for
+      // strings (covers null/undefined/empty), `??` for numerics (covers
+      // null/undefined but lets a legitimate 0 through). Without these,
+      // malformed server payloads surface as literal "undefined" / "null" /
+      // "NaN" in the leaderboard cells. Caught by CodeRabbit on PR #178.
+      cols: [
+        { value: (_, i) => `#${i + 1}` },
+        { value: (row) => row.profileName || row.profileId || "-" },
+        { value: (row) => String(row.score ?? 0) },
+        { value: (row) => `${row.solvedCount ?? 0}/${row.totalPuzzles ?? 0}` },
+        { value: (row) => `${row.elapsedSeconds ?? 0}s` }
+      ]
+    });
   } catch (err) {
     if (challengeLeaderboardNameEl) {
       challengeLeaderboardNameEl.textContent = window.i18n
@@ -2650,7 +2667,6 @@ async function showChallengeLeaderboard(challengeId) {
         : `Error: ${err.message}`;
     }
   }
-  function td(text) { const c = document.createElement('td'); c.textContent = text; return c; }
 }
 
 // Route the player to the challenge list when /challenges is in the URL,
