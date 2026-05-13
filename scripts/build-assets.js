@@ -77,6 +77,18 @@ async function build() {
   fs.copyFileSync(path.join(publicDir, "sw.js"), path.join(distDir, "sw.js"));
   fs.copyFileSync(path.join(publicDir, "manifest.json"), path.join(distDir, "manifest.json"));
   fs.cpSync(path.join(publicDir, "icons"), path.join(distDir, "icons"), { recursive: true });
+
+  // Warn if dist/vendor is missing — those are tracked runtime assets
+  // (chart.umd.min.js et al, see .gitignore's `!public/dist/vendor/`)
+  // served via the `/dist/vendor` express mount in server.js. If a
+  // user wipes public/dist before building (e.g. `rm -rf public/dist
+  // && npm run build`), vendor won't be re-created and the admin
+  // shell's chart will 404. Caught by Copilot on PR #180.
+  if (!fs.existsSync(path.join(distDir, "vendor"))) {
+    console.warn(
+      "WARN: public/dist/vendor/ is missing. Run `git checkout -- public/dist/vendor/` to restore the tracked vendor bundles before serving."
+    );
+  }
 }
 
 build().catch((err) => {
