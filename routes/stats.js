@@ -93,7 +93,13 @@ function createStatsRouter(deps) {
 
       const snapshot = await withSlot(() => leaderboardStore.mutate((draft) => {
         const existing = draft.profiles.find(
-          (profile) => profile.name.toLowerCase() === profileName.toLowerCase()
+          // NFC-normalize the persisted side too — older rows written
+          // before the normalize-on-write fix may be in NFD form, so
+          // a fresh NFC submission of the visually-identical name
+          // would create a duplicate without this. The fresh
+          // profileName is already NFC via normalizeProfileNameInput.
+          // Codex P2 on PR #180.
+          (profile) => profile.name.normalize("NFC").toLowerCase() === profileName.toLowerCase()
         );
         if (existing) {
           createdProfileId = existing.id;

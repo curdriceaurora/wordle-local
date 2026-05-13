@@ -2414,8 +2414,14 @@ function normalizeProfileNameInput(rawName) {
   // `.length` returns UTF-16 units, which would over-count any
   // astral-plane letter (e.g. a CJK Extension B character) and
   // reject a name that NAME_PATTERN's `{0,31}` codepoint quantifier
-  // would accept. Codex/Copilot review on PR #180.
-  const cleaned = String(rawName || "").trim().replace(/ +/g, " ");
+  // would accept.
+  //
+  // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
+  // combining-acute) produce identical bytes for storage and the
+  // case-insensitive dedup comparison in routes/stats.js. Without
+  // this, two visually-identical names create two profile rows.
+  // Codex/Copilot review on PR #180.
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }

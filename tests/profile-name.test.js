@@ -151,4 +151,25 @@ describe("profile-name validator", () => {
       }
     });
   });
+
+  describe("NFC normalization contract", () => {
+    // The dedup comparison in routes/stats.js is case-insensitive but
+    // not Unicode-aware, so `José` (NFC: "José") and `José` (NFD:
+    // "José") would create duplicate profile rows unless
+    // both forms are normalized to NFC before write/compare. Codex P2
+    // on PR #180. Tests pin both the validator's form-agnostic accept
+    // behavior and the NFC equivalence callers rely on.
+    const nfcJose = "José";
+    const nfdJose = "José";
+
+    test("both NFC and NFD `José` pass isValidProfileName", () => {
+      expect(isValidProfileName(nfcJose)).toBe(true);
+      expect(isValidProfileName(nfdJose)).toBe(true);
+    });
+
+    test("NFC and NFD `José` render identically but differ in bytes", () => {
+      expect(nfcJose).not.toBe(nfdJose);
+      expect(nfcJose.normalize("NFC")).toBe(nfdJose.normalize("NFC"));
+    });
+  });
 });

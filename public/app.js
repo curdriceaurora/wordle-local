@@ -415,7 +415,12 @@ const PROFILE_NAME_PATTERN = new RegExp(
   "u"
 );
 function normalizeProfileName(rawName) {
-  const cleaned = String(rawName || "").trim().replace(/ +/g, " ");
+  // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
+  // combining-acute) produce identical bytes — otherwise the server's
+  // dedup comparison sees them as distinct profiles. Codex P2 on
+  // PR #180. Both forms still pass the validator (the regex accepts
+  // `\p{L}` letters and `\p{M}` combining marks separately).
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) return "";
   if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
   if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
@@ -2387,13 +2392,13 @@ function renderChallengeList() {
 async function startChallenge(challengeId) {
   const profile = getChallengeProfile();
   // Normalize the field through the same validator the server uses.
-  // The input handler only clamps the localStorage copy; the field's
-  // own .value stays as the user typed it (clamping on every keystroke
-  // jumps the caret). Without this normalize-at-submit, a user typing
-  // 33+ codepoints (allowed up to maxlength=64 as a worst-case astral
-  // soft-cap) would POST the raw over-limit value and get a 400
-  // INVALID_PROFILE_NAME until they manually edited. Caught by Codex
-  // P2 on PR #180.
+  // HTML `maxlength=32` caps user typing at 32 UTF-16 code units, but
+  // a programmatic .value assignment (e.g. legacy localStorage prefill
+  // from before the cap tightened) can still load a longer/invalid
+  // value; the input handler only clamps the localStorage copy, the
+  // field's own .value stays as-loaded. Without normalize-at-submit
+  // that legacy value would POST and 400 INVALID_PROFILE_NAME until
+  // the user manually edited. Codex P2 on PR #180.
   const rawValue = (challengeProfileInputEl?.value || '').trim();
   const normalized = normalizeProfileName(rawValue);
   // Validate every step of the fallback chain — the input handler

@@ -103,7 +103,13 @@ function createChallengesRouter(deps) {
   // we accept that same shape here.
   function resolveProfile(body) {
     const profileId = typeof body?.profileId === "string" ? body.profileId.trim() : "";
-    const profileName = typeof body?.profileName === "string" ? body.profileName.trim() : "";
+    // NFC-normalize so `José` (composed) and `José` (decomposed)
+    // store as identical bytes; without this, two visually-identical
+    // names create two profile records on the challenge side too.
+    // Codex P2 on PR #180.
+    const profileName = typeof body?.profileName === "string"
+      ? body.profileName.trim().normalize("NFC")
+      : "";
     if (!profileId) return { error: "PROFILE_ID_REQUIRED" };
     // Distinct sentinel for present-but-too-long profileId so the
     // route handler can return a more specific 400 than the generic
