@@ -32,6 +32,11 @@
   --modal-bg: rgba(15, 23, 42, 0.9);
   --modal-border: rgba(148, 163, 184, 0.2);
   --modal-shadow: rgba(2, 6, 23, 0.6);
+  --danger: #ef4444;
+  /* Dark slate on the red-500 fill so the .btn-danger:hover label
+     hits 5.5:1 contrast (WCAG AA: 4.5:1). White-on-red-500 only
+     lands at ~3.8:1 — caught by CodeRabbit + Codex review on PR #168. */
+  --text-on-danger: #0f172a;
   --focus-outline: var(--accent);
   --touch-target-min: 44.25px;
 
@@ -99,6 +104,9 @@ html.theme-light {
   --modal-bg: rgba(255, 255, 255, 0.98);
   --modal-border: rgba(15, 23, 42, 0.16);
   --modal-shadow: rgba(15, 23, 42, 0.18);
+  /* Light theme needs a darker red for AA contrast on a light bg. */
+  --danger: #b91c1c;
+  --text-on-danger: #ffffff;
   --focus-outline: var(--accent);
   color-scheme: light;
 }
@@ -113,6 +121,19 @@ body.high-contrast {
   --absent: #475569;
   --present: #f97316;
   --correct: #22d3ee;
+  /* High-contrast + dark theme: bright red distinct from --present
+     (orange) and --absent (slate), readable on the dark hi-contrast bg. */
+  --danger: #ff5d5d;
+  --text-on-danger: #0f172a;
+}
+
+html.theme-light body.high-contrast {
+  /* High-contrast + light theme: the page bg stays light, so the
+     bright red #ff5d5d would only hit ~2.9:1 against white. Re-use the
+     darker red-700 from light theme (#b91c1c on white = 6.4:1).
+     Codex P2 review on PR #168. */
+  --danger: #b91c1c;
+  --text-on-danger: #ffffff;
 }
 
 * {
@@ -323,7 +344,33 @@ p {
   width: 7rem;
 }
 
-.create-form button {
+/* .create-form button + .admin-form button styling now grouped with
+   .btn-primary below — single source of truth for the primary button
+   look. Position kept BEFORE .ghost so #randomBtn (which has both
+   `.create-form > button` matching AND class="ghost") still gets
+   .ghost's overrides via source-order cascade. */
+
+.form-row {
+  display: flex;
+  gap: var(--space-lg);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+/* Semantic button classes (issue #164). `.ghost` was previously
+   applied to primary actions (Use this name), destructive actions
+   (Quit), and secondary actions (Copy link, Random word, etc.) —
+   the same visual weight for very different consequence levels.
+   Split into three explicit roles below; `.ghost` is kept for true
+   secondary actions only. */
+/* `:not(.ghost)` because `.create-form button` (specificity 0,1,1)
+   beats plain `.ghost` (0,1,0) — without the negation, `#randomBtn`
+   (the secondary "Random word" button inside the create form, which
+   carries `class="ghost"`) would render with the primary fill. Codex
+   P2 review on PR #168. */
+.btn-primary,
+.create-form button:not(.ghost),
+.admin-form button:not(.ghost) {
   padding: 0.75rem 1rem;
   border: none;
   border-radius: 0.6rem;
@@ -331,13 +378,34 @@ p {
   color: var(--text-on-accent);
   font-weight: 700;
   cursor: pointer;
+  /* Match `.ghost`'s layout primitives so primary and secondary
+     buttons line up cleanly when placed side-by-side in a form-row. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
 }
 
-.form-row {
-  display: flex;
-  gap: var(--space-lg);
-  align-items: flex-end;
-  flex-wrap: wrap;
+.btn-danger {
+  padding: 0.6rem 1rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+}
+
+.btn-danger:hover {
+  /* Outline → filled on hover. Common destructive-action pattern:
+     the visual weight ramps up when the user is about to commit. */
+  background: var(--danger);
+  color: var(--text-on-danger);
 }
 
 .ghost {
@@ -834,15 +902,7 @@ body.high-contrast .key.absent {
   font-size: var(--fs-md);
 }
 
-.admin-form button {
-  padding: 0.75rem 1rem;
-  border: none;
-  border-radius: 0.6rem;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
-  cursor: pointer;
-}
+/* .admin-form button styling now grouped with .btn-primary above. */
 
 .admin-current {
   max-width: 28rem;
@@ -900,7 +960,13 @@ body.high-contrast .key.absent {
     padding: 0.75rem 1.25rem;
   }
 
-  .ghost {
+  .ghost,
+  .btn-primary,
+  .btn-danger {
+    /* Mobile touch-target floor (WCAG 2.5.5 + this app's
+       --touch-target-min). All three semantic button classes share
+       the same mobile padding/min-height so swapping `.ghost` for
+       `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
     padding: 0.75rem 1.1rem;
   }
@@ -1200,7 +1266,13 @@ body.high-contrast .key.absent {
     padding: 0.75rem 1.25rem;
   }
 
-  .ghost {
+  .ghost,
+  .btn-primary,
+  .btn-danger {
+    /* Mobile touch-target floor (WCAG 2.5.5 + this app's
+       --touch-target-min). All three semantic button classes share
+       the same mobile padding/min-height so swapping `.ghost` for
+       `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
     padding: 0.75rem 1.1rem;
   }
