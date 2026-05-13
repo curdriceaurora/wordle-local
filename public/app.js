@@ -2647,12 +2647,17 @@ async function showChallengeLeaderboard(challengeId) {
     renderLeaderboardTable(challengeLeaderboardTbodyEl, {
       rows,
       emptyText: window.i18n ? window.i18n.t("challenge.noCompleted") : 'No completed sessions yet.',
+      // Defensive fallbacks match the play leaderboard's style — `||` for
+      // strings (covers null/undefined/empty), `??` for numerics (covers
+      // null/undefined but lets a legitimate 0 through). Without these,
+      // malformed server payloads surface as literal "undefined" / "null" /
+      // "NaN" in the leaderboard cells. Caught by CodeRabbit on PR #178.
       cols: [
         { value: (_, i) => `#${i + 1}` },
-        { value: (row) => row.profileName || row.profileId },
-        { value: (row) => String(row.score) },
-        { value: (row) => `${row.solvedCount}/${row.totalPuzzles}` },
-        { value: (row) => `${row.elapsedSeconds}s` }
+        { value: (row) => row.profileName || row.profileId || "-" },
+        { value: (row) => String(row.score ?? 0) },
+        { value: (row) => `${row.solvedCount ?? 0}/${row.totalPuzzles ?? 0}` },
+        { value: (row) => `${row.elapsedSeconds ?? 0}s` }
       ]
     });
   } catch (err) {
