@@ -77,6 +77,10 @@ async function build() {
   fs.copyFileSync(path.join(publicDir, "sw.js"), path.join(distDir, "sw.js"));
   fs.copyFileSync(path.join(publicDir, "manifest.json"), path.join(distDir, "manifest.json"));
   fs.cpSync(path.join(publicDir, "icons"), path.join(distDir, "icons"), { recursive: true });
+  // Self-hosted fonts (issue #187). Without this copy, dist-mode
+  // (Vercel, Docker) silently 404s on `/fonts/*` and the typography
+  // falls back to the system stack. Codex P2 on PR #195.
+  fs.cpSync(path.join(publicDir, "fonts"), path.join(distDir, "fonts"), { recursive: true });
 
   // Warn if dist/vendor is missing — those are tracked runtime assets
   // (chart.umd.min.js et al, see .gitignore's `!public/dist/vendor/`)

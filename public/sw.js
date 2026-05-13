@@ -51,6 +51,11 @@
 // challengesEnabled flags from /api/meta and hides the matching header
 // nav links when each is false.
 //
+// v13: invalidates stale index.html + styles.css for the Space Grotesk
+// + Bungee typography swap (#187, #188). New `<link rel="preload">` font
+// entries in index.html and new `@font-face` + tile font-family in
+// styles.css won't reach returning PWA users until the cache bumps.
+//
 // v12: invalidates stale app.js + styles.css for the skeleton play
 // board (#191). Adds `mountSkeletonBoard` + a `tile-skeleton` keyframe;
 // without the bump returning PWA users would see the pre-skeleton
@@ -64,7 +69,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v12';
+const CACHE_NAME = 'wordle-cache-v13';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -76,6 +81,12 @@ const STATIC_ASSETS = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  // Self-hosted fonts (#187). Without these in the install precache,
+  // the SW can miss them on first navigation (font preloads can fire
+  // before SW activation), and an offline PWA visit falls back to the
+  // system font stack. Copilot suppressed-comment on PR #195.
+  '/fonts/space-grotesk-variable-latin.woff2',
+  '/fonts/bungee-latin.woff2',
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',

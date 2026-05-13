@@ -22,6 +22,32 @@ text is checked in next to the bundle at
 - Project: https://www.chartjs.org/
 - License: MIT (Copyright (c) 2014-2024 Chart.js Contributors)
 
+## Fonts (Space Grotesk, Bungee)
+
+The play surface uses two self-hosted webfonts:
+
+- **Space Grotesk** (variable, weights 300-700) — body, headings, keys,
+  leaderboard, all UI chrome.
+  - Project: https://github.com/floriankarsten/space-grotesk
+  - License: SIL Open Font License 1.1 — Copyright 2020 The Space
+    Grotesk Project Authors
+  - License text: `public/fonts/space-grotesk-OFL.txt`
+  - Bundle: `public/fonts/space-grotesk-variable-latin.woff2` (Latin
+    subset)
+
+- **Bungee** (Regular) — `.tile` letters on the play board.
+  - Project: https://github.com/djrrb/Bungee
+  - License: SIL Open Font License 1.1 — Copyright 2023 The Bungee
+    Project Authors
+  - License text: `public/fonts/bungee-OFL.txt`
+  - Bundle: `public/fonts/bungee-latin.woff2`
+
+Both fonts ship inside `public/dist/` for production builds via
+`scripts/build-assets.js`; the OFL license texts are committed
+alongside the woff2 files so redistribution (including the Docker
+image and any Vercel deployment) meets the OFL's notice-preservation
+requirement.
+
 ## web-push
 
 Daily-puzzle Web Push notifications use the `web-push` Node package
