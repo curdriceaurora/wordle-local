@@ -19,7 +19,13 @@
 .admin-tabs {
   display: flex;
   gap: 0.6rem;
-  flex-wrap: wrap;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-gutter: stable;
+}
+
+.admin-tab {
+  flex: 0 0 auto;
 }
 
 .admin-tab[aria-selected="true"] {
@@ -51,10 +57,15 @@
 
 .admin-table-wrap {
   overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--subpanel-bg);
+  scrollbar-gutter: stable;
 }
 
 .admin-workspace .leaderboard-table {
-  min-width: 44rem;
+  min-width: 56rem;
 }
 
 .admin-workspace .leaderboard-table th,
@@ -64,6 +75,20 @@
 
 .admin-workspace .leaderboard-table td:last-child {
   white-space: normal;
+}
+
+.admin-workspace .leaderboard-table th:last-child,
+.admin-workspace .leaderboard-table td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: -12px 0 18px rgba(2, 6, 23, 0.32);
+}
+
+html.theme-light .admin-workspace .leaderboard-table th:last-child,
+html.theme-light .admin-workspace .leaderboard-table td:last-child {
+  box-shadow: -12px 0 18px rgba(15, 23, 42, 0.12);
 }
 
 .admin-action-stack {
@@ -121,7 +146,7 @@
 
 @media (max-width: 680px) {
   .admin-workspace .leaderboard-table {
-    min-width: 34rem;
+    min-width: 48rem;
   }
 
   .admin-action-stack {

@@ -282,6 +282,10 @@ p {
   min-width: 0;
 }
 
+.topbar > div:first-child {
+  min-width: min(24rem, 100%);
+}
+
 .top-actions {
   display: flex;
   gap: var(--space-md);
@@ -293,6 +297,10 @@ p {
   gap: var(--space-md);
   flex-wrap: wrap;
   align-items: center;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--topbar-border);
 }
 
 .toggle {
@@ -318,6 +326,11 @@ p {
   width: 1rem;
   height: 1rem;
   accent-color: var(--accent);
+}
+
+.settings .hint:not(:empty) {
+  flex-basis: 100%;
+  max-width: 65ch;
 }
 
 .toggle select {
@@ -1161,6 +1174,30 @@ body.high-contrast .key.absent {
   .top-actions {
     gap: var(--space-lg);
   }
+
+  .settings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+    width: 100%;
+    padding-top: 0.85rem;
+  }
+
+  .settings .toggle {
+    width: 100%;
+    min-height: 44px;
+    justify-content: space-between;
+    border: 1px solid var(--chip-border);
+    padding: 0.55rem 0.75rem;
+  }
+
+  .settings .toggle:has(input) {
+    justify-content: flex-start;
+  }
+
+  .settings .hint:not(:empty) {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 420px) {
@@ -1327,6 +1364,10 @@ body.high-contrast .key.absent {
 
   .top-actions {
     gap: var(--space-lg);
+  }
+
+  .settings {
+    grid-template-columns: 1fr;
   }
 }
 
