@@ -81,6 +81,12 @@ const STATIC_ASSETS = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  // Self-hosted fonts (#187). Without these in the install precache,
+  // the SW can miss them on first navigation (font preloads can fire
+  // before SW activation), and an offline PWA visit falls back to the
+  // system font stack. Copilot suppressed-comment on PR #195.
+  '/fonts/space-grotesk-variable-latin.woff2',
+  '/fonts/bungee-latin.woff2',
   '/admin/',
   '/admin/index.html',
   '/admin/admin.css',
