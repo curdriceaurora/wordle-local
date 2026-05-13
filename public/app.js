@@ -781,30 +781,79 @@ async function createOrSelectProfile(rawName) {
   }
 }
 
-function buildBoard() {
-  boardEl.innerHTML = "";
-  tileGrid = Array.from({ length: maxGuesses }, () => Array(cols).fill(null));
-  boardEl.style.setProperty("--rows", String(maxGuesses));
-  boardEl.style.setProperty("--cols", String(cols));
-  boardEl.setAttribute("role", "grid");
-  boardEl.setAttribute("aria-rowcount", String(maxGuesses));
-  boardEl.setAttribute("aria-colcount", String(cols));
-  for (let r = 0; r < maxGuesses; r += 1) {
-    const row = document.createElement("div");
-    row.className = "row";
-    row.setAttribute("role", "row");
+// Shared board-grid builder (issue #176). Both the play (daily/
+// created) board and the challenge board render a (rows × cols) grid
+// of tiles with the same ARIA grid semantics + class names; they
+// just differ in state strategy:
+//
+//   - Play builds the grid empty at game-init and then mutates
+//     individual tiles via updateTile() / paintRow() as the user
+//     types and submits guesses. `captureRefs: true` makes the
+//     helper return a tileGrid that the patch helpers index into.
+//
+//   - Challenge re-renders the whole grid on every key press from
+//     `challengeState.session.puzzles[i]` (guess history + server-
+//     supplied feedback). It passes `cellAt(r, c)` returning the
+//     letter + feedback class for each cell.
+//
+// Both paths now produce identical DOM shape (role=grid + aria-
+// rowcount/colcount, role=row, role=gridcell, .filled when a letter
+// is present, .absent/.present/.correct when feedback is present,
+// aria-label="Letter X" or "Letter X, present" or "Empty"). The
+// pre-dedupe challenge render had no ARIA grid attrs and no
+// per-tile aria-label — minor a11y improvement folded into the
+// dedupe, not a regression.
+function buildBoardGrid(rootEl, opts) {
+  const { rows, cols, cellAt, captureRefs } = opts;
+  rootEl.innerHTML = "";
+  rootEl.style.setProperty("--rows", String(rows));
+  rootEl.style.setProperty("--cols", String(cols));
+  rootEl.setAttribute("role", "grid");
+  rootEl.setAttribute("aria-rowcount", String(rows));
+  rootEl.setAttribute("aria-colcount", String(cols));
+  const refs = captureRefs
+    ? Array.from({ length: rows }, () => Array(cols).fill(null))
+    : null;
+  for (let r = 0; r < rows; r += 1) {
+    const rowEl = document.createElement("div");
+    rowEl.className = "row";
+    rowEl.setAttribute("role", "row");
     for (let c = 0; c < cols; c += 1) {
       const tile = document.createElement("div");
       tile.className = "tile";
       tile.dataset.row = String(r);
       tile.dataset.col = String(c);
       tile.setAttribute("role", "gridcell");
-      tile.setAttribute("aria-label", "Empty");
-      row.appendChild(tile);
-      tileGrid[r][c] = tile;
+      const cell = cellAt ? cellAt(r, c) : null;
+      const letter = cell && cell.letter ? cell.letter : "";
+      const feedback = cell && cell.feedback ? cell.feedback : null;
+      if (letter) {
+        tile.textContent = letter;
+        tile.classList.add("filled");
+        tile.setAttribute(
+          "aria-label",
+          feedback ? `Letter ${letter}, ${feedback}` : `Letter ${letter}`
+        );
+      } else {
+        tile.setAttribute("aria-label", "Empty");
+      }
+      if (feedback) tile.classList.add(feedback);
+      rowEl.appendChild(tile);
+      if (refs) refs[r][c] = tile;
     }
-    boardEl.appendChild(row);
+    rootEl.appendChild(rowEl);
   }
+  return refs;
+}
+
+function buildBoard() {
+  tileGrid = buildBoardGrid(boardEl, {
+    rows: maxGuesses,
+    cols,
+    captureRefs: true
+    // cellAt omitted — initial board is all empty; updateTile() and
+    // paintRow() patch tiles incrementally as the user plays.
+  });
 }
 
 // Shared keyboard build helpers (issue #163, partial). Both the
@@ -2364,7 +2413,6 @@ function activePuzzle() {
 
 function renderChallengeBoard() {
   if (!challengeBoardEl) return;
-  challengeBoardEl.innerHTML = '';
   const session = challengeState.session;
   const challenge = challengeState.activeChallenge;
   if (!session || !challenge) return;
@@ -2390,31 +2438,23 @@ function renderChallengeBoard() {
   // "absent" strings). The active puzzle's word is hidden so the
   // client can't compute these locally — render them server-side.
   const feedbacks = Array.isArray(active.feedbacks) ? active.feedbacks : [];
-  for (let r = 0; r < maxGuesses; r++) {
-    const rowEl = document.createElement('div');
-    rowEl.className = 'row';
-    let guessForRow = active.guesses[r] || '';
-    let rowFeedback = null;
-    if (r < active.guesses.length) {
-      rowFeedback = feedbacks[r] || null;
-    } else if (r === active.guesses.length) {
-      guessForRow = challengeState.pendingGuess;
-    }
-    for (let c = 0; c < length; c++) {
-      const tile = document.createElement('div');
-      tile.className = 'tile';
-      const letter = guessForRow[c] || '';
-      tile.textContent = letter;
-      if (rowFeedback && rowFeedback[c]) {
-        // Reuse the same color classes as the daily/created play UI
-        // (.absent, .present, .correct) so the styling is unified
-        // and inherits any operator theme overrides.
-        tile.classList.add(rowFeedback[c]);
+  buildBoardGrid(challengeBoardEl, {
+    rows: maxGuesses,
+    cols: length,
+    cellAt: (r, c) => {
+      let guessForRow = active.guesses[r] || "";
+      let rowFeedback = null;
+      if (r < active.guesses.length) {
+        rowFeedback = feedbacks[r] || null;
+      } else if (r === active.guesses.length) {
+        guessForRow = challengeState.pendingGuess;
       }
-      rowEl.appendChild(tile);
+      return {
+        letter: guessForRow[c] || "",
+        feedback: rowFeedback ? rowFeedback[c] || null : null
+      };
     }
-    challengeBoardEl.appendChild(rowEl);
-  }
+  });
 }
 
 function renderChallengeKeyboard() {
