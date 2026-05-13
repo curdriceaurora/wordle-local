@@ -949,7 +949,11 @@ function renderKeyboardInto(rootEl, opts = {}) {
     rowKeys.forEach((key) => {
       const button = makeKeyButton(key, { onClick: onKey });
       rowEl.appendChild(button);
-      if (captureRefMap && key.length === 1) {
+      if (captureRefMap) {
+        /* Capture ALL keys including `"ENTER"` and `"BACK"`. Without
+           this `flashKey("ENTER")` / `flashKey("BACK")` would silently
+           no-op — wide keys would never visually depress on physical
+           Enter/Backspace. CodeRabbit on PR #196. */
         captureRefMap.set(key, button);
       }
     });
@@ -1042,7 +1046,7 @@ function shouldAnimate() {
   return !(prefersReducedMotionMql && prefersReducedMotionMql.matches);
 }
 
-function triggerOneShotAnim(el, className) {
+function triggerOneShotAnim(el, className, animationName) {
   if (!el || !shouldAnimate()) return;
   /* Remove + force reflow + re-add so a second trigger on the same
      element (e.g. pop on letter, pop on backspace of that letter)
@@ -1050,7 +1054,12 @@ function triggerOneShotAnim(el, className) {
   el.classList.remove(className);
   void el.offsetWidth;
   el.classList.add(className);
-  const onEnd = () => {
+  const onEnd = (event) => {
+    /* Filter by animation name — without this, an unrelated still-
+       in-flight animation on the same element (e.g. a pop ending
+       just as a reveal starts on the last-typed tile) would fire
+       this handler and strip the wrong class. Codex P2 on PR #196. */
+    if (animationName && event.animationName !== animationName) return;
     el.classList.remove(className);
     el.removeEventListener("animationend", onEnd);
     el.removeEventListener("animationcancel", onEnd);
@@ -1072,11 +1081,15 @@ function triggerRowReveal(row, onSolveComplete) {
     const tile = getTile(row, col);
     if (!tile) continue;
     tile.style.setProperty("--col", String(col));
-    triggerOneShotAnim(tile, "is-reveal");
+    triggerOneShotAnim(tile, "is-reveal", "tile-reveal");
     if (col === cols - 1) lastTile = tile;
   }
   if (onSolveComplete && lastTile) {
-    const chain = () => {
+    /* Filter by animationName — without this, an unrelated animation
+       on `lastTile` (e.g. a stale pop) could fire the chain before
+       the reveal completes. Codex P2 on PR #196. */
+    const chain = (event) => {
+      if (event.animationName !== "tile-reveal") return;
       lastTile.removeEventListener("animationend", chain);
       onSolveComplete();
     };
@@ -1089,7 +1102,7 @@ function triggerRowShake(row) {
      query and survives any future restructuring of the board grid. */
   const tile = getTile(row, 0);
   const rowEl = tile ? tile.parentElement : null;
-  triggerOneShotAnim(rowEl, "is-shake");
+  triggerOneShotAnim(rowEl, "is-shake", "row-shake");
 }
 
 function triggerRowWin(row) {
@@ -1098,12 +1111,12 @@ function triggerRowWin(row) {
     const tile = getTile(row, col);
     if (!tile) continue;
     tile.style.setProperty("--col", String(col));
-    triggerOneShotAnim(tile, "is-win");
+    triggerOneShotAnim(tile, "is-win", "tile-win");
   }
 }
 
 function triggerTilePop(tile) {
-  triggerOneShotAnim(tile, "is-pop");
+  triggerOneShotAnim(tile, "is-pop", "tile-pop");
 }
 
 function flashKey(letter) {

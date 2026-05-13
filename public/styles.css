@@ -618,9 +618,15 @@ button:disabled {
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.2s ease;
 }
 
+/* `.tile.filled` keeps the accent border as the "captured" affordance.
+   The previous `translateY(-2px)` here was the capture lift; the new
+   `tile-pop` keyframe animation (issue #182) replaces it with a brief
+   scale punch on capture. Keeping the translate alongside the new
+   transform-based animations caused filled tiles to visually "drop"
+   during reveal/win/pop because animations override `transform`
+   wholesale. Copilot on PR #196. */
 .tile.filled {
   border-color: var(--accent);
-  transform: translateY(-2px);
 }
 
 .tile.absent {
