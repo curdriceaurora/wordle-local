@@ -25,12 +25,9 @@
         }
       })();
     </script>
-    <!-- Pre-paint i18n bootstrap: read the stored locale preference and
-         set <html lang> BEFORE the stylesheet so screen readers + lang-
-         aware CSS see the right value on first paint. The full message
-         file is loaded by the deferred i18n.init() call later; this
-         inline block only handles the lang-attribute flicker so the
-         stylesheet download isn't render-blocked by a script fetch. -->
+    <!-- Pre-paint: set <html lang> from localStorage BEFORE the stylesheet
+         so AT and lang-aware CSS see the right value on first paint.
+         Deferred i18n.init() does the full message fetch later. -->
     <script>
       (() => {
         try {
@@ -44,10 +41,9 @@
     </script>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/js/i18n.js" defer></script>
-    <!-- Defensive escape-html helper (A1 / #114). Loaded uniformly
-         so window.escapeHtml exists for any future dynamic-HTML
-         site. Today's player shell uses textContent + DOM APIs and
-         doesn't reference it. -->
+    <!-- escape-html helper (A1 / #114). Loaded uniformly for future
+         dynamic-HTML callsites; the current shell uses textContent +
+         DOM APIs and doesn't reference window.escapeHtml. -->
     <script src="/js/escape-html.js" defer></script>
   </head>
   <body>
@@ -134,13 +130,11 @@
         <div class="play-head">
           <div>
             <h2 data-i18n="play.heading">Play</h2>
-            <!-- #playMeta is a runtime-owned slot. initPlay() rewrites
-                 textContent with formatted puzzle metadata (language,
-                 length, tries). DON'T bind data-i18n here — the i18n
-                 updateDOM() pass would clobber the dynamic value with
-                 static "Loading…" copy on every locale switch. The
-                 initial Loading… string is set by initPlay()
-                 internally via i18n.t("play.loading"). -->
+            <!-- #playMeta is runtime-owned: initPlay() writes formatted
+                 metadata into textContent. DON'T add data-i18n here —
+                 updateDOM() would clobber the dynamic value with the
+                 static "Loading…" string on every locale switch.
+                 Initial string is set internally via i18n.t("play.loading"). -->
             <p id="playMeta">Loading puzzle…</p>
           </div>
           <a class="admin-link" href="/" data-i18n="play.createYours">Create yours</a>
