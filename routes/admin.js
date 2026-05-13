@@ -178,6 +178,13 @@ function createAdminRouter(deps) {
   if (!ScheduleStoreError) {
     throw new TypeError("createAdminRouter: ScheduleStoreError dep is required.");
   }
+  // Required dep — class-membership routes serialize through it (#152).
+  // If wiring regresses, a stale server.js without this dep would
+  // degrade silently to "no mutex," re-opening the cross-store race.
+  // Fail loud at wiring time. CodeRabbit on PR #200.
+  if (typeof withClassMembershipMutex !== "function") {
+    throw new TypeError("createAdminRouter: withClassMembershipMutex dep is required.");
+  }
 
   // Map a ScheduleStoreError code to an HTTP status. 400 covers shape /
   // validation failures; 404 for entry-not-found; 409 for duplicates;

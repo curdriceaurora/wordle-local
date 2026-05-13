@@ -47,8 +47,12 @@ function resetEnv() {
   });
 }
 
+const tempDirsToCleanup = [];
+
 function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "lhw-cmm-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lhw-cmm-"));
+  tempDirsToCleanup.push(dir);
+  return dir;
 }
 
 function loadApp({ adminKey, statsPath, classesPath }) {
@@ -61,11 +65,26 @@ function loadApp({ adminKey, statsPath, classesPath }) {
   // Disable boot scheduler tick (same belt-and-suspenders as
   // admin-schedule-routes.test.js).
   process.env.SCHEDULER_CHECK_INTERVAL_MS = String(60 * 60 * 1000);
+  /* Defang the per-key admin write rate limiter for this concurrency
+     test — 25 iterations × ~6 admin writes each = 150 writes inside
+     a few seconds, which trips the production write limit. Both
+     ADMIN_WRITE_RATE_LIMIT_MAX (server.js:78) and the base
+     RATE_LIMIT_MAX (server.js:68) need lifting. */
+  process.env.RATE_LIMIT_MAX = "10000";
+  process.env.RATE_LIMIT_WINDOW_MS = "60000";
+  process.env.ADMIN_RATE_LIMIT_MAX = "10000";
+  process.env.ADMIN_WRITE_RATE_LIMIT_MAX = "10000";
   return require("../server");
 }
 
 afterEach(() => {
   resetEnv();
+  // CodeRabbit nit on PR #200 — clean up tmp dirs allocated during the
+  // test so /tmp/lhw-cmm-* doesn't accumulate over many CI runs.
+  while (tempDirsToCleanup.length > 0) {
+    const dir = tempDirsToCleanup.pop();
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_e) { /* best effort */ }
+  }
 });
 
 describe("withClassMembershipMutex (#152): class-delete carve-out vs bulk-add", () => {
@@ -79,58 +98,54 @@ describe("withClassMembershipMutex (#152): class-delete carve-out vs bulk-add", 
 
     // The race is timing-sensitive — without the mutex it breaks
     // probabilistically. 25 iterations is enough to surface the bug
-    // reliably in pre-mutex code while staying inside the 30s test
+    // reliably in pre-mutex code while staying inside the 60s test
     // timeout.
     const ITERATIONS = 25;
     let anyInvariantBreak = false;
+    let executedRaces = 0;
+
+    /* Each iteration uses unique names (`ProfileX${iter}`,
+       `ClassA${iter}`, etc.) so profiles + classes don't collide
+       across iterations. The server module is loaded once outside
+       the loop so in-memory state accumulates — that's intentional
+       and the per-iteration unique naming dodges it. Copilot on
+       PR #200. */
+
+    /* Profile/class names use letter-only suffixes — the server's
+       profile-name validator at `lib/profile-name.js` rejects digits
+       (letters, spaces, apostrophes, hyphens only). 25 iterations fits
+       into A-Y; the test asserts >= 20 races executed, leaving 5
+       letters of slack if any iteration skips for unrelated reasons. */
+    const letterSuffix = (i) => `Iter${String.fromCharCode(65 + i)}`;
 
     for (let iter = 0; iter < ITERATIONS; iter += 1) {
-      // Fresh state per iteration: wipe stores so profile names don't
-      // pile up and class IDs don't collide. Each loop tests one race.
-      try { fs.rmSync(statsPath); } catch (_e) { /* may not exist */ }
-      try { fs.rmSync(classesPath); } catch (_e) { /* may not exist */ }
-
-      // Set up profile X via the leaderboard rename endpoint —
-      // simplest way to get a known-id profile into the store from
-      // an integration test.
-      const profileName = `ProfileX${iter}`;
-      const createRes = await agent
-        .patch("/api/admin/stats/profile/x-seed")
+      const tag = letterSuffix(iter);
+      // Seed profile X via bulk-add into a throwaway class, then
+      // delete the throwaway class (without `deleteProfiles`) so the
+      // profile survives in the leaderboard.
+      const profileName = `ProfileX ${tag}`;
+      const seedClassRes = await agent
+        .post("/api/admin/classes")
         .set("X-Admin-Key", adminKey)
-        .send({ name: profileName });
-      // The patch creates the profile on demand (admin profile
-      // rename has create-if-missing semantics today). If the seeding
-      // endpoint contract changes, this test needs an alternate seed.
-      if (createRes.status !== 200) {
-        // Fall back: use bulk-add to seed.
-        const seedClassRes = await agent
-          .post("/api/admin/classes")
-          .set("X-Admin-Key", adminKey)
-          .send({ name: `Seed${iter}` });
-        const seedClassId = seedClassRes.body?.class?.id;
-        await agent
-          .post(`/api/admin/classes/${seedClassId}/members/bulk`)
-          .set("X-Admin-Key", adminKey)
-          .send({ names: [profileName] });
-        await agent
-          .delete(`/api/admin/classes/${seedClassId}`)
-          .set("X-Admin-Key", adminKey)
-          .send({ confirmed: true });
-      }
+        .send({ name: `Seed ${tag}` });
+      const seedClassId = seedClassRes.body?.class?.id;
+      if (!seedClassId) continue;
+      await agent
+        .post(`/api/admin/classes/${seedClassId}/members/bulk`)
+        .set("X-Admin-Key", adminKey)
+        .send({ names: [profileName] });
+      await agent
+        .delete(`/api/admin/classes/${seedClassId}`)
+        .set("X-Admin-Key", adminKey)
+        .send({ confirmed: true });
 
-      // Get profile X's id from the leaderboard.
-      const leaderboardRes = await agent
-        .get("/api/admin/stats")
+      const profilesRes = await agent
+        .get("/api/admin/stats/profiles")
         .set("X-Admin-Key", adminKey);
-      const profileX = leaderboardRes.body?.profiles?.find(
+      const profileX = (profilesRes.body?.profiles || []).find(
         (p) => p.name === profileName
       );
-      if (!profileX) {
-        // The seeding flow above didn't land. Skip this iteration —
-        // the surrounding harness churn isn't relevant to the mutex
-        // contract we're testing.
-        continue;
-      }
+      if (!profileX) continue;
 
       // Create two classes. Class A holds profileX so the carve-out
       // path treats it as a candidate. Class B is the target the
@@ -138,24 +153,26 @@ describe("withClassMembershipMutex (#152): class-delete carve-out vs bulk-add", 
       const classARes = await agent
         .post("/api/admin/classes")
         .set("X-Admin-Key", adminKey)
-        .send({ name: `ClassA${iter}` });
+        .send({ name: `ClassA ${tag}` });
       const classBRes = await agent
         .post("/api/admin/classes")
         .set("X-Admin-Key", adminKey)
-        .send({ name: `ClassB${iter}` });
+        .send({ name: `ClassB ${tag}` });
       const classAId = classARes.body?.class?.id;
       const classBId = classBRes.body?.class?.id;
       if (!classAId || !classBId) continue;
 
-      await agent
+      const addToARes = await agent
         .post(`/api/admin/classes/${classAId}/members/bulk`)
         .set("X-Admin-Key", adminKey)
         .send({ names: [profileName] });
+      if (addToARes.status !== 200) continue;
 
       // The race: DELETE A with carve-out + bulk-add to B referencing
       // profileName. Without the mutex these can interleave such that
       // the carve-out strips profileX from the leaderboard AFTER the
       // bulk-add has placed profileX.id in class B.
+      executedRaces += 1;
       const [deleteSettled, bulkSettled] = await Promise.allSettled([
         agent
           .delete(`/api/admin/classes/${classAId}`)
@@ -173,7 +190,7 @@ describe("withClassMembershipMutex (#152): class-delete carve-out vs bulk-add", 
 
       // Post-race state: read class B's roster and the leaderboard.
       const postLeaderboard = await agent
-        .get("/api/admin/stats")
+        .get("/api/admin/stats/profiles")
         .set("X-Admin-Key", adminKey);
       const profileXStillInLeaderboard = (postLeaderboard.body?.profiles || []).some(
         (p) => p.id === profileX.id
@@ -194,5 +211,10 @@ describe("withClassMembershipMutex (#152): class-delete carve-out vs bulk-add", 
     }
 
     expect(anyInvariantBreak).toBe(false);
+    /* Reject vacuous passes — if every iteration skipped (seeding
+       broke at some point), `anyInvariantBreak` stays false but
+       nothing was actually tested. Insist that the bulk of
+       iterations ran the race. Copilot + CodeRabbit on PR #200. */
+    expect(executedRaces).toBeGreaterThanOrEqual(20);
   }, 60000);
 });
