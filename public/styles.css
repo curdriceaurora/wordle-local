@@ -23,6 +23,7 @@
   --table-row-border: rgba(148, 163, 184, 0.18);
   --tile-bg: rgba(15, 23, 42, 0.7);
   --tile-text-strong: #f8fafc;
+  --tile-text-on-fill: #0f172a;
   --tile-contrast-shadow: rgba(15, 23, 42, 0.6);
   --key-hover-bg: #334155;
   --key-absent-shadow: rgba(248, 250, 252, 0.18);
@@ -585,6 +586,13 @@ button:disabled {
   text-align: center;
 }
 
+/* Stop digit-width jitter on values that change at runtime. `admin.css`
+   uses the same opt-in on its job-queue table. Issue #184. */
+.stat-card strong,
+.leaderboard-table td {
+  font-variant-numeric: tabular-nums;
+}
+
 .board {
   --rows: 6;
   --cols: 5;
@@ -637,6 +645,19 @@ button:disabled {
 .tile.correct {
   background: var(--correct);
   border-color: transparent;
+}
+
+/* Without an explicit color, `.tile.present` / `.tile.correct` (and their
+   `.key.*` siblings) inherited `color: var(--text)` from `.tile` / `.key`,
+   which lands white-on-orange-400 (~2.0:1) and white-on-green-500 (~3.0:1)
+   in dark mode — both below WCAG AA. Dark text reads cleanly across all
+   theme variants (dark / light / dark+HC / light+HC) on the saturated
+   present/correct fills. Issue #183. */
+.tile.correct,
+.tile.present,
+.key.correct,
+.key.present {
+  color: var(--tile-text-on-fill);
 }
 
 body.high-contrast .tile.correct,
