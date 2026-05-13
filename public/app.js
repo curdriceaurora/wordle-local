@@ -949,7 +949,11 @@ function renderKeyboardInto(rootEl, opts = {}) {
     rowKeys.forEach((key) => {
       const button = makeKeyButton(key, { onClick: onKey });
       rowEl.appendChild(button);
-      if (captureRefMap && key.length === 1) {
+      if (captureRefMap) {
+        /* Capture ALL keys including `"ENTER"` and `"BACK"`. Without
+           this `flashKey("ENTER")` / `flashKey("BACK")` would silently
+           no-op — wide keys would never visually depress on physical
+           Enter/Backspace. CodeRabbit on PR #196. */
         captureRefMap.set(key, button);
       }
     });
@@ -1023,6 +1027,114 @@ function updateKeyboard(result, guess) {
       keyEl.classList.add(status);
     }
   });
+}
+
+/* ─── Play-surface motion (#182) + key press flash (#185) ──────────────
+   All five animations are gated CSS-side by
+   `prefers-reduced-motion: no-preference`. The JS helpers below mirror
+   that on the trigger side so we don't dangle .is-* classes when the
+   animation won't fire (animationend never reaches us under reduced
+   motion; without this guard the class would stick and break a future
+   re-trigger). Scope: main play board only. Challenge surface is left
+   un-animated for now — same render code, different feature lifecycle;
+   filed as a follow-up rather than dragged into this PR.            */
+const prefersReducedMotionMql = typeof window.matchMedia === "function"
+  ? window.matchMedia("(prefers-reduced-motion: reduce)")
+  : null;
+
+function shouldAnimate() {
+  return !(prefersReducedMotionMql && prefersReducedMotionMql.matches);
+}
+
+function triggerOneShotAnim(el, className, animationName) {
+  if (!el || !shouldAnimate()) return;
+  /* Remove + force reflow + re-add so a second trigger on the same
+     element (e.g. pop on letter, pop on backspace of that letter)
+     restarts the animation cleanly. */
+  el.classList.remove(className);
+  void el.offsetWidth;
+  el.classList.add(className);
+  const onEnd = (event) => {
+    /* Filter by animation name — without this, an unrelated still-
+       in-flight animation on the same element (e.g. a pop ending
+       just as a reveal starts on the last-typed tile) would fire
+       this handler and strip the wrong class. Codex P2 on PR #196. */
+    if (animationName && event.animationName !== animationName) return;
+    el.classList.remove(className);
+    el.removeEventListener("animationend", onEnd);
+    el.removeEventListener("animationcancel", onEnd);
+  };
+  el.addEventListener("animationend", onEnd);
+  el.addEventListener("animationcancel", onEnd);
+}
+
+function triggerRowReveal(row, onSolveComplete) {
+  /* Under reduced motion: skip the animation, but still fire the win
+     chain immediately so callers can rely on it. Without this, a solve
+     under reduced-motion would never get the post-reveal hook. */
+  if (!shouldAnimate()) {
+    if (onSolveComplete) onSolveComplete();
+    return;
+  }
+  let lastTile = null;
+  for (let col = 0; col < cols; col += 1) {
+    const tile = getTile(row, col);
+    if (!tile) continue;
+    tile.style.setProperty("--col", String(col));
+    triggerOneShotAnim(tile, "is-reveal", "tile-reveal");
+    if (col === cols - 1) lastTile = tile;
+  }
+  if (onSolveComplete && lastTile) {
+    /* Filter by animationName — without this, an unrelated animation
+       on `lastTile` (e.g. a stale pop) could fire the chain before
+       the reveal completes. Codex P2 on PR #196.
+       Listen for `animationcancel` too so the listener doesn't leak
+       if the reveal is interrupted (e.g. a fast re-init wipes the
+       board); matches `triggerOneShotAnim`'s dual-event cleanup
+       pattern. CodeRabbit nit on PR #196. */
+    const chain = (event) => {
+      if (event.animationName !== "tile-reveal") return;
+      lastTile.removeEventListener("animationend", chain);
+      lastTile.removeEventListener("animationcancel", chain);
+      if (event.type === "animationend") onSolveComplete();
+    };
+    lastTile.addEventListener("animationend", chain);
+    lastTile.addEventListener("animationcancel", chain);
+  }
+}
+
+function triggerRowShake(row) {
+  /* Reach the `.row` parent via tile 0. Cheaper than a `:nth-child`
+     query and survives any future restructuring of the board grid. */
+  const tile = getTile(row, 0);
+  const rowEl = tile ? tile.parentElement : null;
+  triggerOneShotAnim(rowEl, "is-shake", "row-shake");
+}
+
+function triggerRowWin(row) {
+  if (!shouldAnimate()) return;
+  for (let col = 0; col < cols; col += 1) {
+    const tile = getTile(row, col);
+    if (!tile) continue;
+    tile.style.setProperty("--col", String(col));
+    triggerOneShotAnim(tile, "is-win", "tile-win");
+  }
+}
+
+function triggerTilePop(tile) {
+  triggerOneShotAnim(tile, "is-pop", "tile-pop");
+}
+
+function flashKey(letter) {
+  /* `.key:active` covers pointer/touch; this helper fires the same
+     visual flash on a physical-keyboard keydown so typists see the
+     button depress. setTimeout (not animationend) because the press
+     effect is a `transition`, not a keyframe animation. */
+  if (!shouldAnimate()) return;
+  const btn = keyboardKeyEls.get(letter);
+  if (!btn) return;
+  btn.classList.add("is-pressed");
+  setTimeout(() => btn.classList.remove("is-pressed"), 100);
 }
 
 function resetConstraints() {
@@ -1106,6 +1218,7 @@ function guessComplete() {
 async function submitGuess() {
   if (!guessComplete()) {
     setMessage("Not enough letters.");
+    triggerRowShake(currentRow);
     return;
   }
   if (busy) return;
@@ -1115,6 +1228,7 @@ async function submitGuess() {
     const strictError = validateStrictGuess(guess);
     if (strictError) {
       setMessage(strictError);
+      triggerRowShake(currentRow);
       return;
     }
   }
@@ -1133,6 +1247,7 @@ async function submitGuess() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       setMessage(data.error || "Invalid guess.");
+      triggerRowShake(currentRow);
       return;
     }
 
@@ -1140,6 +1255,14 @@ async function submitGuess() {
     updateKeyboard(data.result, guess);
     updateConstraints(guess, data.result);
     setSrStatus(`Guess ${currentRow + 1}: ${describeResult(guess, data.result)}`);
+    /* Reveal animation runs alongside the existing background-color
+       transition on `.tile` — color slides in as the tile punches.
+       On the solve row the win celebration chains off the last tile's
+       `animationend`. */
+    triggerRowReveal(
+      currentRow,
+      data.isCorrect ? () => triggerRowWin(currentRow) : null
+    );
 
     if (data.isCorrect) {
       locked = true;
@@ -1203,6 +1326,7 @@ function handleKey(rawKey) {
       currentCol -= 1;
       guesses[currentRow][currentCol] = "";
       updateTile(currentRow, currentCol, "", false);
+      triggerTilePop(getTile(currentRow, currentCol));
     }
     return;
   }
@@ -1211,6 +1335,7 @@ function handleKey(rawKey) {
 
   guesses[currentRow][currentCol] = key;
   updateTile(currentRow, currentCol, key, true);
+  triggerTilePop(getTile(currentRow, currentCol));
   currentCol += 1;
 }
 
@@ -1234,13 +1359,21 @@ function handlePhysicalKey(event) {
   if (isTextInputTarget) {
     return;
   }
+  let mappedKey = null;
   if (event.key === "Enter") {
-    handleKey("ENTER");
+    mappedKey = "ENTER";
   } else if (event.key === "Backspace") {
-    handleKey("BACK");
+    mappedKey = "BACK";
   } else if (/^[a-zA-Z]$/.test(event.key)) {
-    handleKey(event.key);
+    mappedKey = event.key.toUpperCase();
   }
+  if (mappedKey === null) return;
+  /* Physical-keystroke parity for the on-screen keyboard (#185).
+     `:active` covers pointer interaction; this fires the same
+     `.is-pressed` flash for typists who never touch the screen
+     buttons. */
+  flashKey(mappedKey);
+  handleKey(mappedKey);
 }
 
 function buildShareLink(code, lang, guessesCount, options = {}) {
