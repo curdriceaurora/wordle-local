@@ -193,7 +193,7 @@ function createChallengesRouter(deps) {
     }
     if (profile.error === "INVALID_PROFILE_NAME") {
       return res.status(400).json({
-        error: "profileName must start with a letter and contain only letters, spaces, apostrophes, or hyphens (1-32 codepoints).",
+        error: "profileName must be 1-32 characters starting with a letter and using only letters, spaces, apostrophes, or hyphens.",
         code: "INVALID_PROFILE_NAME"
       });
     }
