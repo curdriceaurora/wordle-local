@@ -1673,15 +1673,48 @@ if (leaderboardRangeEl) {
   });
 }
 
+let copyFlashTimeout = null;
+
+/* Swap the share-copy button to its "Copied ✓" state for 1.2s. Restoration
+   uses the button's `data-i18n` key, not a stashed textContent literal, so
+   a locale switch during the flash window still restores to the right
+   label. Re-entrant: a second click within 1.2s extends the flash, doesn't
+   stack restorations. */
+function flashCopied() {
+  const i18n = window.i18n;
+  shareCopyBtn.textContent = i18n ? i18n.t("play.copied") : "Copied";
+  shareCopyBtn.classList.add("is-copied");
+  clearTimeout(copyFlashTimeout);
+  copyFlashTimeout = setTimeout(() => {
+    const i18nNow = window.i18n;
+    const originalKey = shareCopyBtn.getAttribute("data-i18n");
+    if (i18nNow && originalKey) {
+      shareCopyBtn.textContent = i18nNow.t(originalKey);
+    } else {
+      shareCopyBtn.textContent = "Copy link";
+    }
+    shareCopyBtn.classList.remove("is-copied");
+    copyFlashTimeout = null;
+  }, 1200);
+}
+
 shareCopyBtn.addEventListener("click", async () => {
   if (!shareLinkInput.value) return;
+  let ok = false;
   try {
     await navigator.clipboard.writeText(shareLinkInput.value);
-    setMessage("Share link copied.");
-  } catch (err) {
+    ok = true;
+  } catch (_err) {
     shareLinkInput.select();
-    document.execCommand("copy");
-    setMessage("Share link copied.");
+    try { ok = document.execCommand("copy"); } catch (_e) { ok = false; }
+  }
+  if (ok) {
+    flashCopied();
+    const i18n = window.i18n;
+    setSrStatus(i18n ? i18n.t("play.copiedAnnouncement") : "Share link copied to clipboard");
+  } else {
+    const i18n = window.i18n;
+    setMessage(i18n ? i18n.t("play.copyFailed") : "Couldn't copy — long-press the link to select");
   }
 });
 

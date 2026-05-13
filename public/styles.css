@@ -428,6 +428,15 @@ p {
   color: var(--accent);
 }
 
+/* "Copied ✓" success flash on the share copy button. Tied to the
+   `.is-copied` class which is added for 1.2s after a successful clipboard
+   write (see `flashCopied` in app.js). Uses the same green as
+   `.tile.correct` so the success affordance is consistent across the app. */
+.ghost.is-copied {
+  border-color: var(--correct);
+  color: var(--correct);
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
