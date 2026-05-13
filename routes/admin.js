@@ -308,7 +308,15 @@ function createAdminRouter(deps) {
           throw new StatsApiError(404, "Player profile not found.");
         }
         const duplicate = draft.profiles.find(
-          (item) => item.id !== profileId && item.name.toLowerCase() === nextName.toLowerCase()
+          // NFC-normalize the persisted side — older rows written
+          // before the NFC fix may be NFD, and `nextName` is already
+          // NFC via `normalizeProfileNameInput`. Without this, a
+          // rename to NFC `José` wouldn't see an existing NFD
+          // `José` row and would silently create a duplicate.
+          // Codex P2 on PR #180.
+          (item) =>
+            item.id !== profileId
+            && item.name.normalize("NFC").toLowerCase() === nextName.toLowerCase()
         );
         if (duplicate) {
           throw new StatsApiError(409, "Another player already uses that name.");
@@ -2436,7 +2444,10 @@ function createAdminRouter(deps) {
     }
     const existingProfileByLowerName = new Map();
     for (const profile of leaderboardSnapshotForPrecheck.profiles) {
-      existingProfileByLowerName.set(profile.name.toLowerCase(), profile.id);
+      // NFC-normalize the persisted side (see the rename duplicate
+      // check above) so a legacy NFD row matches an NFC bulk-add
+      // candidate. Codex P2 on PR #180.
+      existingProfileByLowerName.set(profile.name.normalize("NFC").toLowerCase(), profile.id);
     }
     const targetMemberSet = new Set(target.memberProfileIds);
     let projectedNetNew = 0;
@@ -2489,7 +2500,10 @@ function createAdminRouter(deps) {
       await withSlot(() => leaderboardStore.mutate((draft) => {
         const nowIso = new Date().toISOString();
         const existingByLowerName = new Map(
-          draft.profiles.map((profile) => [profile.name.toLowerCase(), profile])
+          // NFC-normalize the persisted side (see the rename
+          // duplicate check above) so a legacy NFD row matches an
+          // NFC bulk-add candidate. Codex P2 on PR #180.
+          draft.profiles.map((profile) => [profile.name.normalize("NFC").toLowerCase(), profile])
         );
         for (const name of normalizedNames) {
           const key = name.toLowerCase();
