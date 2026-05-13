@@ -41,6 +41,12 @@ describe("profile-name validator", () => {
       "X",
       // Exactly 32 codepoints (the regex cap)
       "A" + "b".repeat(31),
+      // Astral-plane letter (CJK Extension B). `.length` for this
+      // single character is 2 (UTF-16 surrogate pair) but it's one
+      // codepoint — the validator must use the regex (which counts
+      // codepoints in /u mode) and not bare `.length` for the cap.
+      // 𠀀 = U+20000 = "𠀀".
+      "𠀀",
       // Internal apostrophes
       "O'Brien",
       "D'Angelo",

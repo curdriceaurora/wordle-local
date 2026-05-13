@@ -2407,15 +2407,19 @@ class StatsApiError extends Error {
 }
 
 function normalizeProfileNameInput(rawName) {
-  // Single-space normalization first (collapses any internal runs of
-  // whitespace into one ASCII space — matches what NAME_PATTERN
-  // actually allows). Then validate via the shared rule from
-  // lib/profile-name.js (issue #174).
-  const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
+  // Collapse only LITERAL spaces (not all whitespace) so embedded
+  // tabs / newlines survive trim() and get rejected by NAME_PATTERN
+  // rather than silently collapsing to a valid space. Length check
+  // uses Array.from(...).length to count Unicode codepoints — bare
+  // `.length` returns UTF-16 units, which would over-count any
+  // astral-plane letter (e.g. a CJK Extension B character) and
+  // reject a name that NAME_PATTERN's `{0,31}` codepoint quantifier
+  // would accept. Codex/Copilot review on PR #180.
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ");
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }
-  if (cleaned.length > NAME_LENGTH_MAX) {
+  if (Array.from(cleaned).length > NAME_LENGTH_MAX) {
     throw new StatsApiError(400, `Player name must be ${NAME_LENGTH_MAX} characters or fewer.`);
   }
   if (!isValidProfileName(cleaned)) {

@@ -390,12 +390,21 @@ function enableStatsDegradedMode() {
 // this mirror, the client would block server-valid names (`José`,
 // `李明`, 25-32 char) before the request leaves the page. Codex P2
 // review on PR #180.
+//
+// Whitespace normalization collapses only LITERAL spaces (` +`, not
+// `\s+`) so embedded tabs/newlines survive trim() and get rejected
+// by NAME_PATTERN rather than silently flattening to a valid space.
+// Length check uses Array.from(...).length to count Unicode
+// codepoints — bare `.length` is UTF-16 units and would over-count
+// any astral-plane letter (e.g. CJK Extension B) that the regex's
+// `{0,31}` codepoint quantifier would accept. Same fix as the two
+// server callers (server.js + lib/leaderboard-store.js).
 const PROFILE_NAME_LENGTH_MAX = 32;
 const PROFILE_NAME_PATTERN = /^\p{L}[\p{L}\p{M}' -]{0,31}$/u;
 function normalizeProfileName(rawName) {
-  const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
+  const cleaned = String(rawName || "").trim().replace(/ +/g, " ");
   if (!cleaned) return "";
-  if (cleaned.length > PROFILE_NAME_LENGTH_MAX) return "";
+  if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
   if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
 }

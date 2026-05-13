@@ -106,9 +106,13 @@ function createChallengesRouter(deps) {
     const profileName = typeof body?.profileName === "string" ? body.profileName.trim() : "";
     if (!profileId || profileId.length > 64) return null;
     // Shared validator (issue #174): same regex + 32-cp cap as the
-    // leaderboard side. Reject malformed names rather than silently
-    // dropping; the client pre-fills with a regex-clean default so
-    // legitimate submissions always pass.
+    // leaderboard side. A profileName that doesn't pass is silently
+    // dropped to `undefined` — the session is recorded against the
+    // profileId, the leaderboard row just has no display name on it.
+    // Hard-rejecting (400) would block the gameplay path entirely on
+    // a name typo; this preserves the result while losing only the
+    // label. The client pre-fills with a regex-clean default so
+    // legitimate submissions always carry a valid name through.
     return {
       profileId,
       profileName: isValidProfileName(profileName) ? profileName : undefined
