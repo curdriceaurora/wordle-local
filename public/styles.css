@@ -852,6 +852,77 @@ body.high-contrast .key.absent {
   outline-offset: 2px;
 }
 
+/* Play-surface motion (issue #182) + on-screen-keyboard press flash
+   (issue #185). All animations live inside a
+   `prefers-reduced-motion: no-preference` block so users who've asked
+   for less motion get none. The blanket `* { animation: none }` reset
+   below is the secondary safety net; gating per-rule makes intent
+   explicit at the source. Transform/opacity only so the compositor
+   can run these on the GPU with no layout cost. */
+@media (prefers-reduced-motion: no-preference) {
+  /* A. Reveal — per-tile scale + slight rotate as the feedback color
+     arrives. Column stagger via `--col` (set in JS at submit time). The
+     existing `transition: background 0.2s ease` on `.tile` carries the
+     color in parallel; this animation is transform-only. */
+  @keyframes tile-reveal {
+    0%   { transform: scale(0.4) rotate(-6deg); }
+    60%  { transform: scale(1.08) rotate(2deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .tile.is-reveal {
+    animation: tile-reveal 280ms ease-out both;
+    animation-delay: calc(var(--col, 0) * 60ms);
+  }
+
+  /* B. Shake — active row on rejected guess (HTTP non-OK, strict-mode
+     violation, or premature submit). Asymmetric peaks deliver the
+     "physical jolt then settle" feel. */
+  @keyframes row-shake {
+    0%, 100% { transform: translateX(0); }
+    16%      { transform: translateX(-8px); }
+    33%      { transform: translateX(8px); }
+    50%      { transform: translateX(-6px); }
+    66%      { transform: translateX(6px); }
+    83%      { transform: translateX(-3px); }
+  }
+  .row.is-shake {
+    animation: row-shake 380ms ease-out both;
+  }
+
+  /* C. Win — fires only on the solved row, chained off the reveal
+     animation completing. Bounce up + full Y rotation; stagger via
+     `--col` × 80ms. */
+  @keyframes tile-win {
+    0%   { transform: translateY(0) rotateY(0); }
+    50%  { transform: translateY(-12px) rotateY(180deg); }
+    100% { transform: translateY(0) rotateY(360deg); }
+  }
+  .tile.is-win {
+    animation: tile-win 600ms ease-out both;
+    animation-delay: calc(var(--col, 0) * 80ms);
+  }
+
+  /* D. Capture pop — brief scale punch when a letter fills, or when
+     backspace clears. Independent per tile; fast typing stacks (each
+     tile is its own surface). */
+  @keyframes tile-pop {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+  }
+  .tile.is-pop {
+    animation: tile-pop 120ms ease-out;
+  }
+
+  /* E. On-screen key press (#185). `:active` covers pointer
+     interaction natively; `.is-pressed` is JS-applied on physical
+     keystroke for parity. Short enough not to lag fast typists. */
+  .key:active,
+  .key.is-pressed {
+    transform: scale(0.95);
+    transition: transform 60ms ease-out;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
