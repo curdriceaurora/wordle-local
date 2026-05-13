@@ -893,22 +893,31 @@ function buildBoard() {
     // cellAt omitted — initial board is all empty; updateTile() and
     // paintRow() patch tiles incrementally as the user plays.
   });
+  /* Clear the skeleton's `aria-busy` marker — the real board is
+     announceable now. */
+  boardEl.removeAttribute("aria-busy");
 }
 
-/* Default 6×5 skeleton mounted between `showPlay()` and the
+/* Cold-load skeleton mounted between `showPlay()` and the
    `/api/puzzle` response (typically <100ms). Replaces the empty-area
    gap below "Loading puzzle…" with a softly pulsing grid. `buildBoard()`
-   in `resetGame()` clears this when real dimensions arrive. The
-   skeleton dims are the most-common Wordle shape; if the real puzzle
-   is 3- or 8-letter the grid resizes briefly when data lands —
-   acceptable for a sub-100ms transition. Issue #191. */
-function mountSkeletonBoard() {
+   in `resetGame()` clears this when real dimensions arrive. Issue #191.
+
+   - `expectedRows` uses the guessesCount the caller already knows, so
+     a non-default guesses puzzle doesn't get a 6→N reshape on data
+     arrival. CodeRabbit on PR #197.
+   - `aria-busy` marks the board as in-flight so AT doesn't announce
+     30 bogus "Empty" cells during the skeleton window. Copilot on PR
+     #197. */
+function mountSkeletonBoard(expectedRows) {
   if (!boardEl) return;
+  const rows = Math.max(3, Math.min(10, Number(expectedRows) || defaultGuesses));
   const refs = buildBoardGrid(boardEl, {
-    rows: 6,
+    rows,
     cols: 5,
     captureRefs: true
   });
+  boardEl.setAttribute("aria-busy", "true");
   if (!refs) return;
   for (const row of refs) {
     for (const tile of row) {
@@ -1679,8 +1688,21 @@ function applyTheme(preference, options = {}) {
 
 async function initPlay(code, lang, guessesCount, options = {}) {
   const initTimer = startPerfMeasure("ui.initPlay");
+  /* Lock input through the skeleton + fetch window. Without this,
+     `handleKey()` could fire before `resetGame()` initializes
+     `guesses` / `currentRow`, and `guesses[currentRow]` would throw.
+     `resetGame()` clears `locked` when real data arrives. CodeRabbit
+     critical on PR #197. */
+  locked = true;
   showPlay();
-  mountSkeletonBoard();
+  /* Mount the skeleton only on cold loads. If `boardEl` already holds
+     a real grid (e.g. user navigated to a new puzzle mid-session),
+     wiping it now would point `tileGrid` at detached nodes until
+     `resetGame()` rebuilds. The existing grid stays visible until
+     real data arrives. Copilot on PR #197. */
+  if (boardEl && !boardEl.firstChild) {
+    mountSkeletonBoard(guessesCount);
+  }
   if (!physicalKeyboardBound) {
     document.addEventListener("keydown", handlePhysicalKey);
     physicalKeyboardBound = true;
