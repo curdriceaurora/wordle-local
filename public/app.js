@@ -2260,9 +2260,16 @@ if (challengeProfileInputEl) {
     // counts code points, so `.slice` would either truncate astral
     // letters too aggressively or cut a surrogate pair and produce
     // an invalid string. Caught by Copilot on PR #180.
+    // NFC-normalize here too — matches normalizeProfileName() so a
+    // user typing decomposed accents (NFD `José` = `e` + combining
+    // acute) stores the same bytes the next page-load prefill will
+    // display after running through normalizeProfileName. Without
+    // NFC here, the persisted value drifts after refresh. Caught by
+    // Copilot on PR #180.
     const cleaned = String(challengeProfileInputEl.value || '')
       .trim()
-      .replace(/ +/g, ' ');
+      .replace(/ +/g, ' ')
+      .normalize('NFC');
     setChallengeProfileName(
       Array.from(cleaned).slice(0, PROFILE_NAME_LENGTH_MAX).join('')
     );
