@@ -403,10 +403,12 @@ function enableStatsDegradedMode() {
 //     `\s+`, so embedded tabs/newlines survive trim() and get
 //     rejected by the regex rather than silently flattening to a
 //     valid space.
-//   - Length check uses Array.from(...).length to count Unicode
-//     codepoints — bare `.length` is UTF-16 units and would
-//     over-count astral-plane letters (e.g. CJK Extension B) that
-//     the regex's codepoint quantifier accepts.
+//   - Length cap uses `cleaned.length` (UTF-16 code units) to match
+//     HTML `maxlength="32"`, `data/leaderboard.schema.json`
+//     `maxLength: 32`, and the shared validator's internal check.
+//     The /u regex's `{0,31}` codepoint quantifier is the looser
+//     character-class anchor; UTF-16 length is the binding
+//     constraint for astral-plane characters.
 //   - The regex quantifier is derived from PROFILE_NAME_LENGTH_MAX
 //     so the cap is defined in one place (matches lib/profile-name.js).
 const PROFILE_NAME_LENGTH_MAX = 32;

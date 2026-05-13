@@ -39,7 +39,12 @@
             "minLength": 1,
             "maxLength": 64
           },
-          "profileName": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "profileName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$"
+          },
           "status": {
             "type": "string",
             "enum": ["pending", "in-progress", "completed", "timed-out", "abandoned"]

@@ -2409,12 +2409,14 @@ class StatsApiError extends Error {
 function normalizeProfileNameInput(rawName) {
   // Collapse only LITERAL spaces (not all whitespace) so embedded
   // tabs / newlines survive trim() and get rejected by NAME_PATTERN
-  // rather than silently collapsing to a valid space. Length check
-  // uses Array.from(...).length to count Unicode codepoints — bare
-  // `.length` returns UTF-16 units, which would over-count any
-  // astral-plane letter (e.g. a CJK Extension B character) and
-  // reject a name that NAME_PATTERN's `{0,31}` codepoint quantifier
-  // would accept.
+  // rather than silently collapsing to a valid space.
+  //
+  // Length cap uses `cleaned.length` (UTF-16 code units) to match
+  // HTML `maxlength="32"`, `data/leaderboard.schema.json`
+  // `maxLength: 32`, and the shared validator's internal check.
+  // NAME_PATTERN's `{0,31}` codepoint quantifier (under /u) adds a
+  // character-class anchor but is the looser of the two — UTF-16
+  // length is the binding constraint for astral-plane characters.
   //
   // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
   // combining-acute) produce identical bytes for storage and the

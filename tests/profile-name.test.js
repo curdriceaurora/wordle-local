@@ -39,13 +39,12 @@ describe("profile-name validator", () => {
       "अनिता",
       // Min length 1
       "X",
-      // Exactly 32 codepoints (the regex cap)
+      // Exactly 32 chars (the cap), BMP-only so codepoint count
+      // and UTF-16 code unit count coincide.
       "A" + "b".repeat(31),
-      // Astral-plane letter (CJK Extension B). `.length` for this
-      // single character is 2 (UTF-16 surrogate pair) but it's one
-      // codepoint — the validator must use the regex (which counts
-      // codepoints in /u mode) and not bare `.length` for the cap.
-      // 𠀀 = U+20000 = "𠀀".
+      // Single astral-plane letter (CJK Extension B, 1 codepoint =
+      // 2 UTF-16 units, under both caps).
+      // 𠀀 = U+20000.
       "𠀀",
       // Internal apostrophes
       "O'Brien",
@@ -88,7 +87,7 @@ describe("profile-name validator", () => {
       // Newlines / tabs (regex only allows space among whitespace)
       "Alice\nBob",
       "Alice\tBob",
-      // Over the 32-codepoint cap
+      // Over the 32-char cap (33 BMP letters = 33 UTF-16 units)
       "A" + "b".repeat(32),
       // Way over
       "A".repeat(100)
