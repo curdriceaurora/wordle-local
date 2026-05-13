@@ -117,7 +117,6 @@ test("daily mode requires a player name and updates leaderboard stats", async ({
 test("strict mode enforces revealed hints", async ({ page }) => {
   await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)");
-  await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
   await page.click("#board");
   await page.keyboard.type("CRATE");
@@ -139,7 +138,6 @@ test("strict mode requires repeated letters when revealed", async ({ page }) => 
   await page.fill("#wordInput", "LEVEL");
   await page.click("form#createForm button[type=submit]");
   await page.waitForSelector("#playPanel:not(.hidden)");
-  await expect(page.locator("#updated")).toContainText("Game ready");
   await page.check("#strictToggle");
   await page.click("#board");
   await page.keyboard.type("ALLOT");

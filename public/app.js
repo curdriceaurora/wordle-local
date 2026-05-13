@@ -17,7 +17,6 @@ const guessInput = document.getElementById("guessInput");
 const randomBtn = document.getElementById("randomBtn");
 const createStatus = document.getElementById("createStatus");
 const hintEl = document.querySelector(".hint");
-const updatedEl = document.getElementById("updated");
 const shareLinkInput = document.getElementById("shareLink");
 const shareCopyBtn = document.getElementById("shareCopyBtn");
 const themeSelect = document.getElementById("themeSelect");
@@ -1755,7 +1754,6 @@ async function initPlay(code, lang, guessesCount, options = {}) {
     });
     renderDailyPlayerPanels();
   }
-  updatedEl.textContent = "Game ready";
   updateShareLink(
     buildShareLink(code, puzzleLang, maxGuesses, {
       dailyMode,
@@ -1773,7 +1771,6 @@ function initCreate() {
   clearStatsServiceUnavailable();
   renderDailyPlayerPanels();
   showCreate();
-  updatedEl.textContent = "Create mode";
 }
 
 async function startPuzzle(code, lang, guessesCount) {
