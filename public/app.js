@@ -2238,18 +2238,24 @@ if (challengeProfileInputEl) {
     setChallengeProfileName(initialName);
   }
   challengeProfileInputEl.addEventListener('input', () => {
-    // Match the same trim + space-collapse + slice that
+    // Match the same trim + space-collapse + codepoint-clamp that
     // normalizeProfileName() does on load, so the persisted value
     // is byte-identical to what the next page-load will display.
     // Without this collapse, a user typing "Mary  Jane" (double
     // space) would see one thing in the field, get something else
     // persisted on submit, and see a third thing (collapsed by
     // normalizeProfileName) after refresh. Caught by Copilot.
+    //
+    // Truncate by Unicode code points (Array.from) not UTF-16 code
+    // units (.slice); the validator's `{0,31}` quantifier under /u
+    // counts code points, so `.slice` would either truncate astral
+    // letters too aggressively or cut a surrogate pair and produce
+    // an invalid string. Caught by Copilot on PR #180.
+    const cleaned = String(challengeProfileInputEl.value || '')
+      .trim()
+      .replace(/ +/g, ' ');
     setChallengeProfileName(
-      String(challengeProfileInputEl.value || '')
-        .trim()
-        .replace(/ +/g, ' ')
-        .slice(0, PROFILE_NAME_LENGTH_MAX)
+      Array.from(cleaned).slice(0, PROFILE_NAME_LENGTH_MAX).join('')
     );
   });
 }

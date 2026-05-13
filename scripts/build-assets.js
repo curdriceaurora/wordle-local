@@ -8,8 +8,21 @@ const distDir = path.join(publicDir, "dist");
 const adminDir = path.join(publicDir, "admin");
 const distAdminDir = path.join(distDir, "admin");
 
-fs.rmSync(distDir, { recursive: true, force: true });
-fs.mkdirSync(distDir, { recursive: true });
+// Wipe dist/ but PRESERVE vendor/ — it's the one subdir of public/dist
+// that's committed to git (chart.umd.min.js et al, see .gitignore's
+// `!public/dist/vendor/`). A blanket rmSync would delete those tracked
+// files and dirty the working tree on every build, which previously
+// happened. The /dist/vendor express mount in server.js reads from
+// PUBLIC_ROOT/dist/vendor regardless of dist mode, so the directory
+// must continue to exist.
+if (fs.existsSync(distDir)) {
+  for (const entry of fs.readdirSync(distDir)) {
+    if (entry === "vendor") continue;
+    fs.rmSync(path.join(distDir, entry), { recursive: true, force: true });
+  }
+} else {
+  fs.mkdirSync(distDir, { recursive: true });
+}
 fs.mkdirSync(distAdminDir, { recursive: true });
 
 async function build() {
@@ -53,6 +66,17 @@ async function build() {
   // to ship them alongside the minified app.js. Without this, any
   // /js/*.js URL 404s in dist mode. Codex P1 on PR #180 (#174).
   fs.cpSync(path.join(publicDir, "js"), path.join(distDir, "js"), { recursive: true });
+
+  // Copy PWA assets: the service worker, web app manifest, and icon
+  // set. PUBLIC_PATH flips to public/dist when dist/index.html exists,
+  // so the express.static mount at server.js:3562 will 404 any of
+  // these if they aren't present in dist — breaking PWA install on
+  // production (Vercel) and the pwa.test.js suite locally. Codex P2
+  // on PR #180 about the new pickRandomName precache only matters
+  // if sw.js itself reaches dist, so this copy was always required.
+  fs.copyFileSync(path.join(publicDir, "sw.js"), path.join(distDir, "sw.js"));
+  fs.copyFileSync(path.join(publicDir, "manifest.json"), path.join(distDir, "manifest.json"));
+  fs.cpSync(path.join(publicDir, "icons"), path.join(distDir, "icons"), { recursive: true });
 }
 
 build().catch((err) => {
