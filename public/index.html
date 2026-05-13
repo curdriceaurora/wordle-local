@@ -130,11 +130,12 @@
         <div class="play-head">
           <div>
             <h2 data-i18n="play.heading">Play</h2>
-            <!-- #playMeta is runtime-owned: initPlay() writes formatted
-                 metadata into textContent. DON'T add data-i18n here —
-                 updateDOM() would clobber the dynamic value with the
-                 static "Loading…" string on every locale switch.
-                 Initial string is set internally via i18n.t("play.loading"). -->
+            <!-- #playMeta is runtime-owned: initPlay() builds `baseMeta`
+                 (a template literal: "Language: X · Length: N · M tries"),
+                 then updatePlayMeta() writes textContent. The markup
+                 "Loading puzzle…" is the pre-init placeholder only.
+                 DON'T add data-i18n here — updateDOM() on locale switch
+                 would clobber the dynamic baseMeta string. -->
             <p id="playMeta">Loading puzzle…</p>
           </div>
           <a class="admin-link" href="/" data-i18n="play.createYours">Create yours</a>

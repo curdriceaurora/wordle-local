@@ -32,7 +32,6 @@
   },
   "play": {
     "heading": "Play",
-    "loading": "Loading puzzle…",
     "createYours": "Create yours",
     "switchPlayer": "Switch player",
     "familyPlayerHeading": "Player",
