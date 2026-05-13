@@ -130,7 +130,7 @@ body.high-contrast {
 html.theme-light body.high-contrast {
   /* High-contrast + light theme: the page bg stays light, so the
      bright red #ff5d5d would only hit ~2.9:1 against white. Re-use the
-     darker red-700 from light theme (.b91c1c on white = 6.4:1).
+     darker red-700 from light theme (#b91c1c on white = 6.4:1).
      Codex P2 review on PR #168. */
   --danger: #b91c1c;
   --text-on-danger: #ffffff;
@@ -363,9 +363,14 @@ p {
    the same visual weight for very different consequence levels.
    Split into three explicit roles below; `.ghost` is kept for true
    secondary actions only. */
+/* `:not(.ghost)` because `.create-form button` (specificity 0,1,1)
+   beats plain `.ghost` (0,1,0) — without the negation, `#randomBtn`
+   (the secondary "Random word" button inside the create form, which
+   carries `class="ghost"`) would render with the primary fill. Codex
+   P2 review on PR #168. */
 .btn-primary,
-.create-form button,
-.admin-form button {
+.create-form button:not(.ghost),
+.admin-form button:not(.ghost) {
   padding: 0.75rem 1rem;
   border: none;
   border-radius: 0.6rem;
