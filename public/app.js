@@ -384,11 +384,19 @@ function enableStatsDegradedMode() {
   renderDailyPlayerPanels();
 }
 
+// Mirror of the server-side validator in lib/profile-name.js
+// (issue #174). Must stay in sync — the server rejects identically
+// so a name accepted here will always be accepted on submit. Without
+// this mirror, the client would block server-valid names (`José`,
+// `李明`, 25-32 char) before the request leaves the page. Codex P2
+// review on PR #180.
+const PROFILE_NAME_LENGTH_MAX = 32;
+const PROFILE_NAME_PATTERN = /^\p{L}[\p{L}\p{M}' -]{0,31}$/u;
 function normalizeProfileName(rawName) {
   const cleaned = String(rawName || "").trim().replace(/\s+/g, " ");
   if (!cleaned) return "";
-  if (cleaned.length > 24) return "";
-  if (!/^[A-Za-z][A-Za-z '-]*$/.test(cleaned)) return "";
+  if (cleaned.length > PROFILE_NAME_LENGTH_MAX) return "";
+  if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
 }
 
