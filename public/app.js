@@ -2238,8 +2238,18 @@ if (challengeProfileInputEl) {
     setChallengeProfileName(initialName);
   }
   challengeProfileInputEl.addEventListener('input', () => {
+    // Match the same trim + space-collapse + slice that
+    // normalizeProfileName() does on load, so the persisted value
+    // is byte-identical to what the next page-load will display.
+    // Without this collapse, a user typing "Mary  Jane" (double
+    // space) would see one thing in the field, get something else
+    // persisted on submit, and see a third thing (collapsed by
+    // normalizeProfileName) after refresh. Caught by Copilot.
     setChallengeProfileName(
-      String(challengeProfileInputEl.value || '').trim().slice(0, PROFILE_NAME_LENGTH_MAX)
+      String(challengeProfileInputEl.value || '')
+        .trim()
+        .replace(/ +/g, ' ')
+        .slice(0, PROFILE_NAME_LENGTH_MAX)
     );
   });
 }

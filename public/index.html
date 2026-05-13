@@ -156,6 +156,7 @@
                 id="profileNameInput"
                 name="profileName"
                 autocomplete="off"
+                maxlength="64"
                 data-i18n-attr="placeholder:play.namePlaceholder"
               />
             </label>
@@ -245,7 +246,7 @@
         <div id="challengeProfileRow" class="form-row">
           <label>
             <span data-i18n="challenge.profileNameLabel">Profile name</span>
-            <input id="challengeProfileInput" type="text" autocomplete="off" data-i18n-attr="placeholder:challenge.profileNamePlaceholder" />
+            <input id="challengeProfileInput" type="text" maxlength="64" autocomplete="off" data-i18n-attr="placeholder:challenge.profileNamePlaceholder" />
             <span class="hint" data-i18n="challenge.profileNameHint">Used on the leaderboard. Stored on this device.</span>
           </label>
         </div>
