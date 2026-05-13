@@ -388,19 +388,24 @@ function enableStatsDegradedMode() {
 // (issue #174). Must stay in sync — the server rejects identically
 // so a name accepted here will always be accepted on submit. Without
 // this mirror, the client would block server-valid names (`José`,
-// `李明`, 25-32 char) before the request leaves the page. Codex P2
-// review on PR #180.
+// `李明`, 25-32 char) before the request leaves the page.
 //
-// Whitespace normalization collapses only LITERAL spaces (` +`, not
-// `\s+`) so embedded tabs/newlines survive trim() and get rejected
-// by NAME_PATTERN rather than silently flattening to a valid space.
-// Length check uses Array.from(...).length to count Unicode
-// codepoints — bare `.length` is UTF-16 units and would over-count
-// any astral-plane letter (e.g. CJK Extension B) that the regex's
-// `{0,31}` codepoint quantifier would accept. Same fix as the two
-// server callers (server.js + lib/leaderboard-store.js).
+// Notes:
+//   - Whitespace normalization collapses only LITERAL spaces, not
+//     `\s+`, so embedded tabs/newlines survive trim() and get
+//     rejected by the regex rather than silently flattening to a
+//     valid space.
+//   - Length check uses Array.from(...).length to count Unicode
+//     codepoints — bare `.length` is UTF-16 units and would
+//     over-count astral-plane letters (e.g. CJK Extension B) that
+//     the regex's codepoint quantifier accepts.
+//   - The regex quantifier is derived from PROFILE_NAME_LENGTH_MAX
+//     so the cap is defined in one place (matches lib/profile-name.js).
 const PROFILE_NAME_LENGTH_MAX = 32;
-const PROFILE_NAME_PATTERN = /^\p{L}[\p{L}\p{M}' -]{0,31}$/u;
+const PROFILE_NAME_PATTERN = new RegExp(
+  `^\\p{L}[\\p{L}\\p{M}' -]{0,${PROFILE_NAME_LENGTH_MAX - 1}}$`,
+  "u"
+);
 function normalizeProfileName(rawName) {
   const cleaned = String(rawName || "").trim().replace(/ +/g, " ");
   if (!cleaned) return "";
@@ -760,7 +765,7 @@ async function createOrSelectProfile(rawName) {
   if (!normalizedName) {
     return {
       ok: false,
-      error: "Use letters, spaces, apostrophes, or hyphens (max 24 chars)."
+      error: `Use letters, spaces, apostrophes, or hyphens (max ${PROFILE_NAME_LENGTH_MAX} chars).`
     };
   }
 
@@ -2198,46 +2203,36 @@ function setChallengeProfileName(name) {
   try { localStorage.setItem(CHALLENGE_PROFILE_NAME_KEY, name); } catch (_e) { /* ignore */ }
 }
 
-// Adjective + Animal random name generator (issue #174). Both
-// profile inputs prefill from this when the value + localStorage are
-// both empty, giving the user a regex-clean starting point. Every
-// `<Adjective> <Animal>` combination passes the shared NAME_PATTERN
-// in lib/profile-name.js (ASCII letters + one internal space, well
-// under the 32-codepoint cap). Curated lists; no profanity sweep
-// needed at this size.
-const RANDOM_NAME_ADJECTIVES = Object.freeze([
-  "Brave", "Bold", "Calm", "Clever", "Curious", "Daring", "Eager",
-  "Friendly", "Gentle", "Happy", "Jolly", "Keen", "Kind", "Lively",
-  "Lucky", "Merry", "Nimble", "Plucky", "Proud", "Quiet", "Quick",
-  "Sharp", "Silly", "Smart", "Steady", "Sunny", "Swift", "Witty"
-]);
-const RANDOM_NAME_ANIMALS = Object.freeze([
-  "Badger", "Beaver", "Falcon", "Ferret", "Fox", "Hare", "Hawk",
-  "Heron", "Jaguar", "Lynx", "Magpie", "Marten", "Mongoose", "Otter",
-  "Owl", "Panda", "Penguin", "Raven", "Robin", "Seal", "Shark",
-  "Sparrow", "Stoat", "Stork", "Tiger", "Toucan", "Vixen", "Walrus"
-]);
-function pickRandomName() {
-  const adj = RANDOM_NAME_ADJECTIVES[Math.floor(Math.random() * RANDOM_NAME_ADJECTIVES.length)];
-  const animal = RANDOM_NAME_ANIMALS[Math.floor(Math.random() * RANDOM_NAME_ANIMALS.length)];
-  return `${adj} ${animal}`;
-}
+// `pickRandomName` is loaded as a UMD-style global from
+// public/js/random-name.js (issue #174). It's also exported as a
+// CommonJS module so tests/profile-name.test.js can iterate every
+// adjective/animal combination through the validator. The inline
+// definition used to live here; extracted so a single source of
+// truth governs the default-name lists.
 
 if (challengeProfileInputEl) {
-  // Prefill: keep any stored localStorage name; otherwise drop in a
-  // regex-clean random default so the input isn't blank on first
-  // visit. User can edit or replace freely; once they type, normal
-  // input listener takes over.
+  // Prefill: keep any stored localStorage name IF it still passes
+  // the unified validator; otherwise drop in a regex-clean random
+  // default. The validator-on-load step matters because localStorage
+  // may carry over a legacy 25-64 char name or one with characters
+  // the old regex allowed but the new one doesn't (digits in older
+  // challenge sessions). Starting in an invalid state would 400 on
+  // submit until the user manually edits. Caught by Copilot on
+  // PR #180.
   const storedChallengeName = getChallengeProfile().name;
-  challengeProfileInputEl.value = storedChallengeName || pickRandomName();
-  if (!storedChallengeName) {
-    // Persist the default so a refresh shows the same name rather
-    // than re-rolling (avoids the surprise of "wait, I had a different
-    // name a second ago"). User can still overwrite.
-    setChallengeProfileName(challengeProfileInputEl.value);
+  const initialName = normalizeProfileName(storedChallengeName) || pickRandomName();
+  challengeProfileInputEl.value = initialName;
+  if (initialName !== storedChallengeName) {
+    // Persist the default (or the normalized stored value) so a
+    // refresh shows the same name rather than re-rolling, and so a
+    // legacy invalid stored value is overwritten with one that
+    // submits cleanly.
+    setChallengeProfileName(initialName);
   }
   challengeProfileInputEl.addEventListener('input', () => {
-    setChallengeProfileName(String(challengeProfileInputEl.value || '').trim().slice(0, 32));
+    setChallengeProfileName(
+      String(challengeProfileInputEl.value || '').trim().slice(0, PROFILE_NAME_LENGTH_MAX)
+    );
   });
 }
 

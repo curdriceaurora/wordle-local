@@ -108,4 +108,47 @@ describe("profile-name validator", () => {
       expect(NAME_PATTERN.flags).toContain("u");
     });
   });
+
+  // Contract test for the client-side default-name generator. A bad
+  // adjective or animal edit (introducing a digit, accent the regex
+  // doesn't allow, etc.) would silently ship a default name that
+  // gets rejected on submit. This test pins the invariant: every
+  // single token must pass on its own, every Adjective × Animal
+  // cross-product must pass, and a random sample of 1000
+  // pickRandomName() calls must always pass.
+  describe("pickRandomName contract", () => {
+    const {
+      RANDOM_NAME_ADJECTIVES,
+      RANDOM_NAME_ANIMALS,
+      pickRandomName
+    } = require("../public/js/random-name");
+
+    test("every adjective passes isValidProfileName", () => {
+      RANDOM_NAME_ADJECTIVES.forEach((adj) => {
+        expect(isValidProfileName(adj)).toBe(true);
+      });
+    });
+
+    test("every animal passes isValidProfileName", () => {
+      RANDOM_NAME_ANIMALS.forEach((animal) => {
+        expect(isValidProfileName(animal)).toBe(true);
+      });
+    });
+
+    test("every Adjective × Animal combination passes isValidProfileName", () => {
+      RANDOM_NAME_ADJECTIVES.forEach((adj) => {
+        RANDOM_NAME_ANIMALS.forEach((animal) => {
+          const name = `${adj} ${animal}`;
+          expect(isValidProfileName(name)).toBe(true);
+        });
+      });
+    });
+
+    test("1000 pickRandomName() draws all pass isValidProfileName", () => {
+      for (let i = 0; i < 1000; i += 1) {
+        const name = pickRandomName();
+        expect(isValidProfileName(name)).toBe(true);
+      }
+    });
+  });
 });
