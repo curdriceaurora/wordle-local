@@ -1471,6 +1471,29 @@ function withChallengeAdminUserMutex(fn) {
   challengeAdminUserMutex = next.then(() => undefined, () => undefined);
   return next;
 }
+
+// Cross-route mutex for class-membership ops touching BOTH classesStore
+// and leaderboardStore atomically (issue #152). Same shape as
+// `withChallengeAdminUserMutex`. The carve-out path at routes/admin.js
+// does:
+//   1. classesStore.deleteClassWithCarveOut(classId)     (atomic in classes)
+//   2. classesStore.getSnapshot()                         (read snapshot)
+//   3. leaderboardStore.mutate(...)                       (cross-store write)
+// The slot wrapping the whole sequence (Codex P2 on PR #151) closes
+// the backup/restore busy-check window but NOT the cross-store race:
+// `claimDirectDataWriteSlot` is a counter, so a concurrent
+// `/api/admin/classes/:id/members/bulk` can interleave between steps
+// 2 and 3, add a carve-out ID to a different class, and then have
+// step 3 strip a profile that the new class legitimately references.
+// This mutex serializes the 5 routes that touch class-membership
+// across both stores so decision-then-write is atomic.
+// Locks: see lib/locks.md.
+let classMembershipMutex = Promise.resolve();
+function withClassMembershipMutex(fn) {
+  const next = classMembershipMutex.then(fn, fn);
+  classMembershipMutex = next.then(() => undefined, () => undefined);
+  return next;
+}
 // Resolve runtime notifications config from app-config overrides (live)
 // with env-var seed fallbacks. Called every time scheduler/service
 // needs the config so admin edits take effect without restart.
@@ -3536,6 +3559,7 @@ app.use(
     challengeResultsStore,
     challengeEngine,
     withChallengeAdminUserMutex,
+    withClassMembershipMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     challengeModeEnabled: ENV_CHALLENGE_MODE_ENABLED,

@@ -149,6 +149,7 @@ function createAdminRouter(deps) {
     challengeResultsStore,
     challengeEngine,
     withChallengeAdminUserMutex,
+    withClassMembershipMutex,
     ChallengeConfigStoreError,
     ChallengeResultsStoreError,
     challengeModeEnabled,
@@ -176,6 +177,13 @@ function createAdminRouter(deps) {
   }
   if (!ScheduleStoreError) {
     throw new TypeError("createAdminRouter: ScheduleStoreError dep is required.");
+  }
+  // Required dep — class-membership routes serialize through it (#152).
+  // If wiring regresses, a stale server.js without this dep would
+  // degrade silently to "no mutex," re-opening the cross-store race.
+  // Fail loud at wiring time. CodeRabbit on PR #200.
+  if (typeof withClassMembershipMutex !== "function") {
+    throw new TypeError("createAdminRouter: withClassMembershipMutex dep is required.");
   }
 
   // Map a ScheduleStoreError code to an HTTP status. 400 covers shape /
@@ -1337,49 +1345,58 @@ function createAdminRouter(deps) {
       });
     }
 
-    try {
-      // B4 / #123: bump slot for leaderboard write — see rationale on
-      // rename handler above.
-      await withSlot(() => leaderboardStore.deleteProfile(profileId, { expectedName: confirmName }));
-    } catch (err) {
-      if (err instanceof LeaderboardStoreError) {
-        if (err.code === "PROFILE_NOT_FOUND") {
-          return res.status(404).json({ error: err.message });
+    /* Wrap the entire leaderboard-delete + classes-cleanup sequence in
+       withClassMembershipMutex so a concurrent bulk-add (#152) can't
+       sneak in between the two stores and add a now-deleted profile
+       to a class roster. The mutex returns a response descriptor;
+       res.status().json() runs outside the closure so error mapping
+       stays at the route layer. Locks: see lib/locks.md. */
+    const outcome = await withClassMembershipMutex(async () => {
+      try {
+        // B4 / #123: bump slot for leaderboard write — see rationale
+        // on rename handler above.
+        await withSlot(() => leaderboardStore.deleteProfile(profileId, { expectedName: confirmName }));
+      } catch (err) {
+        if (err instanceof LeaderboardStoreError) {
+          if (err.code === "PROFILE_NOT_FOUND") {
+            return { status: 404, body: { error: err.message } };
+          }
+          if (err.code === "PROFILE_NAME_MISMATCH") {
+            return { status: 409, body: { error: err.message } };
+          }
+          return { status: 400, body: { error: err.message } };
         }
-        if (err.code === "PROFILE_NAME_MISMATCH") {
-          return res.status(409).json({ error: err.message });
-        }
-        return res.status(400).json({ error: err.message });
+        logger.error("Admin profile delete failed.", err);
+        return { status: 503, body: { error: "Profile delete unavailable right now. Try again soon." } };
       }
-      logger.error("Admin profile delete failed.", err);
-      return res.status(503).json({ error: "Profile delete unavailable right now. Try again soon." });
-    }
-    // Profile is gone from the leaderboard; pull it out of any class roster
-    // so class detail/report don't surface a "(missing profile)" row.
-    let classCleanupTouched = 0;
-    let classCleanupError = null;
-    try {
-      // B4 / #123: bump slot for classes write.
-      classCleanupTouched = await withSlot(() => classesStore.removeMemberEverywhere(profileId));
-    } catch (err) {
-      classCleanupError = err;
-      logger.warn(
-        `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
-      );
-    }
-    const responseBody = {
-      ok: true,
-      deletedProfileId: profileId,
-      classCleanupTouched
-    };
-    if (classCleanupError) {
-      responseBody.partialFailure = {
-        message: "Profile deleted from leaderboard, but class cleanup failed. Class rosters may still reference the deleted profile id.",
-        error: classCleanupError?.message || String(classCleanupError)
+      // Profile is gone from the leaderboard; pull it out of any class roster
+      // so class detail/report don't surface a "(missing profile)" row.
+      let classCleanupTouched = 0;
+      let classCleanupError = null;
+      try {
+        // B4 / #123: bump slot for classes write.
+        classCleanupTouched = await withSlot(() => classesStore.removeMemberEverywhere(profileId));
+      } catch (err) {
+        classCleanupError = err;
+        logger.warn(
+          `[admin] Profile ${profileId} deleted from leaderboard but class cleanup failed: ${err?.message || String(err)}`
+        );
+      }
+      const responseBody = {
+        ok: true,
+        deletedProfileId: profileId,
+        classCleanupTouched
       };
-      return res.status(207).json(responseBody);
-    }
-    return res.json(responseBody);
+      if (classCleanupError) {
+        responseBody.partialFailure = {
+          message: "Profile deleted from leaderboard, but class cleanup failed. Class rosters may still reference the deleted profile id.",
+          error: classCleanupError?.message || String(classCleanupError)
+        };
+        return { status: 207, body: responseBody };
+      }
+      return { status: 200, body: responseBody };
+    });
+    return res.status(outcome.status).json(outcome.body);
   });
 
   router.post("/api/admin/stats/profile/:id/merge", async (req, res) => {
@@ -1403,53 +1420,60 @@ function createAdminRouter(deps) {
       });
     }
 
-    let mergedProfile;
-    try {
-      // B4 / #123: bump slot for leaderboard merge.
-      const snapshot = await withSlot(() => leaderboardStore.mergeProfiles(sourceId, targetId));
-      mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
-      if (!mergedProfile) {
-        throw new Error("Failed to persist merged profile.");
-      }
-    } catch (err) {
-      if (err instanceof LeaderboardStoreError) {
-        if (err.code === "PROFILE_NOT_FOUND") {
-          return res.status(404).json({ error: err.message });
+    /* Wrap leaderboard-merge + classes-rewrite under one
+       withClassMembershipMutex so the post-merge classes rewrite
+       can't interleave with a concurrent bulk-add referencing the
+       now-merged source ID (#152). Locks: see lib/locks.md. */
+    const outcome = await withClassMembershipMutex(async () => {
+      let mergedProfile;
+      try {
+        // B4 / #123: bump slot for leaderboard merge.
+        const snapshot = await withSlot(() => leaderboardStore.mergeProfiles(sourceId, targetId));
+        mergedProfile = snapshot.profiles.find((profile) => profile.id === targetId) || null;
+        if (!mergedProfile) {
+          throw new Error("Failed to persist merged profile.");
         }
-        return res.status(400).json({ error: err.message });
+      } catch (err) {
+        if (err instanceof LeaderboardStoreError) {
+          if (err.code === "PROFILE_NOT_FOUND") {
+            return { status: 404, body: { error: err.message } };
+          }
+          return { status: 400, body: { error: err.message } };
+        }
+        logger.error("Admin profile merge failed.", err);
+        return { status: 503, body: { error: "Profile merge unavailable right now. Try again soon." } };
       }
-      logger.error("Admin profile merge failed.", err);
-      return res.status(503).json({ error: "Profile merge unavailable right now. Try again soon." });
-    }
-    // The source profile is gone; rewrite class memberships so a class that
-    // had the source now references the merged target instead. If the target
-    // is already a member, the source reference is just dropped.
-    let classMembershipsTransferred = [];
-    let classCleanupError = null;
-    try {
-      // B4 / #123: bump slot for classes write.
-      const result = await withSlot(() => classesStore.replaceMemberEverywhere(sourceId, targetId));
-      classMembershipsTransferred = result.touchedClassIds;
-    } catch (err) {
-      classCleanupError = err;
-      logger.warn(
-        `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
-      );
-    }
-    const responseBody = {
-      ok: true,
-      mergedProfile,
-      deletedProfileId: sourceId,
-      classMembershipsTransferred
-    };
-    if (classCleanupError) {
-      responseBody.partialFailure = {
-        message: "Profile merge succeeded, but class membership rewrite failed. Some classes may still reference the source profile id.",
-        error: classCleanupError?.message || String(classCleanupError)
+      // The source profile is gone; rewrite class memberships so a class that
+      // had the source now references the merged target instead. If the target
+      // is already a member, the source reference is just dropped.
+      let classMembershipsTransferred = [];
+      let classCleanupError = null;
+      try {
+        // B4 / #123: bump slot for classes write.
+        const result = await withSlot(() => classesStore.replaceMemberEverywhere(sourceId, targetId));
+        classMembershipsTransferred = result.touchedClassIds;
+      } catch (err) {
+        classCleanupError = err;
+        logger.warn(
+          `[admin] Profile ${sourceId} merged into ${targetId} but class membership rewrite failed: ${err?.message || String(err)}`
+        );
+      }
+      const responseBody = {
+        ok: true,
+        mergedProfile,
+        deletedProfileId: sourceId,
+        classMembershipsTransferred
       };
-      return res.status(207).json(responseBody);
-    }
-    return res.json(responseBody);
+      if (classCleanupError) {
+        responseBody.partialFailure = {
+          message: "Profile merge succeeded, but class membership rewrite failed. Some classes may still reference the source profile id.",
+          error: classCleanupError?.message || String(classCleanupError)
+        };
+        return { status: 207, body: responseBody };
+      }
+      return { status: 200, body: responseBody };
+    });
+    return res.status(outcome.status).json(outcome.body);
   });
 
   router.get("/api/admin/runtime-config", (req, res) => {
@@ -2252,7 +2276,15 @@ function createAdminRouter(deps) {
         // from disk while the carved-out profiles/results are still
         // live). Bracketing both steps under one slot makes the busy-
         // check see this as one logical operation.
-        await withSlot(async () => {
+        //
+        // The OUTER `withClassMembershipMutex` (#152) serializes this
+        // sequence against the other class-membership routes (bulk add,
+        // member remove, profile delete, profile merge) so concurrent
+        // admin actions can't interleave between the carve-out
+        // snapshot re-read and the leaderboard mutate and strip a
+        // profile that's now legitimately in another class.
+        // Locks: see lib/locks.md.
+        await withClassMembershipMutex(() => withSlot(async () => {
           // Atomic in classes-store: drops the class, computes which
           // member IDs are NOT in any other non-archived class, and
           // removes those from every (archived) class that still
@@ -2270,12 +2302,11 @@ function createAdminRouter(deps) {
           // completes — a mutator that runs but fails to persist would
           // otherwise leak unpersisted IDs into deletedProfileIds.
           //
-          // Cross-store race: between deleteClassWithCarveOut
-          // returning and the leaderboard mutate running, a concurrent
-          // bulk-add could have added one of these carve-out IDs to a
-          // different class. Re-read the classes-store snapshot and
-          // skip IDs that are now class members so we don't strip a
-          // profile that another class legitimately needs.
+          // The classes-store snapshot re-read below is now serialized
+          // via `withClassMembershipMutex` (#152), so it observes a
+          // consistent cross-store state. The defensive filter is
+          // retained as belt-and-suspenders against future refactors
+          // that might bypass the mutex.
           try {
             const referencedNow = new Set();
             try {
@@ -2314,11 +2345,16 @@ function createAdminRouter(deps) {
               `[admin] Class ${classId} deleted but profile carve-out failed: ${err?.message || String(err)}`
             );
           }
-        });
+        }));
       } else {
-        // Just delete the class without touching profiles.
-        // B4 / #123: bump slot for classes delete.
-        await withSlot(() => classesStore.deleteClass(classId));
+        // Just delete the class without touching profiles. Wrapped in
+        // `withClassMembershipMutex` (#152) so a concurrent bulk-add
+        // can't reference this class id between our deleteClass call
+        // and any follow-up readers; on this branch nothing in the
+        // current handler reads back, but the mutex preserves the
+        // invariant for callers and keeps the cross-route contract
+        // simple. Locks: see lib/locks.md.
+        await withClassMembershipMutex(() => withSlot(() => classesStore.deleteClass(classId)));
       }
     } catch (err) {
       return handleClassesStoreError(res, err, "Class delete failed.");
@@ -2485,146 +2521,158 @@ function createAdminRouter(deps) {
       });
     }
 
-    // Resolve each name to an existing profile (case-insensitive match) or
-    // create a new profile inside a single mutate so we never half-write.
-    // The pre-check above bounds growth, but we re-validate inside the
-    // mutate to defend against concurrent bulk-adds: two requests that
-    // each pass the pre-check could still overflow when serialized. The
-    // throw aborts the mutate and rolls back the draft, so no profiles
-    // are persisted.
+    /* Wrap the cross-store sequence in `withClassMembershipMutex`
+       (#152) so concurrent profile-delete / profile-merge / class-
+       delete-carve-out / single-member-remove can't interleave
+       between the leaderboard mutate (creates profiles) and the
+       classes.addMembers (commits class membership). The mutex
+       returns a response descriptor; res.status().json() runs
+       outside. Locks: see lib/locks.md. */
     const resolvedProfileIds = [];
     const reusedProfileIds = [];
     const createdProfileIds = [];
-    try {
-      // B4 / #123: bump slot for the bulk-add leaderboard mutate.
-      await withSlot(() => leaderboardStore.mutate((draft) => {
-        const nowIso = new Date().toISOString();
-        const existingByLowerName = new Map(
-          // NFC-normalize the persisted side (see the rename
-          // duplicate check above) so a legacy NFD row matches an
-          // NFC bulk-add candidate. Codex P2 on PR #180.
-          draft.profiles.map((profile) => [profile.name.normalize("NFC").toLowerCase(), profile])
-        );
-        for (const name of normalizedNames) {
-          const key = name.toLowerCase();
-          const existing = existingByLowerName.get(key);
-          if (existing) {
-            resolvedProfileIds.push(existing.id);
-            reusedProfileIds.push(existing.id);
-            continue;
-          }
-          const created = {
-            id: randomUUID(),
-            name,
-            createdAt: nowIso,
-            updatedAt: nowIso
-          };
-          draft.profiles.push(created);
-          existingByLowerName.set(key, created);
-          resolvedProfileIds.push(created.id);
-          createdProfileIds.push(created.id);
-        }
-        if (Number.isInteger(hostCap) && hostCap > 0 && draft.profiles.length > hostCap) {
-          throw new ClassesStoreError(
-            "HOST_CAP_EXCEEDED",
-            `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
+    const bulkOutcome = await withClassMembershipMutex(async () => {
+      // Resolve each name to an existing profile (case-insensitive match) or
+      // create a new profile inside a single mutate so we never half-write.
+      // The pre-check above bounds growth, but we re-validate inside the
+      // mutate to defend against concurrent bulk-adds: two requests that
+      // each pass the pre-check could still overflow when serialized. The
+      // throw aborts the mutate and rolls back the draft, so no profiles
+      // are persisted.
+      try {
+        // B4 / #123: bump slot for the bulk-add leaderboard mutate.
+        await withSlot(() => leaderboardStore.mutate((draft) => {
+          const nowIso = new Date().toISOString();
+          const existingByLowerName = new Map(
+            // NFC-normalize the persisted side (see the rename
+            // duplicate check above) so a legacy NFD row matches an
+            // NFC bulk-add candidate. Codex P2 on PR #180.
+            draft.profiles.map((profile) => [profile.name.normalize("NFC").toLowerCase(), profile])
           );
-        }
-      }));
-    } catch (err) {
-      if (err && err.code === "HOST_CAP_EXCEEDED") {
-        return res.status(409).json({ error: err.message });
-      }
-      return handleClassesStoreError(res, err, "Bulk profile resolution failed.");
-    }
-
-    // Cross-store race: between resolving resolvedProfileIds in the
-    // leaderboard mutate above and calling addMembers below, a concurrent
-    // admin DELETE /api/admin/stats/profile/:id (or a profile-merge) can
-    // remove one of those IDs from the leaderboard. Re-read a fresh
-    // leaderboard snapshot and filter resolvedProfileIds so we don't
-    // persist a class member id that no longer points at a real profile.
-    let membersToAdd = resolvedProfileIds;
-    try {
-      const recheck = await leaderboardStore.getSnapshot();
-      const liveIds = new Set(recheck.profiles.map((profile) => profile.id));
-      membersToAdd = resolvedProfileIds.filter((id) => liveIds.has(id));
-    } catch (recheckErr) {
-      logger.warn(
-        `[admin] Bulk add could not revalidate profile IDs against the leaderboard; proceeding with the resolved set: ${recheckErr?.message || String(recheckErr)}`
-      );
-    }
-    const droppedDuringRecheck = resolvedProfileIds.filter(
-      (id) => !membersToAdd.includes(id)
-    );
-
-    let addOutcome;
-    try {
-      // B4 / #123: bump slot for classes addMembers.
-      addOutcome = await withSlot(() => classesStore.addMembers(classId, membersToAdd));
-    } catch (err) {
-      // Race window: between the pre-check and addMembers, another admin
-      // could have archived the class or filled the per-class cap. Roll back
-      // the profiles we just created so a failed bulk import doesn't pollute
-      // the leaderboard with orphaned profiles. Reused profiles existed
-      // before this request and stay.
-      //
-      // Cross-store race: a concurrent bulk-add could have looked up one of
-      // our newly created profiles by name and added it to a different
-      // class while addMembers was failing. Filter createdProfileIds against
-      // a fresh classes-store snapshot so we don't delete profiles that are
-      // now legitimately in use.
-      if (createdProfileIds.length > 0) {
-        try {
-          const referencedNow = new Set();
-          try {
-            const classesSnapshot = await classesStore.getSnapshot();
-            for (const entry of classesSnapshot.classes) {
-              for (const memberId of entry.memberProfileIds) {
-                referencedNow.add(memberId);
-              }
+          for (const name of normalizedNames) {
+            const key = name.toLowerCase();
+            const existing = existingByLowerName.get(key);
+            if (existing) {
+              resolvedProfileIds.push(existing.id);
+              reusedProfileIds.push(existing.id);
+              continue;
             }
-          } catch (snapshotErr) {
-            logger.warn(
-              `[admin] Bulk add rollback could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+            const created = {
+              id: randomUUID(),
+              name,
+              createdAt: nowIso,
+              updatedAt: nowIso
+            };
+            draft.profiles.push(created);
+            existingByLowerName.set(key, created);
+            resolvedProfileIds.push(created.id);
+            createdProfileIds.push(created.id);
+          }
+          if (Number.isInteger(hostCap) && hostCap > 0 && draft.profiles.length > hostCap) {
+            throw new ClassesStoreError(
+              "HOST_CAP_EXCEEDED",
+              `Adding these names would exceed the host profile cap of ${hostCap}. Free space first or split the upload.`
             );
           }
-          const safeToDelete = createdProfileIds.filter((id) => !referencedNow.has(id));
-          if (safeToDelete.length > 0) {
-            const safeSet = new Set(safeToDelete);
-            // B4 / #123: bump slot for rollback leaderboard mutate.
-            await withSlot(() => leaderboardStore.mutate((draft) => {
-              draft.profiles = draft.profiles.filter((profile) => !safeSet.has(profile.id));
-              if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
-                for (const id of safeSet) {
-                  if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
-                    delete draft.resultsByProfile[id];
-                  }
+        }));
+      } catch (err) {
+        if (err && err.code === "HOST_CAP_EXCEEDED") {
+          return { status: 409, body: { error: err.message } };
+        }
+        return { handlerErr: { err, label: "Bulk profile resolution failed." } };
+      }
+
+      // Cross-store race: between resolving resolvedProfileIds in the
+      // leaderboard mutate above and calling addMembers below, a concurrent
+      // admin DELETE /api/admin/stats/profile/:id (or a profile-merge) can
+      // remove one of those IDs from the leaderboard. The outer
+      // `withClassMembershipMutex` blocks that interleave; the recheck
+      // below remains as belt-and-suspenders against future refactors.
+      let membersToAdd = resolvedProfileIds;
+      try {
+        const recheck = await leaderboardStore.getSnapshot();
+        const liveIds = new Set(recheck.profiles.map((profile) => profile.id));
+        membersToAdd = resolvedProfileIds.filter((id) => liveIds.has(id));
+      } catch (recheckErr) {
+        logger.warn(
+          `[admin] Bulk add could not revalidate profile IDs against the leaderboard; proceeding with the resolved set: ${recheckErr?.message || String(recheckErr)}`
+        );
+      }
+      const droppedDuringRecheck = resolvedProfileIds.filter(
+        (id) => !membersToAdd.includes(id)
+      );
+
+      let addOutcome;
+      try {
+        // B4 / #123: bump slot for classes addMembers.
+        addOutcome = await withSlot(() => classesStore.addMembers(classId, membersToAdd));
+      } catch (err) {
+        // Race window: between the pre-check and addMembers, another admin
+        // could have archived the class or filled the per-class cap. Roll back
+        // the profiles we just created so a failed bulk import doesn't pollute
+        // the leaderboard with orphaned profiles. Reused profiles existed
+        // before this request and stay.
+        //
+        // The outer mutex blocks concurrent bulk-adds from referencing
+        // our newly created profiles by name and adding them to a
+        // different class. The classes snapshot re-read below stays
+        // as a defensive filter against future refactors.
+        if (createdProfileIds.length > 0) {
+          try {
+            const referencedNow = new Set();
+            try {
+              const classesSnapshot = await classesStore.getSnapshot();
+              for (const entry of classesSnapshot.classes) {
+                for (const memberId of entry.memberProfileIds) {
+                  referencedNow.add(memberId);
                 }
               }
-            }));
+            } catch (snapshotErr) {
+              logger.warn(
+                `[admin] Bulk add rollback could not read classes snapshot; continuing without race-window filter: ${snapshotErr?.message || String(snapshotErr)}`
+              );
+            }
+            const safeToDelete = createdProfileIds.filter((id) => !referencedNow.has(id));
+            if (safeToDelete.length > 0) {
+              const safeSet = new Set(safeToDelete);
+              // B4 / #123: bump slot for rollback leaderboard mutate.
+              await withSlot(() => leaderboardStore.mutate((draft) => {
+                draft.profiles = draft.profiles.filter((profile) => !safeSet.has(profile.id));
+                if (draft.resultsByProfile && typeof draft.resultsByProfile === "object") {
+                  for (const id of safeSet) {
+                    if (Object.prototype.hasOwnProperty.call(draft.resultsByProfile, id)) {
+                      delete draft.resultsByProfile[id];
+                    }
+                  }
+                }
+              }));
+            }
+          } catch (rollbackErr) {
+            logger.warn(
+              `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
+            );
           }
-        } catch (rollbackErr) {
-          logger.warn(
-            `[admin] Bulk add failed and rollback of new profiles also failed: ${rollbackErr?.message || String(rollbackErr)}`
-          );
         }
+        return { handlerErr: { err, label: "Bulk class add failed." } };
       }
-      return handleClassesStoreError(res, err, "Bulk class add failed.");
-    }
 
-    const droppedSet = new Set(droppedDuringRecheck);
-    const responseBody = {
-      ok: true,
-      addedToClass: addOutcome.added,
-      createdProfileIds: createdProfileIds.filter((id) => !droppedSet.has(id)),
-      reusedProfileIds: reusedProfileIds.filter((id) => !droppedSet.has(id)),
-      classMemberCount: addOutcome.class.memberProfileIds.length
-    };
-    if (droppedDuringRecheck.length > 0) {
-      responseBody.droppedDueToConcurrentDelete = droppedDuringRecheck;
+      const droppedSet = new Set(droppedDuringRecheck);
+      const responseBody = {
+        ok: true,
+        addedToClass: addOutcome.added,
+        createdProfileIds: createdProfileIds.filter((id) => !droppedSet.has(id)),
+        reusedProfileIds: reusedProfileIds.filter((id) => !droppedSet.has(id)),
+        classMemberCount: addOutcome.class.memberProfileIds.length
+      };
+      if (droppedDuringRecheck.length > 0) {
+        responseBody.droppedDueToConcurrentDelete = droppedDuringRecheck;
+      }
+      return { status: 200, body: responseBody };
+    });
+    if (bulkOutcome.handlerErr) {
+      return handleClassesStoreError(res, bulkOutcome.handlerErr.err, bulkOutcome.handlerErr.label);
     }
-    return res.json(responseBody);
+    return res.status(bulkOutcome.status).json(bulkOutcome.body);
   });
 
   router.delete("/api/admin/classes/:id/members/:profileId", async (req, res) => {
@@ -2634,8 +2682,14 @@ function createAdminRouter(deps) {
       return res.status(400).json({ error: "Class id and profile id are required." });
     }
     try {
-      // B4 / #123: bump slot for classes removeMember.
-      const updated = await withSlot(() => classesStore.removeMember(classId, profileId));
+      /* B4 / #123: bump slot for classes removeMember.
+         `withClassMembershipMutex` (#152) serializes this against the
+         other class-membership routes so a concurrent profile-delete
+         observing this class roster sees a consistent state.
+         Locks: see lib/locks.md. */
+      const updated = await withClassMembershipMutex(() =>
+        withSlot(() => classesStore.removeMember(classId, profileId))
+      );
       return res.json({
         ok: true,
         class: {

@@ -33,6 +33,7 @@ them up was the most common P1 source in the campaign.**
 | `directDataWriteActiveRef` | Counter (read by busy-check) | Backup/restore exclusion | `server.js` | Backup/restore busy-check observes it |
 | `withWordWriteLock` | Strict per-key mutex (Promise chain) | Decide-then-write atomicity | `server.js` | Manual `POST /api/word`, scheduler reconciler |
 | `withChallengeAdminUserMutex` | Cross-route Promise chain | Cross-store atomicity | `server.js` | `PUT /api/admin/challenges/:id`, `POST /api/challenges/:id/start` |
+| `withClassMembershipMutex` | Cross-route Promise chain | Cross-store atomicity | `server.js` | `DELETE /api/admin/classes/:id` carve-out, `POST /api/admin/classes/:id/members/bulk`, `DELETE /api/admin/classes/:id/members/:profileId`, `DELETE /api/admin/stats/profile/:id`, `POST /api/admin/stats/profile/:id/merge` |
 | Per-store `commitQueue` / `writeQueue` | Per-instance Promise chain (FIFO) | Per-store atomicity | each `lib/<store>.js` | The store's own `update`/`createSession`/`#commit` |
 | `providerImportQueueActiveRef` | Boolean | Backup/restore exclusion | `server.js` | Async provider import queue |
 | `providerImportSyncActiveRef` | Boolean | Backup/restore exclusion | `server.js` | Sync provider import path |
@@ -125,6 +126,34 @@ observation is atomic with respect to the user's `createSession`.
   other route changes that config inside its own mutex hold, the
   first route writes derived state from the stale config. Always
   re-read authoritative state INSIDE the mutex closure.
+
+### `withClassMembershipMutex` (cross-route Promise chain)
+
+Added in PR for #152. Serializes the 5 admin routes that touch BOTH
+`classesStore` and `leaderboardStore` in a single logical sequence:
+
+- `DELETE /api/admin/classes/:id` (carve-out path with `deleteProfiles=true`)
+- `POST /api/admin/classes/:id/members/bulk`
+- `DELETE /api/admin/classes/:id/members/:profileId`
+- `DELETE /api/admin/stats/profile/:id`
+- `POST /api/admin/stats/profile/:id/merge`
+
+The class-delete carve-out path does
+`deleteClassWithCarveOut` → `getSnapshot` → `leaderboardStore.mutate`.
+The `withSlot` wrapping that sequence (Codex P2 on PR #151) closes the
+backup/restore busy-check window but not the cross-store race:
+`claimDirectDataWriteSlot` is a counter, so a concurrent
+`/members/bulk` can interleave between the snapshot read and the
+leaderboard mutate and add one of the carve-out IDs to a different
+class. `withClassMembershipMutex` blocks that interleave.
+
+- **Use when**: any admin route that mutates `classesStore` and
+  `leaderboardStore` in one logical sequence. Wrap with the mutex OUTER
+  and `withSlot` INNER (mutex doesn't hold the backup-busy-check
+  signal; the slot still does).
+- **Pitfall — same as `withChallengeAdminUserMutex`**: re-read inside
+  the lock if the mutated state depends on data the other route
+  could change.
 
 ### Per-store `commitQueue` / `writeQueue` (per-instance Promise chain)
 
