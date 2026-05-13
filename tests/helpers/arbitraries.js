@@ -124,10 +124,12 @@ const classId = stringFromPool([...HEX_LOWER, "-"], 12, 32).map(
 );
 
 // Leaderboard profile name. Schema (post-#174):
-// `^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$`, max 64 UTF-16 units (≤ 32
-// codepoints). Start with a Unicode letter then letters / combining
-// marks / spaces / hyphens / apostrophes. We restrict the arbitrary
-// to ASCII letters here (subset of valid inputs) for generation
+// `^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$`, max 32 UTF-16 units (matches
+// HTML maxlength and the validator's `name.length <= 32` check). The
+// validator's regex quantifier `{0,31}` under /u counts codepoints
+// (redundant for BMP-only input; UTF-16 cap is the binding
+// constraint for astral characters). We restrict the arbitrary to
+// ASCII letters here (subset of valid inputs) for generation
 // stability and shrinking; the Unicode acceptance is pinned by the
 // dedicated lib/profile-name validator tests in
 // tests/profile-name.test.js. Codex P2 PR #133 round 3 caught that
@@ -523,7 +525,7 @@ const classesState = fc
 // generator's missing `updatedAt` and over-permissive `name`):
 //   - profiles entries require id, name, createdAt, updatedAt
 //   - name pattern `^\\p{L}[\\p{L}\\p{M}' \\-]{0,31}$`,
-//     max 64 UTF-16 units (≤ 32 codepoints, PR #180 / issue #174)
+//     max 32 UTF-16 units (PR #180 / issue #174)
 //   - resultsByProfile is a map of profileId -> { dateKey -> result }
 //
 // Each per-date result entry must satisfy the schema's allOf

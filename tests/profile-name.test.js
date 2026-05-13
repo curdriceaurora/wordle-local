@@ -172,4 +172,31 @@ describe("profile-name validator", () => {
       expect(nfcJose.normalize("NFC")).toBe(nfdJose.normalize("NFC"));
     });
   });
+
+  describe("UTF-16 length cap (codepoint vs UTF-16 disagreement)", () => {
+    // The validator caps at 32 UTF-16 code units (matches HTML
+    // `maxlength="32"` and `data/leaderboard.schema.json`'s
+    // `maxLength: 32`). The regex quantifier `{0,31}` under /u counts
+    // codepoints, which is the redundant looser check for BMP input
+    // and a no-op constraint relative to UTF-16 for astral input.
+    // Pinned here because the only practical case where the two
+    // disagree is supplementary-plane (astral) letters.
+
+    test("17 astral letters (17 codepoints, 34 UTF-16) rejected", () => {
+      // U+20BB7 (𠮷, CJK UNIFIED IDEOGRAPH-20BB7) is `\p{L}` and a
+      // single supplementary-plane codepoint = 2 UTF-16 units.
+      const astralLetter = String.fromCodePoint(0x20BB7);
+      const name17astral = astralLetter.repeat(17);
+      expect(Array.from(name17astral).length).toBe(17);
+      expect(name17astral.length).toBe(34);
+      expect(isValidProfileName(name17astral)).toBe(false);
+    });
+
+    test("16 astral letters (16 codepoints, 32 UTF-16) accepted", () => {
+      const astralLetter = String.fromCodePoint(0x20BB7);
+      const name16astral = astralLetter.repeat(16);
+      expect(name16astral.length).toBe(32);
+      expect(isValidProfileName(name16astral)).toBe(true);
+    });
+  });
 });

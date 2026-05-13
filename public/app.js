@@ -422,7 +422,9 @@ function normalizeProfileName(rawName) {
   // `\p{L}` letters and `\p{M}` combining marks separately).
   const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) return "";
-  if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
+  // UTF-16 code units, matching HTML maxlength=32 and the validator
+  // in lib/profile-name.js (which uses the same cap).
+  if (cleaned.length > PROFILE_NAME_LENGTH_MAX) return "";
   if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
 }

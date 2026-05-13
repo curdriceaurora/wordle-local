@@ -2425,7 +2425,13 @@ function normalizeProfileNameInput(rawName) {
   if (!cleaned) {
     throw new StatsApiError(400, "Player name is required.");
   }
-  if (Array.from(cleaned).length > NAME_LENGTH_MAX) {
+  if (cleaned.length > NAME_LENGTH_MAX) {
+    // UTF-16 code units, matching `data/leaderboard.schema.json`'s
+    // `maxLength: 32`. The validator's `isValidProfileName` also
+    // checks this internally; the early throw here surfaces a
+    // length-specific 400 message instead of the generic
+    // "letters/spaces/apostrophes/hyphens" one from the regex
+    // branch below.
     throw new StatsApiError(400, `Player name must be ${NAME_LENGTH_MAX} characters or fewer.`);
   }
   if (!isValidProfileName(cleaned)) {
