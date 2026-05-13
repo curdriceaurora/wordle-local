@@ -787,9 +787,51 @@ function buildBoard() {
   }
 }
 
-function buildKeyboard() {
-  keyboardEl.innerHTML = "";
-  keyboardKeyEls = new Map();
+// Shared keyboard build helpers (issue #163, partial). Both the
+// play (#keyboard) and the challenge (#challengeKeyboard) on-screen
+// keyboards used to have parallel build code with copy-pasted
+// BACK/ENTER accessibility logic and a duplicate row-iteration loop.
+// `makeKeyButton` + `renderKeyboardInto` are the single source of
+// truth so future a11y/layout fixes only need to be applied once.
+function makeKeyButton(key, opts = {}) {
+  const { onClick } = opts;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "key";
+  button.dataset.key = key;
+  if (key === "ENTER" || key === "BACK") {
+    button.classList.add("wide");
+  }
+  if (key === "BACK") {
+    // Wrap the ⌫ glyph in aria-hidden so the only accessible name is
+    // the explicit aria-label. Some auditors flag a button whose
+    // visible text is purely an unnamed Unicode glyph even when
+    // aria-label is set (Chrome's Lighthouse button-name has been
+    // strict about this in the past).
+    const glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "⌫";
+    button.appendChild(glyph);
+    button.setAttribute("aria-label", "Backspace");
+  } else if (key === "ENTER") {
+    button.textContent = "ENTER";
+    // "Submit guess" is more meaningful to assistive tech than the
+    // raw "ENTER" label.
+    button.setAttribute("aria-label", "Submit guess");
+  } else {
+    button.textContent = key;
+    button.setAttribute("aria-label", key);
+  }
+  if (onClick) {
+    button.addEventListener("click", () => onClick(key));
+  }
+  return button;
+}
+
+function renderKeyboardInto(rootEl, opts = {}) {
+  const { onKey, captureRefMap } = opts;
+  rootEl.innerHTML = "";
+  if (captureRefMap) captureRefMap.clear();
   KEYBOARD_LAYOUT.forEach((rowKeys, rowIndex) => {
     const rowEl = document.createElement("div");
     rowEl.className = "key-row";
@@ -797,40 +839,20 @@ function buildKeyboard() {
       rowEl.classList.add("offset");
     }
     rowKeys.forEach((key) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "key";
-      button.dataset.key = key;
-      if (key === "ENTER" || key === "BACK") {
-        button.classList.add("wide");
-      }
-      if (key === "BACK") {
-        // Wrap the ⌫ glyph in aria-hidden so the only accessible name
-        // is the explicit aria-label. Some auditors flag a button whose
-        // visible text is purely an unnamed Unicode glyph even when
-        // aria-label is set (Chrome's Lighthouse button-name has been
-        // strict about this in the past).
-        const glyph = document.createElement("span");
-        glyph.setAttribute("aria-hidden", "true");
-        glyph.textContent = "⌫";
-        button.appendChild(glyph);
-        button.setAttribute("aria-label", "Backspace");
-      } else if (key === "ENTER") {
-        button.textContent = key;
-        // "Submit guess" is more meaningful to assistive tech than the
-        // raw key name; matches what the challenge keyboard uses.
-        button.setAttribute("aria-label", "Submit guess");
-      } else {
-        button.textContent = key;
-        button.setAttribute("aria-label", key);
-      }
-      button.addEventListener("click", () => handleKey(key));
+      const button = makeKeyButton(key, { onClick: onKey });
       rowEl.appendChild(button);
-      if (key.length === 1) {
-        keyboardKeyEls.set(key, button);
+      if (captureRefMap && key.length === 1) {
+        captureRefMap.set(key, button);
       }
     });
-    keyboardEl.appendChild(rowEl);
+    rootEl.appendChild(rowEl);
+  });
+}
+
+function buildKeyboard() {
+  renderKeyboardInto(keyboardEl, {
+    onKey: handleKey,
+    captureRefMap: keyboardKeyEls
   });
 }
 
@@ -2377,52 +2399,7 @@ function renderChallengeBoard() {
 
 function renderChallengeKeyboard() {
   if (!challengeKeyboardEl) return;
-  challengeKeyboardEl.innerHTML = '';
-  const rows = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
-  for (let r = 0; r < rows.length; r++) {
-    const rowEl = document.createElement('div');
-    // Match the daily/created keyboard's class names (.key-row / .key /
-    // .key.wide). The earlier kb-row/kb-key naming had no styles in
-    // public/styles.css, so the challenge keyboard rendered as
-    // unstyled buttons stacked vertically.
-    rowEl.className = 'key-row';
-    if (r === rows.length - 1) {
-      rowEl.appendChild(makeKbKey('Enter', 'Enter', 'wide'));
-    }
-    for (const ch of rows[r]) rowEl.appendChild(makeKbKey(ch, ch));
-    if (r === rows.length - 1) {
-      rowEl.appendChild(makeKbKey('⌫', 'Backspace', 'wide'));
-    }
-    challengeKeyboardEl.appendChild(rowEl);
-  }
-}
-
-function makeKbKey(label, key, extraClass) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'key' + (extraClass ? ` ${extraClass}` : '');
-  // Special keys render glyphs/labels that don't read well to screen
-  // readers — "⌫" is a private-use character with no semantic name in
-  // most assistive-tech voices, and "Enter" without context can be
-  // ambiguous. Provide an explicit accessible name for the special
-  // keys; alphabet keys already announce their letter via textContent.
-  if (key === 'Backspace') {
-    // Same Backspace pattern as buildKeyboard: hide the glyph from AT
-    // so the only accessible name is the aria-label.
-    const glyph = document.createElement('span');
-    glyph.setAttribute('aria-hidden', 'true');
-    glyph.textContent = label;
-    btn.appendChild(glyph);
-    btn.setAttribute('aria-label', 'Backspace');
-  } else if (key === 'Enter') {
-    btn.textContent = label;
-    btn.setAttribute('aria-label', 'Submit guess');
-  } else {
-    btn.textContent = label;
-    btn.setAttribute('aria-label', label);
-  }
-  btn.addEventListener('click', () => onChallengeKey(key));
-  return btn;
+  renderKeyboardInto(challengeKeyboardEl, { onKey: onChallengeKey });
 }
 
 function onChallengeKey(key) {
@@ -2430,7 +2407,7 @@ function onChallengeKey(key) {
   const active = activePuzzle();
   if (!active) return;
   const length = active.length || (challengeState.activeChallenge?.wordLength || 5);
-  if (key === 'Enter') {
+  if (key === 'ENTER') {
     if (challengeState.pendingGuess.length !== length) {
       setChallengePlayStatus(
         window.i18n ? window.i18n.t("play.guessTooShort", { length }) : `Guess must be ${length} letters.`,
@@ -2441,7 +2418,7 @@ function onChallengeKey(key) {
     submitChallengeGuess();
     return;
   }
-  if (key === 'Backspace') {
+  if (key === 'BACK') {
     challengeState.pendingGuess = challengeState.pendingGuess.slice(0, -1);
     renderChallengeBoard();
     return;
@@ -2458,10 +2435,10 @@ document.addEventListener('keydown', (event) => {
   const k = event.key;
   if (k === 'Enter') {
     event.preventDefault();
-    onChallengeKey('Enter');
+    onChallengeKey('ENTER');
   } else if (k === 'Backspace') {
     event.preventDefault();
-    onChallengeKey('Backspace');
+    onChallengeKey('BACK');
   } else if (/^[a-zA-Z]$/.test(k)) {
     event.preventDefault();
     onChallengeKey(k.toUpperCase());
