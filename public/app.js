@@ -1757,21 +1757,12 @@ async function init() {
 }
 
 // ── i18n bootstrap + language switcher ────────────────────────────────
-// Loads locale messages and applies translations to all data-i18n
-// nodes. The `<html lang>` attribute is set pre-paint by the inline
-// bootstrap in index.html; this block does the actual fetch + DOM
-// translation pass and wires the dropdown.
-//
-// Exposes `window.i18nReady` as a promise that resolves once messages
-// are loaded so async/dynamic UI code (e.g. challenge list rendering
-// that injects buttons via i18n.t() at construction time) can await
-// it before producing strings — otherwise t() returns the literal key
-// before fetch completes and the resulting buttons can't be repaired
-// by a later updateDOM() pass.
-//
-// Started BEFORE init() so init's awaited routing path
-// (showErrorPanel, profile rendering, etc.) can rely on translations
-// being available.
+// `window.i18nReady` resolves once messages are loaded. Async/dynamic
+// UI (e.g. challenge cards built with i18n.t() at construction time)
+// must await it — otherwise t() returns the literal key before fetch
+// completes and updateDOM() can't repair imperatively-built strings.
+// Started BEFORE init() so init's awaited paths (showErrorPanel,
+// profile rendering) can rely on translations being available.
 window.i18nReady = (async function bootstrapI18n() {
   if (typeof window === "undefined" || !window.i18n) return;
   try {
