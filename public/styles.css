@@ -332,15 +332,11 @@ p {
   width: 7rem;
 }
 
-.create-form button {
-  padding: 0.75rem 1rem;
-  border: none;
-  border-radius: 0.6rem;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
-  cursor: pointer;
-}
+/* .create-form button + .admin-form button styling now grouped with
+   .btn-primary below — single source of truth for the primary button
+   look. Position kept BEFORE .ghost so #randomBtn (which has both
+   `.create-form > button` matching AND class="ghost") still gets
+   .ghost's overrides via source-order cascade. */
 
 .form-row {
   display: flex;
@@ -355,7 +351,9 @@ p {
    the same visual weight for very different consequence levels.
    Split into three explicit roles below; `.ghost` is kept for true
    secondary actions only. */
-.btn-primary {
+.btn-primary,
+.create-form button,
+.admin-form button {
   padding: 0.75rem 1rem;
   border: none;
   border-radius: 0.6rem;
@@ -887,15 +885,7 @@ body.high-contrast .key.absent {
   font-size: var(--fs-md);
 }
 
-.admin-form button {
-  padding: 0.75rem 1rem;
-  border: none;
-  border-radius: 0.6rem;
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
-  cursor: pointer;
-}
+/* .admin-form button styling now grouped with .btn-primary above. */
 
 .admin-current {
   max-width: 28rem;
