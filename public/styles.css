@@ -953,7 +953,13 @@ body.high-contrast .key.absent {
     padding: 0.75rem 1.25rem;
   }
 
-  .ghost {
+  .ghost,
+  .btn-primary,
+  .btn-danger {
+    /* Mobile touch-target floor (WCAG 2.5.5 + this app's
+       --touch-target-min). All three semantic button classes share
+       the same mobile padding/min-height so swapping `.ghost` for
+       `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
     padding: 0.75rem 1.1rem;
   }
@@ -1253,7 +1259,13 @@ body.high-contrast .key.absent {
     padding: 0.75rem 1.25rem;
   }
 
-  .ghost {
+  .ghost,
+  .btn-primary,
+  .btn-danger {
+    /* Mobile touch-target floor (WCAG 2.5.5 + this app's
+       --touch-target-min). All three semantic button classes share
+       the same mobile padding/min-height so swapping `.ghost` for
+       `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
     padding: 0.75rem 1.1rem;
   }
