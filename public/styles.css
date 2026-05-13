@@ -367,6 +367,14 @@ p {
   padding: 2rem;
   display: grid;
   gap: var(--space-xl);
+  /* Container query root for the board/keyboard sizing (issue #189).
+     `inline-size` measures the panel's border-box width — board and
+     keyboard size against the panel they live in, not the viewport,
+     so future panel-width changes (zoom, split-pane layouts) propagate
+     correctly to the play surface. Page chrome (topbar, footer, h1,
+     buttons) stays on viewport media queries — correct scope. */
+  container-type: inline-size;
+  container-name: play-panel;
 }
 
 .hidden {
@@ -1185,29 +1193,6 @@ body.high-contrast .key.absent {
     width: min(56rem, 100vw);
     padding-inline: 0.5rem;
   }
-
-  .keyboard {
-    width: min(40rem, 100%);
-    margin: 0 auto;
-    gap: var(--space-2xs);
-  }
-
-  .key-row {
-    flex-wrap: wrap;
-    gap: var(--space-2xs);
-    max-width: 100%;
-  }
-
-  .key {
-    flex: 0 0 2.76rem;
-    min-width: 2.76rem;
-    min-height: 2.76rem;
-  }
-
-  .key.wide {
-    flex: 0 0 6rem;
-    min-width: 6rem;
-  }
 }
 
 @media (max-width: 375px) {
@@ -1237,42 +1222,6 @@ body.high-contrast .key.absent {
   .leaderboard-panel {
     padding: 0.75rem;
     gap: 0.7rem;
-  }
-
-  .tile {
-    font-size: var(--fs-xl);
-    max-width: 3.5rem;
-  }
-
-  .board {
-    gap: var(--space-sm);
-    width: min(98vw, calc(var(--cols) * 3.8rem));
-  }
-
-  .row {
-    gap: var(--space-sm);
-  }
-
-  .key {
-    flex: 0 0 2.74rem;
-    padding: 0.6rem 0.25rem;
-    font-size: var(--fs-sm);
-    min-width: 2.74rem;
-    min-height: 2.74rem;
-  }
-
-  .keyboard {
-    gap: var(--space-2xs);
-    width: 100%;
-  }
-
-  .key-row {
-    gap: var(--space-2xs);
-    max-width: 100%;
-  }
-
-  .key-row.offset {
-    padding: 0 0.35rem;
   }
 
   .modal-card {
@@ -1314,39 +1263,6 @@ body.high-contrast .key.absent {
     gap: 0.65rem;
   }
 
-  .tile {
-    font-size: 1.45rem;
-    max-width: 3.2rem;
-  }
-
-  .board {
-    gap: 0.45rem;
-    width: min(98vw, calc(var(--cols) * 3.5rem));
-  }
-
-  .row {
-    gap: 0.45rem;
-  }
-
-  .key {
-    padding: 0.5rem 0.2rem;
-    font-size: 0.8rem;
-    min-width: 2.76rem;
-    min-height: 2.76rem;
-  }
-
-  .keyboard {
-    gap: var(--space-2xs);
-  }
-
-  .key-row {
-    gap: var(--space-2xs);
-  }
-
-  .key-row.offset {
-    padding: 0 0.2rem;
-  }
-
   .footer {
     padding: 0.5rem 0.65rem 1rem;
   }
@@ -1383,41 +1299,6 @@ body.high-contrast .key.absent {
   .leaderboard-panel {
     padding: 0.55rem;
     gap: 0.6rem;
-  }
-
-  .tile {
-    font-size: 1.4rem;
-    max-width: 2.8rem;
-    border-radius: var(--radius-sm);
-  }
-
-  .board {
-    gap: 0.35rem;
-    width: min(98vw, calc(var(--cols) * 3rem));
-  }
-
-  .row {
-    gap: 0.35rem;
-  }
-
-  .key {
-    padding: 0.45rem 0.15rem;
-    font-size: 0.8rem;
-    min-width: 2.76rem;
-    min-height: 2.76rem;
-    border-radius: var(--radius-sm);
-  }
-
-  .keyboard {
-    gap: var(--space-2xs);
-  }
-
-  .key-row {
-    gap: var(--space-2xs);
-  }
-
-  .key-row.offset {
-    padding: 0;
   }
 
   .modal-card {
@@ -1482,6 +1363,183 @@ body.high-contrast .key.absent {
   }
 }
 
+/* ─── Container queries: board + keyboard sizing (issue #189) ──────────
+   Board and keyboard size against the `.panel` they live in, not the
+   viewport. `.panel` is the container root (declared above with
+   `container-type: inline-size; container-name: play-panel`).
+
+   **Each `@container` query is nested inside its legacy `@media`
+   gate.** The `@media` ensures the rule only fires when the viewport
+   itself is at the legacy breakpoint, AND the `@container` ensures
+   the rule only fires when the panel's content box is narrow enough
+   to actually need the smaller sizing. Without the `@media` gate the
+   container queries would fire at unintended viewport ranges because
+   `.panel`'s padding varies by viewport (1.5rem at @720, 0.5rem at
+   @420, 1.15rem at @375, etc.) and the panel-content-width function
+   ends up non-monotonic at each breakpoint boundary. The double gate
+   preserves legacy behavior exactly while keeping the `@container`
+   layer in place for future scenarios where the panel is artificially
+   constrained (split-pane layouts, embedded iframes). Codex P2 review
+   on PR #198.
+
+   Board widths use `min(100%, …)` rather than `min(98vw, …)` — `vw`
+   would re-couple to viewport even inside `@container`, defeating
+   the container contract. CodeRabbit on PR #198.
+
+   Page chrome (topbar, footer, h1/h2, panel padding, profile-panel,
+   leaderboard-panel, player-stats columns) stays on plain viewport
+   `@media` queries above — correct scope.
+
+   Landscape rules (`@media (max-height: 500px) and (orientation:
+   landscape)`) keep their board/keyboard sizing as viewport-driven —
+   that breakpoint is about fitting a play surface into limited
+   vertical space, not panel inline-size. The landscape block is
+   intentionally placed AFTER these `@media`+`@container` blocks so
+   its sizing wins via source-order cascade on narrow landscape
+   phones (e.g. 360×320). */
+
+@media (max-width: 420px) {
+  @container play-panel (max-width: 405px) {
+    .keyboard {
+      width: min(40rem, 100%);
+      margin: 0 auto;
+      gap: var(--space-2xs);
+    }
+
+    .key-row {
+      flex-wrap: wrap;
+      gap: var(--space-2xs);
+      max-width: 100%;
+    }
+
+    .key {
+      flex: 0 0 2.76rem;
+      min-width: 2.76rem;
+      min-height: 2.76rem;
+    }
+
+    .key.wide {
+      flex: 0 0 6rem;
+      min-width: 6rem;
+    }
+  }
+}
+
+@media (max-width: 375px) {
+  @container play-panel (max-width: 332px) {
+    .tile {
+      font-size: var(--fs-xl);
+      max-width: 3.5rem;
+    }
+
+    .board {
+      gap: var(--space-sm);
+      width: min(100%, calc(var(--cols) * 3.8rem));
+    }
+
+    .row {
+      gap: var(--space-sm);
+    }
+
+    .key {
+      flex: 0 0 2.74rem;
+      padding: 0.6rem 0.25rem;
+      font-size: var(--fs-sm);
+      min-width: 2.74rem;
+      min-height: 2.74rem;
+    }
+
+    .keyboard {
+      gap: var(--space-2xs);
+      width: 100%;
+    }
+
+    .key-row {
+      gap: var(--space-2xs);
+      max-width: 100%;
+    }
+
+    .key-row.offset {
+      padding: 0 0.35rem;
+    }
+  }
+}
+
+@media (max-width: 360px) {
+  @container play-panel (max-width: 324px) {
+    .tile {
+      font-size: 1.45rem;
+      max-width: 3.2rem;
+    }
+
+    .board {
+      gap: 0.45rem;
+      width: min(100%, calc(var(--cols) * 3.5rem));
+    }
+
+    .row {
+      gap: 0.45rem;
+    }
+
+    .key {
+      padding: 0.5rem 0.2rem;
+      font-size: 0.8rem;
+      min-width: 2.76rem;
+      min-height: 2.76rem;
+    }
+
+    .keyboard {
+      gap: var(--space-2xs);
+    }
+
+    .key-row {
+      gap: var(--space-2xs);
+    }
+
+    .key-row.offset {
+      padding: 0 0.2rem;
+    }
+  }
+}
+
+@media (max-width: 320px) {
+  @container play-panel (max-width: 292px) {
+    .tile {
+      font-size: 1.4rem;
+      max-width: 2.8rem;
+      border-radius: var(--radius-sm);
+    }
+
+    .board {
+      gap: 0.35rem;
+      width: min(100%, calc(var(--cols) * 3rem));
+    }
+
+    .row {
+      gap: 0.35rem;
+    }
+
+    .key {
+      padding: 0.45rem 0.15rem;
+      font-size: 0.8rem;
+      min-width: 2.76rem;
+      min-height: 2.76rem;
+      border-radius: var(--radius-sm);
+    }
+
+    .keyboard {
+      gap: var(--space-2xs);
+    }
+
+    .key-row {
+      gap: var(--space-2xs);
+    }
+
+    .key-row.offset {
+      padding: 0;
+    }
+  }
+}
 @media (max-height: 500px) and (orientation: landscape) {
   body {
     min-height: 100vh;
