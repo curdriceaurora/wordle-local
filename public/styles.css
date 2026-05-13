@@ -67,6 +67,15 @@
   --space-xl: 1.5rem;
   --space-2xl: 2rem;
 
+  /* Radius scale (issue #190). Following the #162 precedent: dominant
+     clusters get a token. Singletons (0.4rem breakpoint tile, 0.75rem
+     stat-card, 0.9rem sub-panel, 1rem modal/admin panels) intentionally
+     stay as literals until a second clean use case appears. */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.6rem;
+  --radius-xl: 1.2rem;
+  --radius-pill: 999px;
+
   color-scheme: dark;
 }
 
@@ -161,7 +170,7 @@ html {
   padding: 0.5rem 0.75rem;
   background: var(--accent);
   color: var(--text-on-accent);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   transform: translateY(-200%);
   transition: transform 0.2s ease;
   z-index: 10;
@@ -256,7 +265,7 @@ p {
   background: transparent;
   border: none;
   padding: 0.2rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 
@@ -270,7 +279,7 @@ p {
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.2rem 0.5rem;
   font-size: 0.86rem;
 }
@@ -284,7 +293,7 @@ p {
   border: 1px solid var(--chip-border);
   min-height: var(--touch-target-min);
   padding: 0.6rem 1.2rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -307,7 +316,7 @@ p {
   width: min(56rem, 95vw);
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 1.2rem;
+  border-radius: var(--radius-xl);
   padding: 2rem;
   display: grid;
   gap: var(--space-xl);
@@ -332,7 +341,7 @@ p {
 .create-form input,
 .create-form select {
   padding: 0.6rem 0.8rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
@@ -373,7 +382,7 @@ p {
 .admin-form button:not(.ghost) {
   padding: 0.75rem 1rem;
   border: none;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--text-on-accent);
   font-weight: 700;
@@ -388,7 +397,7 @@ p {
 
 .btn-danger {
   padding: 0.6rem 1rem;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--danger);
   background: transparent;
   color: var(--danger);
@@ -410,7 +419,7 @@ p {
 
 .ghost {
   padding: 0.6rem 1rem;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--chip-border);
   background: transparent;
   color: var(--text);
@@ -492,7 +501,7 @@ button:disabled {
 .profile-form input,
 .leaderboard-head select {
   padding: 0.55rem 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
@@ -520,7 +529,7 @@ button:disabled {
 
 .player-chip {
   border: 1px solid var(--chip-border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.35rem 0.75rem;
   background: var(--chip-bg);
   color: var(--text);
@@ -607,7 +616,7 @@ button:disabled {
   aspect-ratio: 1 / 1;
   max-width: 4rem;
   border: 2px solid var(--tile-border);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
   text-transform: uppercase;
@@ -679,7 +688,7 @@ body.high-contrast .tile.absent {
   flex-shrink: 0;
   padding: 0.7rem 0.3rem;
   border: none;
-  border-radius: 0.6rem;
+  border-radius: var(--radius-md);
   background: var(--bg-accent);
   color: var(--text);
   font-weight: 600;
@@ -742,7 +751,7 @@ body.high-contrast .tile.absent {
 
 .share input {
   padding: 0.6rem 0.8rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
@@ -788,7 +797,7 @@ body.high-contrast .key.absent {
   font-size: var(--fs-base);
   min-height: var(--touch-target-min);
   padding: 0.45rem 0.9rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -886,7 +895,7 @@ body.high-contrast .key.absent {
 
 .admin-form input {
   padding: 0.6rem 0.8rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
@@ -895,7 +904,7 @@ body.high-contrast .key.absent {
 
 .admin-form select {
   padding: 0.6rem 0.8rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
   color: var(--text);
@@ -1193,7 +1202,7 @@ body.high-contrast .key.absent {
   .tile {
     font-size: 1.4rem;
     max-width: 2.8rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-sm);
   }
 
   .board {
@@ -1210,7 +1219,7 @@ body.high-contrast .key.absent {
     font-size: 0.8rem;
     min-width: 2.76rem;
     min-height: 2.76rem;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-sm);
   }
 
   .keyboard {
