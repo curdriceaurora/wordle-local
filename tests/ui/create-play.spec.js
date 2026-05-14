@@ -183,7 +183,9 @@ test("language selection updates minimum length", async ({ page }) => {
   await waitForLanguages(page);
   await page.selectOption("#langSelect", "en");
   await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
-  await expect(page.locator('[data-i18n="create.wordHint"]')).toContainText("3-12");
+  await expect(page.locator("#wordHint")).toContainText("3-12");
+  await expect(page.locator("#notificationStatus")).not.toContainText("3-12");
+  await expect(page.locator("#notificationStatus")).not.toContainText("A-Z only");
 });
 
 test("share link info modal opens and closes", async ({ page, browserName }) => {
@@ -229,6 +231,20 @@ test("invalid share link shows interstitial and redirects", async ({ page }) => 
   await expect(page.locator("#errorMessage")).toContainText("That link doesn't work");
   await expect(page.locator("#errorCountdown")).toContainText("Going back in");
   await page.waitForURL("/", { timeout: 2000 });
+});
+
+test("settings toggles meet 44px touch-target height at mobile viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "commit" });
+  await waitForLanguages(page);
+
+  const toggles = await page.locator(".settings .toggle").all();
+  expect(toggles.length).toBeGreaterThan(0);
+  for (const toggle of toggles) {
+    const box = await toggle.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
 });
 
 test("share link copy shows confirmation", async ({ page, context }) => {
