@@ -1,3 +1,9 @@
+// v14: invalidates stale index.html + app.js + styles.css + admin.css for
+// the create-flow hint fix and admin responsive table polish (#210).
+// Non-API requests are cache-first below, so returning PWA users would
+// otherwise keep the old broad `.hint` selector and unscoped admin
+// sticky-column CSS until the cache name changes.
+//
 // v9: adds /js/random-name.js to the precache so the new pickRandomName
 // global (PR #180) is available offline. app.js calls pickRandomName()
 // during startup for both the daily and challenge profile defaults;

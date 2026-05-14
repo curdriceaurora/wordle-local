@@ -77,8 +77,8 @@
   white-space: normal;
 }
 
-.admin-workspace .leaderboard-table th:last-child,
-.admin-workspace .leaderboard-table td:last-child {
+.admin-workspace .admin-action-table th:last-child,
+.admin-workspace .admin-action-table td:last-child {
   position: sticky;
   right: 0;
   z-index: 1;
@@ -86,8 +86,8 @@
   box-shadow: -12px 0 18px rgba(2, 6, 23, 0.32);
 }
 
-html.theme-light .admin-workspace .leaderboard-table th:last-child,
-html.theme-light .admin-workspace .leaderboard-table td:last-child {
+html.theme-light .admin-workspace .admin-action-table th:last-child,
+html.theme-light .admin-workspace .admin-action-table td:last-child {
   box-shadow: -12px 0 18px rgba(15, 23, 42, 0.12);
 }
 

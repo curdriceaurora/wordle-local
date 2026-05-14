@@ -183,7 +183,9 @@ test("language selection updates minimum length", async ({ page }) => {
   await waitForLanguages(page);
   await page.selectOption("#langSelect", "en");
   await expect(page.locator("#lengthInput")).toHaveAttribute("min", "3");
-  await expect(page.locator('[data-i18n="create.wordHint"]')).toContainText("3-12");
+  await expect(page.locator("#wordHint")).toContainText("3-12");
+  await expect(page.locator("#notificationStatus")).not.toContainText("3-12");
+  await expect(page.locator("#notificationStatus")).not.toContainText("A-Z only");
 });
 
 test("share link info modal opens and closes", async ({ page, browserName }) => {
