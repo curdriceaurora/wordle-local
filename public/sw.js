@@ -69,7 +69,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v13';
+const CACHE_NAME = 'wordle-cache-v14';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
