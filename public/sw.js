@@ -1,8 +1,10 @@
-// v14: invalidates stale index.html + app.js + styles.css + admin.css for
+// v15: invalidates stale index.html + app.js + styles.css + admin.css for
 // the create-flow hint fix and admin responsive table polish (#210).
 // Non-API requests are cache-first below, so returning PWA users would
 // otherwise keep the old broad `.hint` selector and unscoped admin
 // sticky-column CSS until the cache name changes.
+// v14 was used by the CSP / classroom-report style extraction (#211),
+// so this PR bumps to v15 to avoid colliding on merge.
 //
 // v9: adds /js/random-name.js to the precache so the new pickRandomName
 // global (PR #180) is available offline. app.js calls pickRandomName()
@@ -75,7 +77,7 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v14';
+const CACHE_NAME = 'wordle-cache-v15';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
