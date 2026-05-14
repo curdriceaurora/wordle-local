@@ -892,7 +892,7 @@ test("admin shell profiles tab supports rename, merge, and delete flows", async 
   await expect(page.locator("#profilesBody td")).toHaveText("No player profiles yet.");
 });
 
-test("admin-action-table last column has sticky CSS applied", async ({ page }) => {
+test("admin-action-table last column has sticky CSS applied at narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 800 });
   await page.goto("/admin", { waitUntil: "commit" });
   await page.fill("#adminKeyInput", "demo-key");
