@@ -3159,9 +3159,15 @@ app.use(helmet({
       frameAncestors: ["'self'"],
       imgSrc: ["'self'", "data:"],
       objectSrc: ["'none'"],
+      // 'unsafe-inline' required for two synchronous pre-paint scripts in
+      // public/index.html and public/admin/index.html (theme + lang detection).
+      // These must run before the stylesheet to avoid FOUC; extracting them to
+      // external files would require `defer`, breaking the pre-paint guarantee.
+      // Nonce-based CSP is the correct long-term fix but needs server-side
+      // templating. See docs/security/csp.md for the full policy rationale.
       scriptSrc: ["'self'", "'unsafe-inline'"],
       scriptSrcAttr: ["'none'"],
-      styleSrc: ["'self'", "https:", "'unsafe-inline'"],
+      styleSrc: ["'self'", "https:"],
       // Explicitly disable Helmet's default `upgrade-insecure-requests`.
       // The directive instructs the browser to rewrite every HTTP
       // subresource URL to HTTPS before fetching. Chromium and
