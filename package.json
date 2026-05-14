@@ -16,7 +16,7 @@
     "schema:check": "node scripts/validate-schemas.js",
     "guardrails:nits": "node scripts/nit-guardrails.js",
     "i18n:check": "node scripts/i18n-coverage.js",
-    "markdown:check": "markdownlint-cli2 \"**/*.md\" \"!**/node_modules/**\" \"!**/.husky/**\" \"!**/.auto-claude/**\" \"!**/.git/**\"",
+    "markdown:check": "markdownlint-cli2 \"**/*.md\" \"!**/node_modules/**\" \"!**/.husky/**\" \"!**/.auto-claude/**\" \"!**/.git/**\" \"!**/test-results/**\"",
     "claims:check": "node scripts/check-readme-claims.js",
     "locks:check": "node scripts/check-lock-bypass.js",
     "proto:check": "node scripts/check-proto-pollution.js",
