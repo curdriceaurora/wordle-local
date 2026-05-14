@@ -892,6 +892,34 @@ test("admin shell profiles tab supports rename, merge, and delete flows", async 
   await expect(page.locator("#profilesBody td")).toHaveText("No player profiles yet.");
 });
 
+test("admin-action-table last column is sticky at narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 800 });
+  await page.goto("/admin", { waitUntil: "commit" });
+  await page.fill("#adminKeyInput", "demo-key");
+  await page.click("#unlockForm button[type=submit]");
+  await expect(page.locator("#shellPanel")).toBeVisible();
+
+  const table = page.locator('[aria-label="Provider status table"]');
+  await expect(table).toBeVisible();
+
+  const tableWrap = page.locator(".admin-table-wrap").first();
+  const lastHeaderCell = table.locator("th:last-child");
+  await expect(lastHeaderCell).toBeVisible();
+
+  const wrapScrollWidth = await tableWrap.evaluate((el) => el.scrollWidth);
+  const wrapClientWidth = await tableWrap.evaluate((el) => el.clientWidth);
+  if (wrapScrollWidth > wrapClientWidth) {
+    await tableWrap.evaluate((el) => {
+      el.scrollLeft = el.scrollWidth;
+    });
+  }
+
+  await expect(lastHeaderCell).toBeVisible();
+  const box = await lastHeaderCell.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.x + box.width).toBeLessThanOrEqual(600 + 2);
+});
+
 test("admin shell passes axe checks in locked and unlocked states", async ({ page }) => {
   await page.goto("/admin", { waitUntil: "commit" });
   const lockedResults = await new AxeBuilder({ page }).analyze();

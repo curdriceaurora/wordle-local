@@ -233,6 +233,20 @@ test("invalid share link shows interstitial and redirects", async ({ page }) => 
   await page.waitForURL("/", { timeout: 2000 });
 });
 
+test("settings toggles meet 44px touch-target height at mobile viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "commit" });
+  await waitForLanguages(page);
+
+  const toggles = await page.locator(".settings .toggle").all();
+  expect(toggles.length).toBeGreaterThan(0);
+  for (const toggle of toggles) {
+    const box = await toggle.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+});
+
 test("share link copy shows confirmation", async ({ page, context }) => {
   test.setTimeout(60000);
   /* Headless Chromium needs clipboard-write granted explicitly for
