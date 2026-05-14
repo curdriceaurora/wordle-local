@@ -1,10 +1,4 @@
 /* global pickRandomName */
-// `pickRandomName` is provided by public/js/random-name.js, loaded
-// via `<script defer>` before this file in public/index.html. The
-// ESLint global directive above tells the linter to expect it as a
-// browser global rather than a missing identifier. Same UMD pattern
-// as escapeHtml from public/js/escape-html.js (which app.js doesn't
-// currently consume, but the script-tag loading chain is identical).
 
 const createPanel = document.getElementById("createPanel");
 const playPanel = document.getElementById("playPanel");
@@ -285,17 +279,8 @@ function showErrorPanel(message) {
   createPanel.classList.add("hidden");
   playPanel.classList.add("hidden");
   errorPanel.classList.remove("hidden");
-  // The link-failure message is owned by JS (it's never in markup),
-  // so localize it here at render time. Callers pass `null` for the
-  // generic case so this function can pick the localized default.
-  // The only callers passing an explicit string forward a
-  // server-supplied `data.error` from /api/puzzle (initPlay's
-  // result.message). Today /api/puzzle still returns English error
-  // strings — it isn't wired through translateForRequest yet, so the
-  // forwarded text is English regardless of UI locale. That gap is
-  // tracked separately; when that route is migrated, no change is
-  // needed here because the forwarded string will already be
-  // localized at the source.
+  // null → pick localized default; explicit string = server-supplied error
+  // (currently English — /api/puzzle isn't wired through translateForRequest).
   const fallbackMsg = "That link doesn't work. Let's make a new puzzle.";
   errorMessageEl.textContent = message
     || (window.i18n ? window.i18n.t("error.linkFailed") : fallbackMsg);
@@ -391,40 +376,19 @@ function enableStatsDegradedMode() {
   renderDailyPlayerPanels();
 }
 
-// Mirror of the server-side validator in lib/profile-name.js
-// (issue #174). Must stay in sync — the server rejects identically
-// so a name accepted here will always be accepted on submit. Without
-// this mirror, the client would block server-valid names (`José`,
-// `李明`, 25-32 char) before the request leaves the page.
-//
-// Notes:
-//   - Whitespace normalization collapses only LITERAL spaces, not
-//     `\s+`, so embedded tabs/newlines survive trim() and get
-//     rejected by the regex rather than silently flattening to a
-//     valid space.
-//   - Length cap uses `Array.from(cleaned).length` (Unicode
-//     codepoints) to match the validator + JSON-schema `maxLength`
-//     (both codepoints). Bare `.length` would be UTF-16 units and
-//     too strict for astral-plane letters that the schema accepts.
-//     Codex P2 on PR #180. The HTML `maxlength="32"` UI cap is
-//     UTF-16 (tighter for astral typing — intentional UI choice).
-//   - The regex quantifier is derived from PROFILE_NAME_LENGTH_MAX
-//     so the cap is defined in one place (matches lib/profile-name.js).
+// Mirror of lib/profile-name.js — must stay in sync. Length uses
+// Array.from (codepoints), not .length (UTF-16 units), to match the server
+// validator. Whitespace collapse targets only literal spaces; tabs/newlines
+// survive and fail the regex.
 const PROFILE_NAME_LENGTH_MAX = 32;
 const PROFILE_NAME_PATTERN = new RegExp(
   `^\\p{L}[\\p{L}\\p{M}' -]{0,${PROFILE_NAME_LENGTH_MAX - 1}}$`,
   "u"
 );
 function normalizeProfileName(rawName) {
-  // NFC-normalize so `José` (composed) and `José` (decomposed `e` +
-  // combining-acute) produce identical bytes — otherwise the server's
-  // dedup comparison sees them as distinct profiles. Codex P2 on
-  // PR #180. Both forms still pass the validator (the regex accepts
-  // `\p{L}` letters and `\p{M}` combining marks separately).
+  // NFC so composed/decomposed forms (e.g. `José`) compare identically on the server.
   const cleaned = String(rawName || "").trim().replace(/ +/g, " ").normalize("NFC");
   if (!cleaned) return "";
-  // Codepoint cap — matches the validator + JSON schema. See block
-  // comment above for the rationale.
   if (Array.from(cleaned).length > PROFILE_NAME_LENGTH_MAX) return "";
   if (!PROFILE_NAME_PATTERN.test(cleaned)) return "";
   return cleaned;
@@ -607,16 +571,6 @@ function setProfileStatus(text) {
   profileStatusEl.textContent = text;
 }
 
-// Shared leaderboard-table partial (issue #175). Both the play
-// (daily) leaderboard and the challenge leaderboard render the same
-// <tbody> shape (one <tr> per row, one <td> per column) with
-// different column sets — 7 cols for play (rank/name/wins/played/
-// win%/best/streak) and 5 cols for challenge (rank/name/score/
-// solved/time). The shared helper builds rows from a `cols` config
-// so the row-construction code lives in one place; each caller
-// passes its own column accessors + empty-state copy. Caller is
-// responsible for the surrounding <table><thead> chrome and for
-// showing/hiding the panel around it.
 function renderLeaderboardTable(tbodyEl, options) {
   const { rows, cols, emptyText, emptyClass } = options;
   tbodyEl.innerHTML = "";
@@ -819,28 +773,9 @@ async function createOrSelectProfile(rawName) {
   }
 }
 
-// Shared board-grid builder (issue #176). Both the play (daily/
-// created) board and the challenge board render a (rows × cols) grid
-// of tiles with the same ARIA grid semantics + class names; they
-// just differ in state strategy:
-//
-//   - Play builds the grid empty at game-init and then mutates
-//     individual tiles via updateTile() / paintRow() as the user
-//     types and submits guesses. `captureRefs: true` makes the
-//     helper return a tileGrid that the patch helpers index into.
-//
-//   - Challenge re-renders the whole grid on every key press from
-//     `challengeState.session.puzzles[i]` (guess history + server-
-//     supplied feedback). It passes `cellAt(r, c)` returning the
-//     letter + feedback class for each cell.
-//
-// Both paths now produce identical DOM shape (role=grid + aria-
-// rowcount/colcount, role=row, role=gridcell, .filled when a letter
-// is present, .absent/.present/.correct when feedback is present,
-// aria-label="Letter X" or "Letter X, present" or "Empty"). The
-// pre-dedupe challenge render had no ARIA grid attrs and no
-// per-tile aria-label — minor a11y improvement folded into the
-// dedupe, not a regression.
+// Play passes `captureRefs: true` and patches tiles incrementally;
+// challenge passes `cellAt` and re-renders the full grid on each keypress
+// from server-supplied feedback.
 function buildBoardGrid(rootEl, opts) {
   const { rows, cols, cellAt, captureRefs } = opts;
   rootEl.innerHTML = "";
@@ -929,12 +864,6 @@ function mountSkeletonBoard(expectedRows, expectedCols) {
   }
 }
 
-// Shared keyboard build helpers (issue #163, partial). Both the
-// play (#keyboard) and the challenge (#challengeKeyboard) on-screen
-// keyboards used to have parallel build code with copy-pasted
-// BACK/ENTER accessibility logic and a duplicate row-iteration loop.
-// `makeKeyButton` + `renderKeyboardInto` are the single source of
-// truth so future a11y/layout fixes only need to be applied once.
 function makeKeyButton(key, opts = {}) {
   const { onClick } = opts;
   const button = document.createElement("button");
@@ -2459,13 +2388,6 @@ function setChallengeProfileName(name) {
   try { localStorage.setItem(CHALLENGE_PROFILE_NAME_KEY, name); } catch (_e) { /* ignore */ }
 }
 
-// `pickRandomName` is loaded as a UMD-style global from
-// public/js/random-name.js (issue #174). It's also exported as a
-// CommonJS module so tests/profile-name.test.js can iterate every
-// adjective/animal combination through the validator. The inline
-// definition used to live here; extracted so a single source of
-// truth governs the default-name lists.
-
 if (challengeProfileInputEl) {
   // Prefill: keep any stored localStorage name IF it still passes
   // the unified validator; otherwise drop in a regex-clean random
@@ -2486,25 +2408,8 @@ if (challengeProfileInputEl) {
     setChallengeProfileName(initialName);
   }
   challengeProfileInputEl.addEventListener('input', () => {
-    // Match the same trim + space-collapse + codepoint-clamp that
-    // normalizeProfileName() does on load, so the persisted value
-    // is byte-identical to what the next page-load will display.
-    // Without this collapse, a user typing "Mary  Jane" (double
-    // space) would see one thing in the field, get something else
-    // persisted on submit, and see a third thing (collapsed by
-    // normalizeProfileName) after refresh. Caught by Copilot.
-    //
-    // Truncate by Unicode code points (Array.from) not UTF-16 code
-    // units (.slice); the validator's `{0,31}` quantifier under /u
-    // counts code points, so `.slice` would either truncate astral
-    // letters too aggressively or cut a surrogate pair and produce
-    // an invalid string. Caught by Copilot on PR #180.
-    // NFC-normalize here too — matches normalizeProfileName() so a
-    // user typing decomposed accents (NFD `José` = `e` + combining
-    // acute) stores the same bytes the next page-load prefill will
-    // display after running through normalizeProfileName. Without
-    // NFC here, the persisted value drifts after refresh. Caught by
-    // Copilot on PR #180.
+    // Mirror normalizeProfileName()'s trim+collapse+NFC+codepoint-cap so
+    // the persisted value is byte-identical to what the next page-load displays.
     const cleaned = String(challengeProfileInputEl.value || '')
       .trim()
       .replace(/ +/g, ' ')
