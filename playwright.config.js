@@ -53,6 +53,6 @@ module.exports = defineConfig({
   webServer: {
     command: "RATE_LIMIT_MAX=10000 RATE_LIMIT_WINDOW_MS=60000 node server.js",
     port: 3000,
-    reuseExistingServer: false
+    reuseExistingServer: !process.env.CI
   }
 });
