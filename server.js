@@ -3205,7 +3205,25 @@ app.use(
     restoreInProgressRef,
     dataMutationLockRef,
     getShutdownInFlight: () => shutdownInFlight,
-    appVersion: APP_VERSION
+    appVersion: APP_VERSION,
+    // B7 follow-up / #205: per-store deep-health probes. Each
+    // entry's `healthCheck()` is invoked with a 2 s timeout by
+    // /readyz when the surface-level checks are clear. A failure
+    // surfaces as `reasons: ["store_unhealthy:<name>"]` in the 503.
+    stores: [
+      { name: "leaderboard", store: leaderboardStore },
+      { name: "classes", store: classesStore },
+      { name: "admin-jobs", store: adminJobsStore },
+      { name: "schedule", store: scheduleStore },
+      { name: "webhooks", store: webhookStore },
+      { name: "webhook-deliveries", store: webhookDeliveryStore },
+      { name: "push-subscriptions", store: pushSubscriptionStore },
+      { name: "challenge-config", store: challengeConfigStore },
+      { name: "challenge-results", store: challengeResultsStore },
+      { name: "app-config", store: appConfigStore },
+      { name: "language-registry", store: languageRegistryStore },
+      { name: "vapid", store: vapidStore }
+    ]
   })
 );
 app.use(
