@@ -42,6 +42,23 @@
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
+  // Pre-bundled default-locale messages, populated by /js/i18n-en.js
+  // (a synchronous script tag loaded BEFORE this file in both shells).
+  // The server route in server.js wraps public/locales/en.json as JS;
+  // we pick it up here so init() can skip the en fetch entirely.
+  // Without this seed, a slow fetch (CI runner) or a service-worker
+  // offline 503 would leave loadedMessages.en = {} and every dynamic
+  // i18n.t() would return the literal key. PR #180-follow-up.
+  //
+  // Placed AFTER `isPlainObject` declaration deliberately: an earlier
+  // version (PR #214 round 1) ran this before the helper and relied
+  // on function-declaration hoisting; a future refactor to `const
+  // isPlainObject = ...` would silently break i18n init for every
+  // user. Copilot caught this.
+  if (typeof global !== "undefined" && isPlainObject(global.__i18nMessagesEn)) {
+    loadedMessages[DEFAULT_LOCALE] = global.__i18nMessagesEn;
+  }
+
   function readStoredLocale() {
     try {
       var raw = global.localStorage && global.localStorage.getItem(STORAGE_KEY);

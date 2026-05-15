@@ -3589,6 +3589,22 @@ app.use("/manifest.json", (req, res, next) => {
   res.setHeader("Content-Type", "application/manifest+json");
   next();
 });
+// `/js/i18n-en.js` (the synchronous pre-bundle of default-locale
+// messages used by /js/i18n.js to skip the en fetch) is shipped as
+// a CHECKED-IN STATIC FILE at `public/js/i18n-en.js`, generated
+// from `public/locales/en.json` via
+// `scripts/build-i18n-en-bundle.js` and kept in sync by the
+// `check:i18n-en-bundle` gate in `npm run check`.
+//
+// Static-file (not Express route) because the Vercel gameplay
+// deploy serves `public/` directly with `buildCommand: ""` —
+// there's no Express running there, so a server route would 404
+// and the SW precache `cache.addAll()` would reject and abort PWA
+// install. Codex P2 on PR #214.
+//
+// The static mount below serves this file from PUBLIC_PATH
+// (public/dist post-build via `scripts/build-assets.js`'s js/ copy,
+// or public/ in dev).
 // Mount the vendored bundles directly so /dist/vendor/... resolves the same
 // way regardless of whether PUBLIC_PATH points at public/ (dev) or
 // public/dist/ (post-build). Without this, dist-mode would resolve the URL

@@ -1,3 +1,10 @@
+// v17: adds /js/i18n-en.js (synchronous pre-bundle of default-locale
+// messages, PR #214) to the precache. Without this entry, an offline
+// PWA visit after the v17 deploy would miss the new script, fall back
+// to the SW's 503 offline response, leave window.__i18nMessagesEn
+// undefined, and reproduce the dynamic-i18n.t-returns-key failure
+// mode the PR set out to fix. Copilot caught this on PR #214.
+//
 // v16: invalidates stale styles.css for the font-size token coverage pass
 // (#207). All 50 raw font-size literals are replaced with CSS custom
 // properties; returning PWA users need the new styles.css to pick up the
@@ -74,13 +81,14 @@
 //
 // v3: adds `push` + `notificationclick` listeners for the daily-puzzle
 // Web Push notification flow (#92).
-const CACHE_NAME = 'wordle-cache-v16';
+const CACHE_NAME = 'wordle-cache-v17';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
   '/js/escape-html.js',
+  '/js/i18n-en.js',
   '/js/i18n.js',
   '/js/random-name.js',
   '/manifest.json',

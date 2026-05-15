@@ -81,6 +81,17 @@ async function build() {
   // (Vercel, Docker) silently 404s on `/fonts/*` and the typography
   // falls back to the system stack. Codex P2 on PR #195.
   fs.cpSync(path.join(publicDir, "fonts"), path.join(distDir, "fonts"), { recursive: true });
+  // i18n locale JSON. The user-locale switcher fetches /locales/es.json
+  // when the user opts in; without this copy, dist-mode 404s and the
+  // switch silently no-ops to English. (The default-locale `en.json`
+  // is ALSO shipped as a checked-in static pre-bundle at
+  // `public/js/i18n-en.js` — generated from en.json by
+  // `scripts/build-i18n-en-bundle.js` and kept in sync by
+  // `scripts/check-i18n-en-bundle.js`. That pre-bundle reaches dist
+  // automatically via the `public/js/` → `public/dist/js/` copy
+  // above; this `locales/` copy is purely for the Spanish opt-in
+  // fetch path.)
+  fs.cpSync(path.join(publicDir, "locales"), path.join(distDir, "locales"), { recursive: true });
 
   // Warn if dist/vendor is missing — those are tracked runtime assets
   // (chart.umd.min.js et al, see .gitignore's `!public/dist/vendor/`)
