@@ -216,7 +216,7 @@ html {
   position: absolute;
   top: 0.5rem;
   left: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-sm) var(--space-md);
   background: var(--accent);
   color: var(--text-on-accent);
   border-radius: var(--radius-sm);
@@ -260,7 +260,7 @@ h1 {
 }
 
 h2 {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-sm);
   font-size: var(--fs-lg);
 }
 
@@ -280,7 +280,7 @@ p {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-lg);
-  padding: 2rem clamp(1.5rem, 4vw, 4rem) 1rem;
+  padding: var(--space-2xl) clamp(1.5rem, 4vw, 4rem) var(--space-lg);
   border-bottom: 1px solid var(--topbar-border);
   width: 100%;
   min-width: 0;
@@ -303,7 +303,7 @@ p {
   align-items: center;
   flex: 1 1 100%;
   min-width: 0;
-  padding-top: 0.75rem;
+  padding-top: var(--space-md);
   border-top: 1px solid var(--topbar-border);
 }
 
@@ -321,7 +321,7 @@ p {
      in #142. */
   background: transparent;
   border: none;
-  padding: 0.2rem 0.4rem;
+  padding: var(--space-2xs) var(--space-xs);
   border-radius: var(--radius-pill);
   cursor: pointer;
 }
@@ -342,7 +342,7 @@ p {
   background: var(--field-bg);
   color: var(--text);
   border-radius: var(--radius-pill);
-  padding: 0.2rem 0.5rem;
+  padding: var(--space-2xs) var(--space-sm);
   font-size: var(--fs-sm); /* rounded from 0.86rem */
 }
 
@@ -369,7 +369,7 @@ p {
   flex: 1;
   display: grid;
   place-items: center;
-  padding: 2rem 1rem 1rem;
+  padding: var(--space-2xl) var(--space-lg) var(--space-lg);
   width: 100%;
   min-width: 0;
 }
@@ -379,7 +379,7 @@ p {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-xl);
-  padding: 2rem;
+  padding: var(--space-2xl);
   display: grid;
   gap: var(--space-xl);
   /* Container query root for the board/keyboard sizing (issue #189).
@@ -450,7 +450,7 @@ p {
 .btn-primary,
 .create-form button:not(.ghost),
 .admin-form button:not(.ghost) {
-  padding: 0.75rem 1rem;
+  padding: var(--space-md) var(--space-lg);
   border: none;
   border-radius: var(--radius-md);
   background: var(--accent);
@@ -466,7 +466,7 @@ p {
 }
 
 .btn-danger {
-  padding: 0.6rem 1rem;
+  padding: 0.6rem var(--space-lg);
   border-radius: var(--radius-md);
   border: 1px solid var(--danger);
   background: transparent;
@@ -488,7 +488,7 @@ p {
 }
 
 .ghost {
-  padding: 0.6rem 1rem;
+  padding: 0.6rem var(--space-lg);
   border-radius: var(--radius-md);
   border: 1px solid var(--chip-border);
   background: transparent;
@@ -549,7 +549,7 @@ button:disabled {
 .leaderboard-panel {
   border: 1px solid var(--panel-border);
   border-radius: 0.9rem;
-  padding: 1rem;
+  padding: var(--space-lg);
   display: grid;
   gap: 0.8rem;
   background: var(--subpanel-bg);
@@ -580,7 +580,7 @@ button:disabled {
 
 .profile-form input,
 .leaderboard-head select {
-  padding: 0.55rem 0.75rem;
+  padding: 0.55rem var(--space-md);
   border-radius: var(--radius-sm);
   border: 1px solid var(--field-border);
   background: var(--field-bg);
@@ -610,7 +610,7 @@ button:disabled {
 .player-chip {
   border: 1px solid var(--chip-border);
   border-radius: var(--radius-pill);
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem var(--space-md);
   background: var(--chip-bg);
   color: var(--text);
   cursor: pointer;
@@ -659,7 +659,7 @@ button:disabled {
 .leaderboard-table th,
 .leaderboard-table td {
   text-align: left;
-  padding: 0.5rem 0.35rem;
+  padding: var(--space-sm) 0.35rem;
   border-bottom: 1px solid var(--table-row-border);
   font-size: var(--fs-base);
 }
@@ -831,8 +831,8 @@ body.high-contrast .tile.absent {
   flex: 3.5;
   font-size: var(--fs-key-wide);
   letter-spacing: 0;
-  padding-left: 0.4rem;
-  padding-right: 0.4rem;
+  padding-left: var(--space-xs);
+  padding-right: var(--space-xs);
   text-transform: uppercase;
   /* Defensive: keep the label single-line and clip rather than wrap
      if the column ever ends up narrower than the text needs (the
@@ -941,7 +941,7 @@ body.high-contrast .key.absent {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 1.5rem;
+  padding: var(--space-xl);
   background: var(--overlay-bg);
   backdrop-filter: blur(6px);
   opacity: 0;
@@ -968,7 +968,7 @@ body.high-contrast .key.absent {
   background: var(--modal-bg);
   border: 1px solid var(--modal-border);
   border-radius: 1rem;
-  padding: 1.5rem;
+  padding: var(--space-xl);
   display: grid;
   gap: var(--space-lg);
   box-shadow: 0 20px 60px var(--modal-shadow);
@@ -1065,7 +1065,7 @@ body.high-contrast .key.absent {
 }
 
 .admin {
-  padding: 2rem clamp(1.5rem, 4vw, 4rem) 3rem;
+  padding: var(--space-2xl) clamp(1.5rem, 4vw, 4rem) 3rem;
   display: grid;
   gap: var(--space-2xl);
   width: 100%;
@@ -1077,7 +1077,7 @@ body.high-contrast .key.absent {
   gap: var(--space-lg);
   max-width: 24rem;
   background: var(--panel-bg);
-  padding: 1.5rem;
+  padding: var(--space-xl);
   border-radius: 1rem;
   border: 1px solid var(--panel-border);
 }
@@ -1112,7 +1112,7 @@ body.high-contrast .key.absent {
 .admin-current {
   max-width: 28rem;
   background: var(--panel-bg);
-  padding: 1.5rem;
+  padding: var(--space-xl);
   border-radius: 1rem;
   border: 1px solid var(--panel-border);
 }
@@ -1128,15 +1128,15 @@ body.high-contrast .key.absent {
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-lg);
-    padding: 1.5rem clamp(1rem, 3vw, 2rem) 0.75rem;
+    padding: var(--space-xl) clamp(1rem, 3vw, 2rem) var(--space-md);
   }
 
   .layout {
-    padding: 1.5rem 1rem 0.75rem;
+    padding: var(--space-xl) var(--space-lg) var(--space-md);
   }
 
   .panel {
-    padding: 1.5rem;
+    padding: var(--space-xl);
     gap: 1.25rem;
   }
 
@@ -1156,7 +1156,7 @@ body.high-contrast .key.absent {
 
   .admin-link {
     min-height: 44px;
-    padding: 0.75rem 1.25rem;
+    padding: var(--space-md) 1.25rem;
   }
 
   .ghost,
@@ -1167,12 +1167,12 @@ body.high-contrast .key.absent {
        the same mobile padding/min-height so swapping `.ghost` for
        `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
-    padding: 0.75rem 1.1rem;
+    padding: var(--space-md) 1.1rem;
   }
 
   .link-button {
     min-height: 44px;
-    padding: 0.65rem 1rem;
+    padding: 0.65rem var(--space-lg);
   }
 
   .top-actions {
@@ -1192,7 +1192,7 @@ body.high-contrast .key.absent {
     min-height: 44px;
     justify-content: space-between;
     border: 1px solid var(--chip-border);
-    padding: 0.55rem 0.75rem;
+    padding: 0.55rem var(--space-md);
   }
 
   .settings .toggle:has(input) {
@@ -1210,12 +1210,12 @@ body.high-contrast .key.absent {
 
 @media (max-width: 420px) {
   .layout {
-    padding-inline: 0.5rem;
+    padding-inline: var(--space-sm);
   }
 
   .panel {
     width: min(56rem, 100vw);
-    padding-inline: 0.5rem;
+    padding-inline: var(--space-sm);
   }
 }
 
@@ -1244,7 +1244,7 @@ body.high-contrast .key.absent {
 
   .profile-panel,
   .leaderboard-panel {
-    padding: 0.75rem;
+    padding: var(--space-md);
     gap: 0.7rem;
   }
 
@@ -1265,11 +1265,11 @@ body.high-contrast .key.absent {
   }
 
   .topbar {
-    padding: 1rem 0.65rem 0.5rem;
+    padding: var(--space-lg) 0.65rem var(--space-sm);
   }
 
   .layout {
-    padding: 1rem 0.65rem 0.5rem;
+    padding: var(--space-lg) 0.65rem var(--space-sm);
   }
 
   .panel {
@@ -1299,15 +1299,15 @@ body.high-contrast .key.absent {
   }
 
   .topbar {
-    padding: 0.85rem 0.5rem 0.45rem;
+    padding: 0.85rem var(--space-sm) 0.45rem;
   }
 
   .layout {
-    padding: 0.85rem 0.5rem 0.45rem;
+    padding: 0.85rem var(--space-sm) 0.45rem;
   }
 
   .panel {
-    padding: 0.75rem;
+    padding: var(--space-md);
     gap: 0.85rem;
   }
 
@@ -1323,7 +1323,7 @@ body.high-contrast .key.absent {
   }
 
   .stat-card {
-    padding: 0.5rem;
+    padding: var(--space-sm);
   }
 
   .stat-card strong {
@@ -1351,7 +1351,7 @@ body.high-contrast .key.absent {
 
   .admin-link {
     min-height: 44px;
-    padding: 0.75rem 1.25rem;
+    padding: var(--space-md) 1.25rem;
   }
 
   .ghost,
@@ -1362,12 +1362,12 @@ body.high-contrast .key.absent {
        the same mobile padding/min-height so swapping `.ghost` for
        `.btn-danger` / `.btn-primary` doesn't shrink the hit area. */
     min-height: 44px;
-    padding: 0.75rem 1.1rem;
+    padding: var(--space-md) 1.1rem;
   }
 
   .link-button {
     min-height: 44px;
-    padding: 0.65rem 1rem;
+    padding: 0.65rem var(--space-lg);
   }
 
   .top-actions {
@@ -1498,7 +1498,7 @@ body.high-contrast .key.absent {
     }
 
     .key {
-      padding: 0.5rem 0.2rem;
+      padding: var(--space-sm) var(--space-2xs);
       font-size: var(--fs-2xs);
       min-width: 2.76rem;
       min-height: 2.76rem;
@@ -1513,7 +1513,7 @@ body.high-contrast .key.absent {
     }
 
     .key-row.offset {
-      padding: 0 0.2rem;
+      padding: 0 var(--space-2xs);
     }
   }
 }
@@ -1562,7 +1562,7 @@ body.high-contrast .key.absent {
   }
 
   .topbar {
-    padding: 0.65rem clamp(0.75rem, 2.5vw, 1.5rem) 0.4rem;
+    padding: 0.65rem clamp(0.75rem, 2.5vw, 1.5rem) var(--space-xs);
   }
 
   h1 {
@@ -1576,7 +1576,7 @@ body.high-contrast .key.absent {
   }
 
   .layout {
-    padding: 0.85rem 0.85rem 0.4rem;
+    padding: 0.85rem 0.85rem var(--space-xs);
     gap: 0.65rem;
   }
 
@@ -1622,11 +1622,11 @@ body.high-contrast .key.absent {
   }
 
   .key-row.offset {
-    padding: 0 0.4rem;
+    padding: 0 var(--space-xs);
   }
 
   .key {
-    padding: 0.4rem 0.2rem;
+    padding: var(--space-xs) var(--space-2xs);
     font-size: var(--fs-xs);
     min-width: 2.75rem;
     min-height: 2.75rem;
@@ -1648,7 +1648,7 @@ body.high-contrast .key.absent {
   }
 
   .stat-card {
-    padding: 0.4rem;
+    padding: var(--space-xs);
   }
 
   .stat-card strong {
