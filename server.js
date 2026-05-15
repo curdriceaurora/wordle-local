@@ -3589,60 +3589,22 @@ app.use("/manifest.json", (req, res, next) => {
   res.setHeader("Content-Type", "application/manifest+json");
   next();
 });
-// `/js/i18n-en.js` — synchronous pre-bundle of the default-locale
-// messages, served as JS that populates `window.__i18nMessagesEn`.
-// Loaded BEFORE `/js/i18n.js` in both shells (public + admin) so
-// `loadedMessages.en` is populated by the time `init()` runs;
-// `init()`'s existing guard (`if (!loadedMessages[DEFAULT_LOCALE])`)
-// then skips the fetch entirely for English. This eliminates the
-// race where a slow fetch of `/locales/en.json` (or a fetch that
-// returns 503 via service-worker offline fallback) left
-// `loadedMessages.en = {}` and every dynamic `i18n.t()` call
-// returned the literal key. Surfaced as 14 Playwright failures on
-// the scheduled UI run for `fce8fae` (PR #212 head). The Spanish
-// locale still goes through the regular fetch path since it's only
-// loaded when the user opts in.
+// `/js/i18n-en.js` (the synchronous pre-bundle of default-locale
+// messages used by /js/i18n.js to skip the en fetch) is shipped as
+// a CHECKED-IN STATIC FILE at `public/js/i18n-en.js`, generated
+// from `public/locales/en.json` via
+// `scripts/build-i18n-en-bundle.js` and kept in sync by the
+// `check:i18n-en-bundle` gate in `npm run check`.
 //
-// Read EAGERLY at module load (not lazily on first request): the
-// first request would otherwise block the event loop on disk I/O,
-// and a missing/unreadable en.json would surface as a 500 at first
-// request rather than as a clear boot-time error. Copilot caught
-// the lazy-pattern + missing-error-handling issues on PR #214.
+// Static-file (not Express route) because the Vercel gameplay
+// deploy serves `public/` directly with `buildCommand: ""` —
+// there's no Express running there, so a server route would 404
+// and the SW precache `cache.addAll()` would reject and abort PWA
+// install. Codex P2 on PR #214.
 //
-// Source path is PUBLIC_PATH (resolves to `public/dist` post-build,
-// `public/` in dev) — NOT PUBLIC_ROOT. The Dockerfile's final stage
-// only ships `public/dist/` (not the raw `public/`), so reading from
-// PUBLIC_ROOT in production silently 500s the route and the SW
-// precache install rejects on `/js/i18n-en.js`. `scripts/build-assets
-// .js` copies `public/locales/` into `public/dist/locales/`, so
-// PUBLIC_PATH resolution works in both dev (no dist) and prod
-// (Docker/Vercel). Codex P2 on PR #214.
-let cachedI18nEnScript = null;
-try {
-  const enJsonPath = path.join(PUBLIC_PATH, "locales", "en.json");
-  const enJson = fs.readFileSync(enJsonPath, "utf8");
-  // Verify it parses so we don't ship malformed JSON as JS that
-  // would crash window.__i18nMessagesEn assignment client-side.
-  JSON.parse(enJson);
-  cachedI18nEnScript = `window.__i18nMessagesEn = ${enJson};\n`;
-} catch (err) {
-  // Don't crash boot — the client falls back to fetching
-  // /locales/en.json via the static mount. Log loudly so the
-  // operator sees the misconfiguration. The route below returns
-  // 500 in this state, which is more honest than serving an
-  // empty/broken bundle.
-  console.error("[i18n-en bundle] failed to load locales/en.json:", err.message);
-}
-app.get("/js/i18n-en.js", (req, res) => {
-  if (!cachedI18nEnScript) {
-    return res.status(500).type("text/plain").send(
-      "/* i18n-en bundle unavailable — see server logs */"
-    );
-  }
-  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", NODE_ENV === "production" ? "public, max-age=3600" : "no-store");
-  res.send(cachedI18nEnScript);
-});
+// The static mount below serves this file from PUBLIC_PATH
+// (public/dist post-build via `scripts/build-assets.js`'s js/ copy,
+// or public/ in dev).
 // Mount the vendored bundles directly so /dist/vendor/... resolves the same
 // way regardless of whether PUBLIC_PATH points at public/ (dev) or
 // public/dist/ (post-build). Without this, dist-mode would resolve the URL

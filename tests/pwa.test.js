@@ -303,14 +303,16 @@ describe("Progressive Web App (PWA)", () => {
 
     test("body assigns to window.__i18nMessagesEn", async () => {
       const response = await request(app).get("/js/i18n-en.js");
-      expect(response.text).toMatch(/^window\.__i18nMessagesEn\s*=\s*\{/);
+      // File starts with auto-generated header comments, then the
+      // assignment. Match the assignment anywhere, not just at start.
+      expect(response.text).toMatch(/window\.__i18nMessagesEn\s*=\s*\{/);
     });
 
     test("body includes a known key from en.json (header.create)", async () => {
       const response = await request(app).get("/js/i18n-en.js");
-      // The route wraps en.json verbatim. Extract everything between
-      // the first `{` and the matching trailing `};` as JSON. Pin one
-      // stable key so a schema-drift in the bundle is caught.
+      // Pin one stable key so a schema-drift in the bundle is caught.
+      // Extract the JSON literal between the first `{` and the
+      // matching trailing `}`.
       const start = response.text.indexOf("{");
       const end = response.text.lastIndexOf("}");
       expect(start).toBeGreaterThan(-1);
