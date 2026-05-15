@@ -3602,18 +3602,37 @@ app.use("/manifest.json", (req, res, next) => {
 // the scheduled UI run for `fce8fae` (PR #212 head). The Spanish
 // locale still goes through the regular fetch path since it's only
 // loaded when the user opts in.
+//
+// Read EAGERLY at module load (not lazily on first request): the
+// first request would otherwise block the event loop on disk I/O,
+// and a missing/unreadable en.json would surface as a 500 at first
+// request rather than as a clear boot-time error. Copilot caught
+// the lazy-pattern + missing-error-handling issues on PR #214.
 let cachedI18nEnScript = null;
-function buildI18nEnScript() {
-  if (cachedI18nEnScript) return cachedI18nEnScript;
+try {
   const enJsonPath = path.join(PUBLIC_ROOT, "locales", "en.json");
   const enJson = fs.readFileSync(enJsonPath, "utf8");
+  // Verify it parses so we don't ship malformed JSON as JS that
+  // would crash window.__i18nMessagesEn assignment client-side.
+  JSON.parse(enJson);
   cachedI18nEnScript = `window.__i18nMessagesEn = ${enJson};\n`;
-  return cachedI18nEnScript;
+} catch (err) {
+  // Don't crash boot — the client falls back to fetching
+  // /locales/en.json via the static mount. Log loudly so the
+  // operator sees the misconfiguration. The route below returns
+  // 500 in this state, which is more honest than serving an
+  // empty/broken bundle.
+  console.error("[i18n-en bundle] failed to load public/locales/en.json:", err.message);
 }
 app.get("/js/i18n-en.js", (req, res) => {
+  if (!cachedI18nEnScript) {
+    return res.status(500).type("text/plain").send(
+      "/* i18n-en bundle unavailable — see server logs */"
+    );
+  }
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
   res.setHeader("Cache-Control", NODE_ENV === "production" ? "public, max-age=3600" : "no-store");
-  res.send(buildI18nEnScript());
+  res.send(cachedI18nEnScript);
 });
 // Mount the vendored bundles directly so /dist/vendor/... resolves the same
 // way regardless of whether PUBLIC_PATH points at public/ (dev) or

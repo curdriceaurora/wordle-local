@@ -277,5 +277,71 @@ describe("Progressive Web App (PWA)", () => {
       expect(swContent).toMatch(/['"]\/icons\/icon-192\.png['"]/);
       expect(swContent).toMatch(/['"]\/icons\/icon-512\.png['"]/);
     });
+
+    test("sw.js caches /js/i18n-en.js (default-locale pre-bundle)", () => {
+      // The pre-bundle is on the critical render path; missing from
+      // precache → offline PWA visit can't seed window.__i18nMessagesEn,
+      // falls back to /locales/en.json fetch (also offline), and
+      // reproduces the i18n.t-returns-key failure that PR #214 fixed.
+      const swPath = path.join(__dirname, "..", "public", "sw.js");
+      const swContent = fs.readFileSync(swPath, "utf8");
+
+      expect(swContent).toMatch(/['"]\/js\/i18n-en\.js['"]/);
+    });
+  });
+
+  describe("i18n Default-Locale Pre-Bundle (PR #214)", () => {
+    test("GET /js/i18n-en.js returns 200", async () => {
+      const response = await request(app).get("/js/i18n-en.js");
+      expect(response.status).toBe(200);
+    });
+
+    test("GET /js/i18n-en.js returns JS content type", async () => {
+      const response = await request(app).get("/js/i18n-en.js");
+      expect(response.headers["content-type"]).toMatch(/application\/javascript/);
+    });
+
+    test("body assigns to window.__i18nMessagesEn", async () => {
+      const response = await request(app).get("/js/i18n-en.js");
+      expect(response.text).toMatch(/^window\.__i18nMessagesEn\s*=\s*\{/);
+    });
+
+    test("body includes a known key from en.json (header.create)", async () => {
+      const response = await request(app).get("/js/i18n-en.js");
+      // The route wraps en.json verbatim. Extract everything between
+      // the first `{` and the matching trailing `};` as JSON. Pin one
+      // stable key so a schema-drift in the bundle is caught.
+      const start = response.text.indexOf("{");
+      const end = response.text.lastIndexOf("}");
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const parsed = JSON.parse(response.text.slice(start, end + 1));
+      expect(parsed.header).toBeDefined();
+      expect(typeof parsed.header.create).toBe("string");
+    });
+
+    test("public/index.html loads i18n-en.js BEFORE i18n.js", () => {
+      const indexPath = path.join(__dirname, "..", "public", "index.html");
+      const indexContent = fs.readFileSync(indexPath, "utf8");
+      // Match the actual <script src="..."> tags, not comment mentions
+      // of the path (an earlier version of this test compared raw
+      // indexOf() and got confused by the explanatory comment above
+      // the tags). Pin both order AND that they're real script tags.
+      const enTagIdx = indexContent.search(/<script\s+[^>]*src="\/js\/i18n-en\.js"/);
+      const i18nTagIdx = indexContent.search(/<script\s+[^>]*src="\/js\/i18n\.js"/);
+      expect(enTagIdx).toBeGreaterThan(-1);
+      expect(i18nTagIdx).toBeGreaterThan(-1);
+      expect(enTagIdx).toBeLessThan(i18nTagIdx);
+    });
+
+    test("admin/index.html loads i18n-en.js BEFORE i18n.js", () => {
+      const adminPath = path.join(__dirname, "..", "public", "admin", "index.html");
+      const adminContent = fs.readFileSync(adminPath, "utf8");
+      const enTagIdx = adminContent.search(/<script\s+[^>]*src="\/js\/i18n-en\.js"/);
+      const i18nTagIdx = adminContent.search(/<script\s+[^>]*src="\/js\/i18n\.js"/);
+      expect(enTagIdx).toBeGreaterThan(-1);
+      expect(i18nTagIdx).toBeGreaterThan(-1);
+      expect(enTagIdx).toBeLessThan(i18nTagIdx);
+    });
   });
 });
