@@ -38,7 +38,13 @@ SHA refreshes are automated by Renovate (config: `.github/renovate.json`). Caden
 - **Out-of-band**: vulnerability advisories bypass the Monday schedule and queue immediately. Still requires green CI to merge.
 - **Concurrent PR cap**: 10 open Renovate PRs at a time so review attention isn't dominated by automation.
 
-Renovate validates its own config in CI (the JSON has a `$schema` reference). Verify locally with `npx --package renovate -- renovate-config-validator` if editing.
+The JSON file's `$schema` reference enables editor IntelliSense but does NOT validate in CI. When editing `.github/renovate.json`, run the schema validator locally before pushing:
+
+```bash
+npm run renovate:check
+```
+
+This invokes `renovate-config-validator` via `npx --package=renovate` (no install required; downloads on demand). CI does not currently re-run the validator — running it locally before pushing is the only gate against config drift.
 
 ### Manual refresh (fallback)
 

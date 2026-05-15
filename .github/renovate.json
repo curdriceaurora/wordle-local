@@ -31,15 +31,22 @@
     "labels": [
       "dependencies",
       "security"
+    ],
+    "automerge": true,
+    "schedule": [
+      "at any time"
     ]
   },
   "github-actions": {
     "enabled": true,
     "pinDigests": true
   },
-  "docker": {
+  "dockerfile": {
     "enabled": true,
-    "pinDigests": true
+    "pinDigests": true,
+    "major": {
+      "enabled": true
+    }
   },
   "packageRules": [
     {
@@ -106,15 +113,6 @@
       "matchUpdateTypes": ["major"],
       "automerge": false,
       "labels": ["dependencies", "major"]
-    },
-    {
-      "description": "Security advisories: bypass the Monday schedule and queue immediately. Vulnerabilities are out-of-band by definition. Still requires green CI to merge.",
-      "matchPackagePatterns": ["*"],
-      "matchUpdateTypes": ["pin"],
-      "vulnerabilityAlerts": {
-        "automerge": true,
-        "schedule": ["at any time"]
-      }
     }
   ],
   "ignorePaths": [
