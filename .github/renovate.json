@@ -1,0 +1,129 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":pinDevDependencies",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "description": "Renovate config for the wordle-local repo (closes #202). Keeps SHA-pinned Dockerfile + GitHub Actions deps current, batches npm updates by domain, automerges patch/minor when CI is green, escalates majors to human review. Cadence + escalation contract documented in CONTRIBUTING.md.",
+  "timezone": "Etc/UTC",
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "rangeStrategy": "bump",
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate dependency dashboard",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": [
+      "dependencies",
+      "security"
+    ]
+  },
+  "github-actions": {
+    "enabled": true,
+    "pinDigests": true
+  },
+  "docker": {
+    "enabled": true,
+    "pinDigests": true
+  },
+  "packageRules": [
+    {
+      "description": "GitHub Actions: pin to SHA + auto-merge patch/minor. PR #138 (A4) pinned every uses: to a SHA — Renovate must preserve that pinning while bumping. Auto-merge is safe for patch/minor only; major upgrades change action signatures and need human review.",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "matchUpdateTypes": ["patch", "minor", "digest"],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "GitHub Actions majors require human review.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "github-actions", "major"]
+    },
+    {
+      "description": "Dockerfile base images: SHA-bump auto-merge. The pin refresh cadence in CONTRIBUTING.md is replaced by Renovate's weekly Monday digest sweep — same security signal, automated. Patch/minor (e.g., node:20.x.y bumps) auto-merge with green CI; majors (node:21+) need human review (Node LTS major bumps are intentional architecture decisions).",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true,
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "matchUpdateTypes": ["patch", "minor", "digest"],
+      "groupName": "dockerfile-base-images"
+    },
+    {
+      "description": "Dockerfile major bumps need human review.",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "docker", "major"]
+    },
+    {
+      "description": "npm dev-only tooling (jest, eslint, playwright, markdownlint-cli2, etc.): auto-merge patch + minor. These don't run in production and a regression surfaces immediately in CI — fast cycle.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "groupName": "npm-dev-deps"
+    },
+    {
+      "description": "npm runtime deps (express, helmet, archiver, ajv, web-push, etc.): patch auto-merge, minor batched for human review. Minors can introduce subtle behavior shifts (express middleware ordering, ajv schema validation strictness) that the test suite may not exercise — keep a human in the loop.",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "groupName": "npm-runtime-deps-patch"
+    },
+    {
+      "description": "npm runtime minor: batch, human review.",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["minor"],
+      "automerge": false,
+      "groupName": "npm-runtime-deps-minor"
+    },
+    {
+      "description": "npm major upgrades (any depType): always human review. Group by domain so the PR review is scoped.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major"]
+    },
+    {
+      "description": "Security advisories: bypass the Monday schedule and queue immediately. Vulnerabilities are out-of-band by definition. Still requires green CI to merge.",
+      "matchPackagePatterns": ["*"],
+      "matchUpdateTypes": ["pin"],
+      "vulnerabilityAlerts": {
+        "automerge": true,
+        "schedule": ["at any time"]
+      }
+    }
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.auto-claude/**",
+    "**/.claude/**",
+    "**/coverage/**",
+    "**/test-results/**",
+    "**/playwright-report/**"
+  ]
+}
