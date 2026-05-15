@@ -2397,18 +2397,30 @@ if (challengeProfileInputEl) {
   // challenge sessions). Starting in an invalid state would 400 on
   // submit until the user manually edits. Caught by Copilot on
   // PR #180.
-  const storedChallengeName = getChallengeProfile().name;
-  // #206: pass the active locale so es speakers see Spanish defaults.
-  // Unknown locales fall back to en inside pickRandomName.
-  const storedChallengeLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
-  const initialName = normalizeProfileName(storedChallengeName) || pickRandomName(storedChallengeLocale);
-  challengeProfileInputEl.value = initialName;
-  if (initialName !== storedChallengeName) {
-    // Persist the default (or the normalized stored value) so a
-    // refresh shows the same name rather than re-rolling, and so a
-    // legacy invalid stored value is overwritten with one that
-    // submits cleanly.
-    setChallengeProfileName(initialName);
+  //
+  // Codex P2 on PR #215: defer the prefill until `window.i18nReady`
+  // resolves so a user with `localePreference=es` sees a Spanish
+  // default instead of an English placeholder flashing while the
+  // locale loads asynchronously. The input addEventListener below
+  // stays synchronous — that's just wiring, not a value write — but
+  // the value-write itself runs in the i18nReady continuation.
+  const applyChallengePrefill = () => {
+    const storedChallengeName = getChallengeProfile().name;
+    const storedChallengeLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
+    const initialName = normalizeProfileName(storedChallengeName) || pickRandomName(storedChallengeLocale);
+    challengeProfileInputEl.value = initialName;
+    if (initialName !== storedChallengeName) {
+      // Persist the default (or the normalized stored value) so a
+      // refresh shows the same name rather than re-rolling, and so a
+      // legacy invalid stored value is overwritten with one that
+      // submits cleanly.
+      setChallengeProfileName(initialName);
+    }
+  };
+  if (window.i18nReady && typeof window.i18nReady.then === "function") {
+    window.i18nReady.then(applyChallengePrefill, applyChallengePrefill);
+  } else {
+    applyChallengePrefill();
   }
   challengeProfileInputEl.addEventListener('input', () => {
     // Mirror normalizeProfileName()'s trim+collapse+NFC+codepoint-cap so
@@ -2428,10 +2440,20 @@ if (profileNameInputEl) {
   // form uses multi-profile semantics so we don't persist the default
   // here — it's just a typing-into starting point. User can edit
   // before clicking "Use this name" to submit.
-  if (!profileNameInputEl.value) {
-    // #206: locale-matching default; falls back to en inside pickRandomName.
-    const profileLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
-    profileNameInputEl.value = pickRandomName(profileLocale);
+  //
+  // Codex P2 on PR #215: defer until i18nReady so a localePreference=es
+  // visitor doesn't see an English placeholder before locale lands.
+  // Same guard pattern as the challenge prefill above.
+  const applyPlayPrefill = () => {
+    if (!profileNameInputEl.value) {
+      const profileLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
+      profileNameInputEl.value = pickRandomName(profileLocale);
+    }
+  };
+  if (window.i18nReady && typeof window.i18nReady.then === "function") {
+    window.i18nReady.then(applyPlayPrefill, applyPlayPrefill);
+  } else {
+    applyPlayPrefill();
   }
 }
 

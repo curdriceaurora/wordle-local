@@ -75,8 +75,18 @@ const RANDOM_NAME_ANIMALS = RANDOM_NAME_LISTS.en.animals;
 // `window.i18n`) keeps the function pure and trivially testable —
 // the player shell's call sites pass `window.i18n.getCurrentLocale()`
 // explicitly.
+// CR Minor on PR #215: lookup uses `Object.hasOwn` so an inherited-
+// property name (`"toString"`, `"hasOwnProperty"`, `"constructor"`,
+// `"__proto__"`, ...) doesn't match Object.prototype and crash on
+// `.adjectives` undefined. The previous shape `MAP[locale] || ...`
+// would return Object.prototype.toString for `locale === "toString"`
+// and bypass the en fallback. Doesn't matter in current callers
+// (every locale id we pass is from a controlled enum) but the
+// hardening is cheap.
 function pickRandomName(locale) {
-  const lists = RANDOM_NAME_LISTS[locale] || RANDOM_NAME_LISTS.en;
+  const lists = typeof locale === "string" && Object.prototype.hasOwnProperty.call(RANDOM_NAME_LISTS, locale)
+    ? RANDOM_NAME_LISTS[locale]
+    : RANDOM_NAME_LISTS.en;
   const adj = lists.adjectives[Math.floor(Math.random() * lists.adjectives.length)];
   const animal = lists.animals[Math.floor(Math.random() * lists.animals.length)];
   return `${adj} ${animal}`;

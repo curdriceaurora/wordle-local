@@ -219,6 +219,34 @@ describe("profile-name validator", () => {
       // the right sub-list. The current curation has no overlap.
       expect(sawEsOnly).toBe(true);
     });
+
+    // CR Minor on PR #215: lookup must use Object.hasOwn so inherited
+    // property names don't match Object.prototype and crash on
+    // `.adjectives` undefined.
+    test.each([
+      "toString",
+      "hasOwnProperty",
+      "constructor",
+      "__proto__",
+      "valueOf",
+      "propertyIsEnumerable"
+    ])("pickRandomName(%p) falls back to en (no inherited-property crash)", (badLocale) => {
+      expect(() => pickRandomName(badLocale)).not.toThrow();
+      const name = pickRandomName(badLocale);
+      expect(isValidProfileName(name)).toBe(true);
+      const [adj] = name.split(" ");
+      expect(RANDOM_NAME_LISTS.en.adjectives).toContain(adj);
+    });
+
+    test("pickRandomName(non-string) falls back to en (no crash)", () => {
+      // typeof guard belt-and-suspenders. None of our callers pass a
+      // non-string but the helper should be robust to it anyway.
+      for (const bad of [null, undefined, 42, true, {}, [], () => "en"]) {
+        expect(() => pickRandomName(bad)).not.toThrow();
+        const name = pickRandomName(bad);
+        expect(isValidProfileName(name)).toBe(true);
+      }
+    });
   });
 
   describe("NFC normalization contract", () => {
