@@ -112,42 +112,112 @@ describe("profile-name validator", () => {
   // adjective or animal edit (introducing a digit, accent the regex
   // doesn't allow, etc.) would silently ship a default name that
   // gets rejected on submit. This test pins the invariant: every
-  // single token must pass on its own, every Adjective × Animal
-  // cross-product must pass, and a random sample of 1000
-  // pickRandomName() calls must always pass.
+  // single token in every locale must pass on its own, every
+  // per-locale Adjective × Animal cross-product must pass, and a
+  // random sample of 1000 pickRandomName() calls per locale must
+  // always pass.
   describe("pickRandomName contract", () => {
     const {
+      RANDOM_NAME_LISTS,
       RANDOM_NAME_ADJECTIVES,
       RANDOM_NAME_ANIMALS,
       pickRandomName
     } = require("../public/js/random-name");
 
-    test("every adjective passes isValidProfileName", () => {
-      RANDOM_NAME_ADJECTIVES.forEach((adj) => {
+    test("English back-compat aliases still resolve to the en sub-lists", () => {
+      expect(RANDOM_NAME_ADJECTIVES).toBe(RANDOM_NAME_LISTS.en.adjectives);
+      expect(RANDOM_NAME_ANIMALS).toBe(RANDOM_NAME_LISTS.en.animals);
+    });
+
+    // #206: iterate every locale-keyed list so adding a new locale
+    // (fr, de, ja, ...) automatically picks up coverage. A future
+    // PR adding bad words to any locale fails this test before it
+    // can ship a broken default.
+    const locales = Object.keys(RANDOM_NAME_LISTS);
+
+    test.each(locales)("every adjective in '%s' passes isValidProfileName", (locale) => {
+      RANDOM_NAME_LISTS[locale].adjectives.forEach((adj) => {
         expect(isValidProfileName(adj)).toBe(true);
       });
     });
 
-    test("every animal passes isValidProfileName", () => {
-      RANDOM_NAME_ANIMALS.forEach((animal) => {
+    test.each(locales)("every animal in '%s' passes isValidProfileName", (locale) => {
+      RANDOM_NAME_LISTS[locale].animals.forEach((animal) => {
         expect(isValidProfileName(animal)).toBe(true);
       });
     });
 
-    test("every Adjective × Animal combination passes isValidProfileName", () => {
-      RANDOM_NAME_ADJECTIVES.forEach((adj) => {
-        RANDOM_NAME_ANIMALS.forEach((animal) => {
-          const name = `${adj} ${animal}`;
-          expect(isValidProfileName(name)).toBe(true);
+    test.each(locales)(
+      "every Adjective × Animal combination in '%s' passes isValidProfileName",
+      (locale) => {
+        const { adjectives, animals } = RANDOM_NAME_LISTS[locale];
+        adjectives.forEach((adj) => {
+          animals.forEach((animal) => {
+            const name = `${adj} ${animal}`;
+            expect(isValidProfileName(name)).toBe(true);
+          });
         });
-      });
-    });
+      }
+    );
 
-    test("1000 pickRandomName() draws all pass isValidProfileName", () => {
-      for (let i = 0; i < 1000; i += 1) {
+    test.each(locales)(
+      "1000 pickRandomName('%s') draws all pass isValidProfileName",
+      (locale) => {
+        for (let i = 0; i < 1000; i += 1) {
+          const name = pickRandomName(locale);
+          expect(isValidProfileName(name)).toBe(true);
+        }
+      }
+    );
+
+    test("pickRandomName() with no locale falls back to en", () => {
+      // Implicit-en path — verify the default doesn't produce
+      // empty/invalid output if a caller forgets to pass a locale.
+      for (let i = 0; i < 100; i += 1) {
         const name = pickRandomName();
         expect(isValidProfileName(name)).toBe(true);
+        // Should pull from the en adjective set.
+        const [adj] = name.split(" ");
+        expect(RANDOM_NAME_LISTS.en.adjectives).toContain(adj);
       }
+    });
+
+    test("pickRandomName('zz-unknown-locale') falls back to en", () => {
+      // A future locale id we haven't curated lists for yet must not
+      // strand callers with an empty default — fall back to en.
+      for (let i = 0; i < 100; i += 1) {
+        const name = pickRandomName("zz-unknown");
+        expect(isValidProfileName(name)).toBe(true);
+        const [adj] = name.split(" ");
+        expect(RANDOM_NAME_LISTS.en.adjectives).toContain(adj);
+      }
+    });
+
+    test("locales other than en produce locale-specific output", () => {
+      // pickRandomName('es') should never accidentally return an
+      // English adjective. 200 draws is enough — if the locale-pick
+      // logic regresses to always-en, every draw lands outside the
+      // es set.
+      //
+      // Note: this checks ADJECTIVE overlap only. Some animal nouns
+      // are spelled identically across locales (e.g. "Jaguar" is the
+      // same word in en and es) — that overlap is correct and not a
+      // signal that locale routing is broken. Adjectives have no
+      // cross-locale overlap by curation, so they're a clean probe.
+      const enAdjSet = new Set(RANDOM_NAME_LISTS.en.adjectives);
+      const esAdjSet = new Set(RANDOM_NAME_LISTS.es.adjectives);
+      let sawEsOnly = false;
+      for (let i = 0; i < 200; i += 1) {
+        const name = pickRandomName("es");
+        const [adj] = name.split(" ");
+        expect(esAdjSet).toContain(adj);
+        if (!enAdjSet.has(adj)) sawEsOnly = true;
+      }
+      // If a future edit introduces en/es adjective overlap, this
+      // invariant weakens — at that point split into two tests:
+      // (a) the adj is in the es set, and (b) the picker calls into
+      // the right sub-list. The current curation has no overlap.
+      expect(sawEsOnly).toBe(true);
     });
   });
 
