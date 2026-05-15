@@ -315,7 +315,13 @@ describe("/readyz — per-store deep-health (#205)", () => {
     expect(res.status).toBe(503);
     expect(res.body.reasons).toContain("store_unhealthy:throwing-store");
     const entry = res.body.stores.find((s) => s.name === "throwing-store");
-    expect(entry.error).toMatch(/synchronous boom/);
+    expect(entry.ok).toBe(false);
+    // Error is SANITIZED — original "synchronous boom" message is
+    // stripped to a generic surface so /readyz (mounted pre-auth)
+    // doesn't leak internal details to unauthenticated callers.
+    // Copilot on PR #216.
+    expect(entry.error).toMatch(/store healthCheck failed/);
+    expect(entry.error).not.toMatch(/synchronous boom/);
   });
 
   test("a healthCheck() returning non-conforming shape is treated as unhealthy", async () => {
@@ -364,4 +370,58 @@ describe("/readyz — per-store deep-health (#205)", () => {
   test("DEFAULT_STORE_HEALTH_TIMEOUT_MS is 2000", () => {
     expect(createHealthRouter.DEFAULT_STORE_HEALTH_TIMEOUT_MS).toBe(2000);
   });
+
+  // Copilot on PR #216
+  test("a store healthCheck() that returns a `name` field cannot override the route-level name", async () => {
+    // If the spread were "{ name: entry.name, ...result }", a
+    // hostile-or-buggy store could rename itself in /readyz output.
+    // Verify the correct ordering: result spread FIRST, name last.
+    const stores = [
+      {
+        name: "legit-name",
+        store: {
+          healthCheck: async () => ({
+            ok: false,
+            error: "broken",
+            name: "evil-impostor"
+          })
+        }
+      }
+    ];
+    const res = await request(buildAppWithStores({ stores })).get("/readyz");
+    expect(res.status).toBe(503);
+    expect(res.body.reasons).toContain("store_unhealthy:legit-name");
+    expect(res.body.reasons).not.toContain("store_unhealthy:evil-impostor");
+    const entry = res.body.stores.find((s) => s.name === "legit-name");
+    expect(entry).toBeTruthy();
+    // The route preserves the store's other fields, just not name.
+    expect(entry.error).toBe("broken");
+    expect(entry.name).toBe("legit-name");
+  });
+
+  // Copilot on PR #216
+  test.each([NaN, 0, -100, "2000", undefined])(
+    "invalid storeHealthTimeoutMs (%p) falls back to default",
+    async (badValue) => {
+      const stores = [
+        { name: "ok-store", store: { healthCheck: async () => ({ ok: true }) } }
+      ];
+      const app = express();
+      app.use(
+        createHealthRouter({
+          restoreInProgressRef: { value: false },
+          dataMutationLockRef: { value: false },
+          getShutdownInFlight: () => false,
+          stores,
+          storeHealthTimeoutMs: badValue
+        })
+      );
+      const res = await request(app).get("/readyz");
+      // If validation failed, setTimeout(NaN) etc. would either fire
+      // immediately (mis-reporting the store as unhealthy) or behave
+      // unpredictably. With the validator the default kicks in and
+      // the store is healthy.
+      expect(res.status).toBe(200);
+    }
+  );
 });

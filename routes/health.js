@@ -56,9 +56,17 @@ function createHealthRouter(deps) {
     // deep probes entirely.
     stores = null,
     // Per-store timeout for the deep-health probe. Defaults to
-    // 2000 ms per #205 acceptance.
-    storeHealthTimeoutMs = DEFAULT_STORE_HEALTH_TIMEOUT_MS
+    // 2000 ms per #205 acceptance. Validated below — non-finite /
+    // non-positive values fall back to the default rather than
+    // letting setTimeout(NaN) / setTimeout(0) cause /readyz to
+    // report stores unhealthy when they're fine (Copilot on PR #216).
+    storeHealthTimeoutMs: rawStoreHealthTimeoutMs = DEFAULT_STORE_HEALTH_TIMEOUT_MS
   } = deps;
+
+  const storeHealthTimeoutMs =
+    Number.isFinite(rawStoreHealthTimeoutMs) && rawStoreHealthTimeoutMs > 0
+      ? rawStoreHealthTimeoutMs
+      : DEFAULT_STORE_HEALTH_TIMEOUT_MS;
 
   if (!restoreInProgressRef || typeof restoreInProgressRef.value !== "boolean") {
     throw new TypeError("createHealthRouter: restoreInProgressRef.value (boolean) is required.");
@@ -90,6 +98,12 @@ function createHealthRouter(deps) {
   // belt-and-suspenders cap on top of probeStoreFile's own internal
   // timeout; if a store's healthCheck() is a custom impl that
   // doesn't honor a timeout, this race still bounds the wait.
+  //
+  // Returned shape: { name, ok, error?, note? }. We spread the
+  // store's result FIRST so our `name` field wins — Copilot on
+  // PR #216 caught: a store that returns a `name` field in its
+  // healthCheck result would override the route-level name and
+  // mis-tag `store_unhealthy:<name>` in /readyz reasons.
   async function probeOne(entry) {
     try {
       const result = await Promise.race([
@@ -107,7 +121,8 @@ function createHealthRouter(deps) {
         })
       ]);
       if (result && typeof result === "object" && typeof result.ok === "boolean") {
-        return { name: entry.name, ...result };
+        // Spread BEFORE name so name wins regardless of result shape.
+        return { ...result, name: entry.name };
       }
       // Defensive: a store that returns a non-conforming shape
       // shouldn't crash the route — surface as unhealthy with an
@@ -118,10 +133,17 @@ function createHealthRouter(deps) {
         error: "healthCheck() returned non-conforming shape"
       };
     } catch (err) {
+      // Sanitize the surfaced error so /readyz (mounted before auth)
+      // doesn't leak fs paths / internal stack traces to callers.
+      // Copilot on PR #216. The probe helper already sanitizes;
+      // this guard covers the case where a store's custom
+      // healthCheck() throws an unsanitized fs error directly.
+      const code = err && typeof err.code === "string" ? `${err.code}: ` : "";
+      const raw = err && err.message ? String(err.message) : String(err);
       return {
         name: entry.name,
         ok: false,
-        error: err && err.message ? err.message : String(err)
+        error: `${code}store healthCheck failed`.slice(0, 200) || raw.slice(0, 200)
       };
     }
   }
