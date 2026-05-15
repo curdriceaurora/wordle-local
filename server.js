@@ -3608,9 +3608,18 @@ app.use("/manifest.json", (req, res, next) => {
 // and a missing/unreadable en.json would surface as a 500 at first
 // request rather than as a clear boot-time error. Copilot caught
 // the lazy-pattern + missing-error-handling issues on PR #214.
+//
+// Source path is PUBLIC_PATH (resolves to `public/dist` post-build,
+// `public/` in dev) — NOT PUBLIC_ROOT. The Dockerfile's final stage
+// only ships `public/dist/` (not the raw `public/`), so reading from
+// PUBLIC_ROOT in production silently 500s the route and the SW
+// precache install rejects on `/js/i18n-en.js`. `scripts/build-assets
+// .js` copies `public/locales/` into `public/dist/locales/`, so
+// PUBLIC_PATH resolution works in both dev (no dist) and prod
+// (Docker/Vercel). Codex P2 on PR #214.
 let cachedI18nEnScript = null;
 try {
-  const enJsonPath = path.join(PUBLIC_ROOT, "locales", "en.json");
+  const enJsonPath = path.join(PUBLIC_PATH, "locales", "en.json");
   const enJson = fs.readFileSync(enJsonPath, "utf8");
   // Verify it parses so we don't ship malformed JSON as JS that
   // would crash window.__i18nMessagesEn assignment client-side.
@@ -3622,7 +3631,7 @@ try {
   // operator sees the misconfiguration. The route below returns
   // 500 in this state, which is more honest than serving an
   // empty/broken bundle.
-  console.error("[i18n-en bundle] failed to load public/locales/en.json:", err.message);
+  console.error("[i18n-en bundle] failed to load locales/en.json:", err.message);
 }
 app.get("/js/i18n-en.js", (req, res) => {
   if (!cachedI18nEnScript) {
