@@ -36,9 +36,30 @@ function buildExpected() {
 }
 
 const expectedBody = buildExpected();
-const actualBody = fs.readFileSync(bundlePath, "utf8");
 
-if (expectedBody !== actualBody) {
+let actualBody;
+try {
+  actualBody = fs.readFileSync(bundlePath, "utf8");
+} catch (err) {
+  if (err.code === "ENOENT") {
+    // Same hint as the drift branch below — a contributor who edited
+    // en.json but forgot to run the build step lands here. Don't dump
+    // a raw stack trace; emit the actionable message. Copilot caught
+    // this on PR #214.
+    console.error("[check:i18n-en-bundle] FAIL: public/js/i18n-en.js does not exist.");
+    console.error("[check:i18n-en-bundle] Run `node scripts/build-i18n-en-bundle.js` to generate it.");
+    process.exit(1);
+  }
+  throw err;
+}
+
+// Normalize line endings before compare. Without this, a Windows
+// clone without git's autocrlf normalization can write CRLF in one
+// file and LF in the other, producing spurious drift failures with
+// no semantic change. Copilot P3 on PR #214.
+const normalize = (s) => s.replace(/\r\n/g, "\n");
+
+if (normalize(expectedBody) !== normalize(actualBody)) {
   console.error("[check:i18n-en-bundle] FAIL: public/js/i18n-en.js is out of sync with public/locales/en.json.");
   console.error("[check:i18n-en-bundle] Run `node scripts/build-i18n-en-bundle.js` to regenerate.");
   process.exit(1);

@@ -84,9 +84,13 @@ async function build() {
   // i18n locale JSON. The user-locale switcher fetches /locales/es.json
   // when the user opts in; without this copy, dist-mode 404s and the
   // switch silently no-ops to English. (The default-locale `en.json`
-  // is also served pre-bundled via the /js/i18n-en.js server route,
-  // which reads from PUBLIC_ROOT regardless of dist mode and is
-  // unaffected.)
+  // is ALSO shipped as a checked-in static pre-bundle at
+  // `public/js/i18n-en.js` — generated from en.json by
+  // `scripts/build-i18n-en-bundle.js` and kept in sync by
+  // `scripts/check-i18n-en-bundle.js`. That pre-bundle reaches dist
+  // automatically via the `public/js/` → `public/dist/js/` copy
+  // above; this `locales/` copy is purely for the Spanish opt-in
+  // fetch path.)
   fs.cpSync(path.join(publicDir, "locales"), path.join(distDir, "locales"), { recursive: true });
 
   // Warn if dist/vendor is missing — those are tracked runtime assets
