@@ -5,7 +5,8 @@
     ":dependencyDashboard",
     ":semanticCommits",
     ":pinDevDependencies",
-    "helpers:pinGitHubActionDigests"
+    "helpers:pinGitHubActionDigests",
+    "docker:enableMajor"
   ],
   "description": "Renovate config for the wordle-local repo (closes #202). Keeps SHA-pinned Dockerfile + GitHub Actions deps current, batches npm updates by domain, automerges patch/minor when CI is green, escalates majors to human review. Cadence + escalation contract documented in CONTRIBUTING.md.",
   "timezone": "Etc/UTC",
@@ -43,10 +44,7 @@
   },
   "dockerfile": {
     "enabled": true,
-    "pinDigests": true,
-    "major": {
-      "enabled": true
-    }
+    "pinDigests": true
   },
   "packageRules": [
     {
@@ -55,7 +53,7 @@
       "pinDigests": true,
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true,
+      "platformAutomerge": false,
       "matchUpdateTypes": ["patch", "minor", "digest"],
       "groupName": "github-actions"
     },
@@ -72,7 +70,7 @@
       "pinDigests": true,
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true,
+      "platformAutomerge": false,
       "matchUpdateTypes": ["patch", "minor", "digest"],
       "groupName": "dockerfile-base-images"
     },
@@ -89,7 +87,7 @@
       "matchUpdateTypes": ["patch", "minor"],
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true,
+      "platformAutomerge": false,
       "groupName": "npm-dev-deps"
     },
     {
@@ -98,7 +96,7 @@
       "matchUpdateTypes": ["patch"],
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true,
+      "platformAutomerge": false,
       "groupName": "npm-runtime-deps-patch"
     },
     {
