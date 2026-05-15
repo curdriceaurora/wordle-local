@@ -81,6 +81,13 @@ async function build() {
   // (Vercel, Docker) silently 404s on `/fonts/*` and the typography
   // falls back to the system stack. Codex P2 on PR #195.
   fs.cpSync(path.join(publicDir, "fonts"), path.join(distDir, "fonts"), { recursive: true });
+  // i18n locale JSON. The user-locale switcher fetches /locales/es.json
+  // when the user opts in; without this copy, dist-mode 404s and the
+  // switch silently no-ops to English. (The default-locale `en.json`
+  // is also served pre-bundled via the /js/i18n-en.js server route,
+  // which reads from PUBLIC_ROOT regardless of dist mode and is
+  // unaffected.)
+  fs.cpSync(path.join(publicDir, "locales"), path.join(distDir, "locales"), { recursive: true });
 
   // Warn if dist/vendor is missing — those are tracked runtime assets
   // (chart.umd.min.js et al, see .gitignore's `!public/dist/vendor/`)

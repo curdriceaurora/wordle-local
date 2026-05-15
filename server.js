@@ -3589,6 +3589,32 @@ app.use("/manifest.json", (req, res, next) => {
   res.setHeader("Content-Type", "application/manifest+json");
   next();
 });
+// `/js/i18n-en.js` — synchronous pre-bundle of the default-locale
+// messages, served as JS that populates `window.__i18nMessagesEn`.
+// Loaded BEFORE `/js/i18n.js` in both shells (public + admin) so
+// `loadedMessages.en` is populated by the time `init()` runs;
+// `init()`'s existing guard (`if (!loadedMessages[DEFAULT_LOCALE])`)
+// then skips the fetch entirely for English. This eliminates the
+// race where a slow fetch of `/locales/en.json` (or a fetch that
+// returns 503 via service-worker offline fallback) left
+// `loadedMessages.en = {}` and every dynamic `i18n.t()` call
+// returned the literal key. Surfaced as 14 Playwright failures on
+// the scheduled UI run for `fce8fae` (PR #212 head). The Spanish
+// locale still goes through the regular fetch path since it's only
+// loaded when the user opts in.
+let cachedI18nEnScript = null;
+function buildI18nEnScript() {
+  if (cachedI18nEnScript) return cachedI18nEnScript;
+  const enJsonPath = path.join(PUBLIC_ROOT, "locales", "en.json");
+  const enJson = fs.readFileSync(enJsonPath, "utf8");
+  cachedI18nEnScript = `window.__i18nMessagesEn = ${enJson};\n`;
+  return cachedI18nEnScript;
+}
+app.get("/js/i18n-en.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", NODE_ENV === "production" ? "public, max-age=3600" : "no-store");
+  res.send(buildI18nEnScript());
+});
 // Mount the vendored bundles directly so /dist/vendor/... resolves the same
 // way regardless of whether PUBLIC_PATH points at public/ (dev) or
 // public/dist/ (post-build). Without this, dist-mode would resolve the URL

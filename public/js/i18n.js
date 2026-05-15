@@ -31,6 +31,17 @@
 
   var availableLocales = ["en", "es"];
   var loadedMessages = Object.create(null); // { en: {...}, es: {...} }
+
+  // Pre-bundled default-locale messages, populated by /js/i18n-en.js
+  // (a synchronous script tag loaded BEFORE this file in both shells).
+  // The server route in server.js wraps public/locales/en.json as JS;
+  // we pick it up here so init() can skip the en fetch entirely.
+  // Without this seed, a slow fetch (CI runner) or a service-worker
+  // offline 503 would leave loadedMessages.en = {} and every dynamic
+  // i18n.t() would return the literal key. PR #180-follow-up.
+  if (typeof global !== "undefined" && isPlainObject(global.__i18nMessagesEn)) {
+    loadedMessages[DEFAULT_LOCALE] = global.__i18nMessagesEn;
+  }
   var currentLocale = DEFAULT_LOCALE;
   var pluralRulesCache = Object.create(null);
   var dateFormatterCache = Object.create(null);
