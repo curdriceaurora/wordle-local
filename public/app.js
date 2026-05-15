@@ -2398,7 +2398,10 @@ if (challengeProfileInputEl) {
   // submit until the user manually edits. Caught by Copilot on
   // PR #180.
   const storedChallengeName = getChallengeProfile().name;
-  const initialName = normalizeProfileName(storedChallengeName) || pickRandomName();
+  // #206: pass the active locale so es speakers see Spanish defaults.
+  // Unknown locales fall back to en inside pickRandomName.
+  const storedChallengeLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
+  const initialName = normalizeProfileName(storedChallengeName) || pickRandomName(storedChallengeLocale);
   challengeProfileInputEl.value = initialName;
   if (initialName !== storedChallengeName) {
     // Persist the default (or the normalized stored value) so a
@@ -2426,7 +2429,9 @@ if (profileNameInputEl) {
   // here — it's just a typing-into starting point. User can edit
   // before clicking "Use this name" to submit.
   if (!profileNameInputEl.value) {
-    profileNameInputEl.value = pickRandomName();
+    // #206: locale-matching default; falls back to en inside pickRandomName.
+    const profileLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
+    profileNameInputEl.value = pickRandomName(profileLocale);
   }
 }
 
@@ -2564,7 +2569,9 @@ async function startChallenge(challengeId) {
   // fallback, we'd POST the invalid stored name and get 400
   // INVALID_PROFILE_NAME — same blocker the submit-normalize fix
   // was supposed to close. Caught by Codex P2 on PR #180.
-  const finalName = normalized || normalizeProfileName(profile.name) || pickRandomName();
+  // #206: locale-matching fallback when a stored name fails revalidation.
+  const submitLocale = (window.i18n && window.i18n.getCurrentLocale && window.i18n.getCurrentLocale()) || "en";
+  const finalName = normalized || normalizeProfileName(profile.name) || pickRandomName(submitLocale);
   // Mirror the chosen name back into the field + storage so the
   // user sees what's actually being submitted and a refresh shows
   // the same value (not the rejected raw input).
