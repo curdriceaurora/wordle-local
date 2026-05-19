@@ -673,8 +673,9 @@ test("admin shell lock button clears unlocked session", async ({ page }) => {
   await expect(page.locator("#shellPanel")).toBeVisible();
 
   const lockSessionBtn = page.locator("#lockSessionBtn");
-  await lockSessionBtn.waitFor({ state: "visible" });
-  await lockSessionBtn.evaluate((button) => button.click());
+  await expect(lockSessionBtn).toBeVisible();
+  await expect(lockSessionBtn).toBeEnabled();
+  await lockSessionBtn.click();
   await expect(page.locator("#unlockPanel")).toBeVisible();
   await expect(page.locator("#shellPanel")).toBeHidden();
   await expect(page.locator("#adminUpdated")).toContainText("Session locked");
