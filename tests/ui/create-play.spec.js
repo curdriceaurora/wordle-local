@@ -238,7 +238,7 @@ test("settings toggles meet 44px touch-target height at mobile viewport", async 
   await page.goto("/", { waitUntil: "commit" });
   await waitForLanguages(page);
 
-  const toggles = await page.locator(".settings .toggle").all();
+  const toggles = await page.locator(".settings .toggle:visible").all();
   expect(toggles.length).toBeGreaterThan(0);
   for (const toggle of toggles) {
     const box = await toggle.boundingBox();
@@ -247,13 +247,15 @@ test("settings toggles meet 44px touch-target height at mobile viewport", async 
   }
 });
 
-test("share link copy shows confirmation", async ({ page, context }) => {
+test("share link copy shows confirmation", async ({ page, context, browserName }) => {
   test.setTimeout(60000);
   /* Headless Chromium needs clipboard-write granted explicitly for
      `navigator.clipboard.writeText` to resolve. Without this the handler
      falls into the `execCommand` fallback, which is fine but harder to
      reason about in tests. */
-  await context.grantPermissions(["clipboard-write"]);
+  if (browserName === "chromium") {
+    await context.grantPermissions(["clipboard-write"]);
+  }
   await page.goto("/?word=yfrqp&lang=en", gotoOptions);
   await page.waitForSelector("#playPanel:not(.hidden)", { timeout: 10000 });
   await page.click("#shareCopyBtn");
