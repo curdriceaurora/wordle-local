@@ -675,7 +675,15 @@ test("admin shell lock button clears unlocked session", async ({ page }) => {
   const lockSessionBtn = page.locator("#lockSessionBtn");
   await expect(lockSessionBtn).toBeVisible();
   await expect(lockSessionBtn).toBeEnabled();
-  await lockSessionBtn.click();
+  // WebKit intermittently reports this button "outside of the viewport"
+  // after Playwright's actionability scroll and loops the click action
+  // until the 30s timeout — a known WebKit hit-test race for an element
+  // that is genuinely in normal flow (it lives in the shell header).
+  // Activate via keyboard instead: #lockSessionBtn is a native <button>
+  // with a click listener (public/admin/app.js:2357), so focusing it and
+  // pressing Enter dispatches the same real click event without the
+  // point-based viewport hit test that chokes WebKit.
+  await lockSessionBtn.press("Enter");
   await expect(page.locator("#unlockPanel")).toBeVisible();
   await expect(page.locator("#shellPanel")).toBeHidden();
   await expect(page.locator("#adminUpdated")).toContainText("Session locked");
