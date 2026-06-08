@@ -81,7 +81,14 @@ async function openDaily(page, day, options = {}) {
   // test-level retry. Both probes stay within the 120s test budget.
   try {
     await page.waitForSelector("#playPanel:not(.hidden)", { timeout: 30000 });
-  } catch {
+  } catch (err) {
+    // Only self-heal the documented bootstrap stall, which surfaces as a
+    // wait timeout. Re-throw anything else (closed page/context, navigation
+    // error, bad selector) so real failures stay loud instead of being
+    // masked by a reload.
+    if (err.name !== "TimeoutError") {
+      throw err;
+    }
     await page.reload(gotoOptions);
     await page.waitForLoadState("domcontentloaded");
     await page.waitForSelector("#playPanel:not(.hidden)");
