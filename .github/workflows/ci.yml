@@ -60,9 +60,15 @@ jobs:
               - 'data/providers/**'
               - 'data/languages.json'
               - 'data/languages.schema.json'
+            renovate_config:
+              - '.github/renovate.json'
 
       - name: Run Local Quality Gates
         run: npm run check
+
+      - name: Validate Renovate Config
+        if: github.event_name == 'pull_request' && steps.provider_paths.outputs.renovate_config == 'true'
+        run: npm run renovate:check
 
       - name: Install Playwright Chromium (provider gate)
         if: github.event_name == 'pull_request' && steps.provider_paths.outputs.provider_workflow == 'true'
@@ -93,3 +99,38 @@ jobs:
           path: |
             coverage/ui/report
             coverage/ui/coverage-summary.json
+
+  docker-build:
+    # Builds the production Dockerfile and smoke-tests the container.
+    # `npm run check` in the `test` job above never runs `npm run build`
+    # or `npm ci --omit=dev` — the asset-bundling and production-install
+    # paths the Dockerfile actually exercises — so a base-image digest
+    # bump or an esbuild update could otherwise auto-merge unvalidated.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build Docker image
+        run: docker build -t wordle-local:ci .
+
+      - name: Smoke-test container
+        run: |
+          docker run -d --name wordle-ci -p 3000:3000 wordle-local:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/api/health >/dev/null; then
+              echo "Container is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Container did not become healthy in time" >&2
+          exit 1
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs wordle-ci || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f wordle-ci || true

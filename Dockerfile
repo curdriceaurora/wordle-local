@@ -1,9 +1,9 @@
 # Pinned to a digest so the build is reproducible and supply-chain-
-# safe. To refresh: query `https://hub.docker.com/v2/repositories/
-# library/node/tags/20-alpine/` for the current `digest`, paste here,
-# and update the comment date. Pin refresh cadence documented in
-# CONTRIBUTING.md.
-# node:20-alpine — digest fetched 2026-04-15
+# safe. Kept current by Renovate's weekly digest sweep (see
+# CONTRIBUTING.md > Supply-Chain Pinning); check the Dockerfile's git
+# history or the merged Renovate PRs for the most recent bump date —
+# a hardcoded date here would go stale without anything catching it.
+# node:20-alpine
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS build
 
 WORKDIR /app

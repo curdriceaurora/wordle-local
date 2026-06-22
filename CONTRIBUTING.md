@@ -33,24 +33,24 @@ Both the Dockerfile base image and every GitHub Actions `uses:` reference are pi
 SHA refreshes are automated by Renovate (config: `.github/renovate.json`). Cadence + escalation contract:
 
 - **Weekly sweep**: every Monday before 6am UTC, Renovate opens PRs for any Dockerfile base-image SHA bump or GitHub Actions `uses:` SHA bump that has a newer digest upstream.
-- **Auto-merge** on green CI for: patch + minor + digest-only bumps to GitHub Actions, Dockerfile base images, npm dev-dependencies, and npm runtime-dependency patches.
-- **Human review** required for: any major bump (semver-major upgrade), npm runtime-dependency minors (subtle behavior shifts the test suite may not exercise), and any dependency-dashboard request flagged by Renovate.
+- **Auto-merge** on green CI for: patch + minor + digest-only bumps to GitHub Actions, Dockerfile base images, npm dev-dependencies, and npm runtime-dependency patches. The `docker-build` CI job (`.github/workflows/ci.yml`) builds the production image and smoke-tests `/api/health` on every PR, so a Dockerfile base-image bump is actually exercised before it's allowed to auto-merge.
+- **Human review** required for: any major bump (semver-major upgrade), npm runtime-dependency minors (subtle behavior shifts the test suite may not exercise), `esbuild` (a devDependency, but it's the asset bundler the Dockerfile's production build depends on — `npm run check` doesn't exercise that path, only `docker-build` does), lock-file-maintenance PRs (can touch many transitive packages across both dev and prod scope in one PR), and any dependency-dashboard request flagged by Renovate.
 - **Out-of-band**: vulnerability advisories bypass the Monday schedule and queue immediately. Still requires green CI to merge.
 - **Concurrent PR cap**: 10 open Renovate PRs at a time so review attention isn't dominated by automation.
 
-The JSON file's `$schema` reference enables editor IntelliSense but does NOT validate in CI. When editing `.github/renovate.json`, run the schema validator locally before pushing:
+The JSON file's `$schema` reference enables editor IntelliSense but does NOT validate it. `.github/renovate.json` changes are checked in CI (the `test` job's `Validate Renovate Config` step, gated on changes to that file) by running:
 
 ```bash
 npm run renovate:check
 ```
 
-This invokes `renovate-config-validator` via `npx --package=renovate` (no install required; downloads on demand). CI does not currently re-run the validator — running it locally before pushing is the only gate against config drift.
+This invokes `renovate-config-validator` via `npx --package=renovate` (no install required; downloads on demand). Run it locally before pushing config changes too — CI catches it either way, but a local run is faster feedback.
 
 ### Manual refresh (fallback)
 
 If Renovate is unavailable for any reason, the manual refresh process is:
 
-- **Dockerfile** — query `https://hub.docker.com/v2/repositories/library/node/tags/20-alpine/` for the current `digest`, update the `FROM node:20-alpine@sha256:...` line (both stages), and update the `# digest fetched YYYY-MM-DD` comment.
+- **Dockerfile** — query `https://hub.docker.com/v2/repositories/library/node/tags/20-alpine/` for the current `digest` and update the `FROM node:20-alpine@sha256:...` line (both stages).
 - **GitHub Actions** — for each `uses: vendor/action@<sha> # vN` line, query `repos/vendor/action/git/refs/tags/vN` via `gh api` and paste the new SHA. Keep the `# vN` trailing comment so the version intent stays visible.
 
 ### npm audit baseline

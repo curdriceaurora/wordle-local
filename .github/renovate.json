@@ -25,7 +25,8 @@
     "enabled": true,
     "schedule": [
       "before 6am on monday"
-    ]
+    ],
+    "automerge": false
   },
   "vulnerabilityAlerts": {
     "enabled": true,
@@ -89,6 +90,12 @@
       "automergeType": "pr",
       "platformAutomerge": false,
       "groupName": "npm-dev-deps"
+    },
+    {
+      "description": "esbuild is a devDependency, but it's the bundler the Dockerfile's production build (`npm run build`) depends on. `npm run check` never exercises that build path — only the `docker-build` CI job does — so this rule overrides the npm-dev-deps auto-merge above and requires human review instead.",
+      "matchPackageNames": ["esbuild"],
+      "automerge": false,
+      "groupName": "esbuild"
     },
     {
       "description": "npm runtime deps (express, helmet, archiver, ajv, web-push, etc.): patch auto-merge, minor batched for human review. Minors can introduce subtle behavior shifts (express middleware ordering, ajv schema validation strictness) that the test suite may not exercise — keep a human in the loop.",
