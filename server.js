@@ -3772,9 +3772,8 @@ app.use(
     mergeDailyResult,
     describeRange,
     StatsApiError,
-    // B4 / #123: thread the slot-claim helper so player POSTs bump
-    // the backup busy-check counter — see docs/lock-graph-audit.md
-    // discrepancy D1.
+    // Thread the slot-claim helper so player POSTs bump the backup
+    // busy-check counter. See lib/locks.md.
     claimDirectDataWriteSlot
   })
 );

@@ -18,7 +18,7 @@
 //   - Validate prose claims about behavior. "The gate covers /admin"
 //     is structurally a claim, but mapping it to a verifiable code
 //     reference requires NLP. Reviewers (and the
-//     commit-message-as-evidence rule in CLAUDE.md) catch those.
+//     human review and source verification catch those.
 //   - Parse markdown structure perfectly. Uses pragmatic regex on
 //     code-fence contents and inline-code spans. False negatives
 //     (claims we miss) are acceptable; false positives (claims we
@@ -47,8 +47,7 @@ function readKnownEnvVars() {
   for (const line of contents.split(/\r?\n/)) {
     // Match both active assignments (`FOO=value`) and the commented-
     // out form (`# FOO=value` / `#FOO=value`) used in `.env.example`
-    // to document optional vars. Codex caught the original regex
-    // missing optional vars on PR #108 round 6 — a future doc
+    // to document optional vars. A future doc
     // example like `WEBHOOKS_ENABLED=true npm start` would have
     // failed claims:check even though `.env.example` documents it
     // as a commented optional.
@@ -66,8 +65,7 @@ function readKnownNpmScripts() {
 }
 
 // Discover all markdown files in scope: README.md + every .md under
-// docs/ (recursively). Excludes node_modules, .auto-claude, .git,
-// tasks/ (per-PR scratch space — claims there don't ship to users).
+// docs/ (recursively). Excludes node_modules, .auto-claude, and .git.
 function findMarkdownFiles() {
   const out = [];
   const top = path.join(projectRoot, "README.md");
@@ -131,7 +129,7 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
     // line, we still need to toggle `inFence` so subsequent lines
     // know whether they're inside a code block — otherwise a
     // skipped fence-line would desync state for the rest of the
-    // file. (Copilot caught this on PR #108 round 5.) After
+    // file. After
     // toggling, we honor the skip tag to avoid running other
     // checks against the fence-marker line itself.
     const fenceMatch = line.match(/^[ \t]*```([a-zA-Z0-9_.-]*)/);
@@ -175,8 +173,6 @@ function check(file, allEnvVars, allScripts, dockerfileNodeMajor) {
     // reverse direction (claim < dockerfile) is stale-but-still-
     // accurate — saying "Node 20+" when the Dockerfile is `node:22`
     // doesn't mislead anyone, since Node 22 IS "20 or newer."
-    // CodeRabbit caught the original strict-equality on PR #108
-    // round 11.
     if (!inFence && dockerfileNodeMajor !== null) {
       const nodeMatch = line.match(/\bNode\s+(\d+)\+/);
       if (nodeMatch) {

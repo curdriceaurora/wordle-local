@@ -10,11 +10,10 @@
 //   - duplicate state when a single-in-flight invariant is racy
 //   - slot-claim ownership confusion (mutex vs counter)
 //
-// Background: the #98–#106 campaign produced 18 P1s, most clustered in
-// shared-state code (locks, slots, ordering, drop-X races). Most would
-// have surfaced in a Promise.all of N=20 against real disk — not mocks.
-// This fixture standardises that pattern so each store gets the same
-// quality of stress without copy-paste.
+// Shared-state races in locks, slots, ordering, and drop-X paths often
+// surface only under parallel real-disk operations. This fixture
+// standardises that stress pattern so each store gets the same coverage
+// without copy-paste.
 //
 // USAGE
 //   const { runConcurrencyScenario } = require("./helpers/concurrency-fixture");
@@ -109,7 +108,7 @@
 //   the PR description. A scenario that flakes at 100× is not allowed
 //   to land — fix the test, fix the store, or both. We hold the bar at
 //   100× because:
-//     - We've seen P1s reproduce 1-in-30 in real campaigns.
+//     - Rare races may reproduce only once in dozens of runs.
 //     - Flake at the fixture level destroys trust in the suite.
 //     - 100 iters × ~5–50ms each is still <10s — cheap enough that the
 //       cost of the gate is negligible.
@@ -187,7 +186,7 @@ async function runConcurrencyScenario(spec) {
   // mode. Clamp to spec.parallelismMax so a test with a correctness-
   // derived ceiling (e.g., the schema-cap on per-puzzle guesses) can
   // opt out of the stress bump without disabling the env override
-  // entirely. Codex flagged this on PR #109: without the clamp,
+  // entirely. Without the clamp,
   // CONCURRENCY_PARALLELISM=200 would surface schema-cap errors that
   // have nothing to do with the concurrency invariant under test.
   const envParallelism = envInt("CONCURRENCY_PARALLELISM", specParallelism);
