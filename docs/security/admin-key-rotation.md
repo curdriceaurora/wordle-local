@@ -55,7 +55,7 @@ Set THREE env vars on every node:
 ```bash
 export ADMIN_KEY=<new key>                       # e.g. fresh 32 random bytes
 export ADMIN_KEY_PREVIOUS=<old key>              # the value you're retiring
-export ADMIN_KEY_ROTATION_EXPIRES_AT=<ISO-8601>  # future timestamp
+export ADMIN_KEY_ROTATION_EXPIRES_AT=<ISO-8601 or epoch-ms>  # e.g. 2026-06-01T00:00:00.000Z or 1748779200000
 ```
 
 Choose `ADMIN_KEY_ROTATION_EXPIRES_AT` based on your rolling-restart
