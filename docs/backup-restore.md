@@ -341,7 +341,10 @@ archive offline:
 
 The archive is plaintext. `data/leaderboard.json` and
 `data/classes.json` contain profile names and per-game timing. Treat
-backups as sensitive; encrypt at rest if you are sharing them off-host.
+backups as sensitive. The encrypted-data mount protects files that
+remain inside that filesystem, but a downloaded backup leaves that
+boundary and must be encrypted separately before off-host storage.
+See [`docs/security/data-encryption-at-rest.md`](security/data-encryption-at-rest.md).
 
 ## Configured data paths
 
@@ -372,7 +375,7 @@ logic the stores use; tracked separately.
 
 - Selective per-file restore (all-or-nothing only)
 - Cross-host migration (archives are local to a single node)
-- Encryption / password protection
+- Built-in archive encryption / password protection
 - Continuous backups, retention policies
 - Backup with non-default `STATS_STORE_PATH` /
   `CLASSES_STORE_PATH` / `ADMIN_JOBS_STORE_PATH` /

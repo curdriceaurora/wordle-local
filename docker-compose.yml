@@ -18,7 +18,9 @@ services:
       DEFINITION_SHARD_CACHE_SIZE: ${DEFINITION_SHARD_CACHE_SIZE:-6}
       PERF_LOGGING: ${PERF_LOGGING:-false}
     volumes:
-      - ./data:/app/data
+      # Point WORDLE_DATA_DIR at the mounted plaintext view of an
+      # encrypted host filesystem. See docs/security/data-encryption-at-rest.md.
+      - ${WORDLE_DATA_DIR:-./data}:/app/data
     restart: unless-stopped
     # B7 / #126: readiness probe. /readyz returns 200 when the
     # process is up AND not shutting down AND no restore/backup is

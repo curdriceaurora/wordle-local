@@ -56,6 +56,9 @@ Use this checklist for any release that touches `/api/admin/*`, provider imports
    - `ADMIN_KEY`
    - `TRUST_PROXY` and `TRUST_PROXY_HOPS` appropriate for topology
    - explicit admin rate-limit overrides only when justified
+   - an encrypted host filesystem for `data/` when offline disk or
+     snapshot theft is in the deployment threat model; see
+     [`docs/security/data-encryption-at-rest.md`](security/data-encryption-at-rest.md)
 
 ## Common pitfalls
 

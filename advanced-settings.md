@@ -71,6 +71,10 @@ Set `ADMIN_KEY` to protect admin endpoints. When set, include `x-admin-key: <val
 - `PORT` — default 3000.
 - `HOST` — default 0.0.0.0.
 - `NODE_ENV` — `development` or `production`.
+- `WORDLE_DATA_DIR` — Docker Compose host path mounted at `/app/data`
+  (default `./data`). Point this at the mounted plaintext view of an
+  encrypted filesystem for encryption at rest; see
+  [the encryption runbook](docs/security/data-encryption-at-rest.md).
 - `JSON_BODY_LIMIT` — max JSON payload size for API requests (default `12mb`).
 - `PROVIDER_MANUAL_MAX_FILE_BYTES` — max bytes per manual upload file (default `8388608` / 8 MiB).
 - `APP_CONFIG_PATH` — optional override path for persisted runtime overrides (`data/app-config.json` by default).
