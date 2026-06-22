@@ -73,9 +73,9 @@ traffic automatically — see `docs/admin-platform-architecture-contract.md`).
 While the window is open, test BOTH keys:
 
 ```bash
-curl -sf -H "x-admin-key: $OLD_KEY" https://<host>/api/admin/jobs
+curl -sf -H "x-admin-key: $ADMIN_KEY_PREVIOUS" https://<host>/api/admin/jobs
 # expect 200
-curl -sf -H "x-admin-key: $NEW_KEY" https://<host>/api/admin/jobs
+curl -sf -H "x-admin-key: $ADMIN_KEY" https://<host>/api/admin/jobs
 # expect 200
 ```
 
@@ -105,9 +105,9 @@ the new key authenticates.
 After Phase 3:
 
 ```bash
-curl -i -H "x-admin-key: $OLD_KEY" https://<host>/api/admin/jobs
+curl -i -H "x-admin-key: $ADMIN_KEY_PREVIOUS" https://<host>/api/admin/jobs
 # expect 401 — old key no longer works
-curl -sf -H "x-admin-key: $NEW_KEY" https://<host>/api/admin/jobs
+curl -sf -H "x-admin-key: $ADMIN_KEY" https://<host>/api/admin/jobs
 # expect 200
 ```
 

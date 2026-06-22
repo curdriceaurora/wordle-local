@@ -209,6 +209,18 @@ describe("admin-auth — dual-accept rotation window (#204)", () => {
       expect(checkAdminAuth(reqWith("OLD_KEY_value_2025"), config).ok).toBe(true);
     });
 
+    test("digit-only string adminKeyRotationExpiresAt (epoch ms as env var) accepted", () => {
+      // process.env values are always strings, so this is the real
+      // production shape — not the JS-number case above, which
+      // `Date.parse()` would mishandle (it returns NaN for pure-digit
+      // strings, since they aren't a recognized date format).
+      const config = {
+        ...baseConfig,
+        adminKeyRotationExpiresAt: String(new Date("2026-06-01T00:00:00.000Z").getTime())
+      };
+      expect(checkAdminAuth(reqWith("OLD_KEY_value_2025"), config).ok).toBe(true);
+    });
+
     test("admin auth disabled (no adminKey, requireAdminKey=false): bypassed", () => {
       const config = {
         adminKey: "",
