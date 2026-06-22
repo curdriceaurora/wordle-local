@@ -51,6 +51,11 @@ The default remains `./data`. The configured directory must contain the
 entire repository `data/` tree, including schemas and bundled dictionary
 assets. Never set `WORDLE_DATA_DIR` to the ciphertext directory.
 
+The container runs Wordle as UID/GID `1000:1000`. The mounted plaintext
+directory must be writable by that identity. The commands below set that
+ownership explicitly. If your deployment runs the container with a
+different Compose `user:`, use that UID/GID instead.
+
 Check the resolved mount before starting:
 
 ```bash
@@ -72,7 +77,7 @@ is the usual local-disk option.
    ```bash
    sudo mkdir -p /srv/wordle-data
    sudo cp -a ./data/. /srv/wordle-data/
-   sudo chown -R "$(id -u):$(id -g)" /srv/wordle-data
+   sudo chown -R 1000:1000 /srv/wordle-data
    ```
 
 4. Set the absolute mount path in `.env`:
@@ -105,14 +110,29 @@ mounted plaintext view.
 
 Stop Wordle before migration, then:
 
+On Linux, allow the Docker daemon and the container's UID to traverse the
+FUSE mount by enabling this line in `/etc/fuse.conf`:
+
+```ini
+user_allow_other
+```
+
+The host administrator must make that change. Then create and mount the
+encrypted directory with `-allow_other`:
+
 ```bash
 mkdir -p "$HOME/.local/share/wordle-data.cipher"
 mkdir -p "$HOME/.local/share/wordle-data"
 gocryptfs -init "$HOME/.local/share/wordle-data.cipher"
-gocryptfs "$HOME/.local/share/wordle-data.cipher" \
+gocryptfs -allow_other "$HOME/.local/share/wordle-data.cipher" \
   "$HOME/.local/share/wordle-data"
 cp -a ./data/. "$HOME/.local/share/wordle-data/"
+sudo chown -R 1000:1000 "$HOME/.local/share/wordle-data"
 ```
+
+`-allow_other` permits other host identities to reach the mount, but
+normal Unix permissions still apply; the ownership change grants the
+container's `node` user write access.
 
 Set the mountpoint—not the ciphertext directory—in `.env`:
 
@@ -131,8 +151,14 @@ docker compose down
 fusermount -u "$HOME/.local/share/wordle-data"
 ```
 
-Use the equivalent FUSE unmount command supplied by your operating system
-when `fusermount` is unavailable.
+On macOS, use:
+
+```bash
+umount "$HOME/.local/share/wordle-data"
+```
+
+For other systems, use the unmount command supplied by the installed FUSE
+implementation.
 
 ## Key rotation
 
