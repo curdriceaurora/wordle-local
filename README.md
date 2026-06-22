@@ -72,7 +72,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 
 - **More player features** — timed challenges, notifications, classroom rosters: see [Highlights](#highlights).
 - **Operator controls** — BYOD (bring your own dictionary), scheduled words, backups, webhooks, analytics: see [Admin Console](#admin-console).
-- **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](advanced-settings.md).
+- **Hosting beyond defaults** — env vars, proxies, Tailscale: see [advanced-settings.md](docs/advanced-settings.md).
 - **Public preview without a server** — gameplay-only deploy on Vercel: see [Deploy to Vercel](#deploy-to-vercel-gameplay-only).
 
 ## Highlights
@@ -93,7 +93,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 
 - For English puzzles, a local meaning is shown when a game ends (solve or final reveal), when available.
 - Theme controls include `System`, `Dark`, and `Light`; `System` follows your OS/browser color scheme when available.
-- Hosting behind a proxy or running with admin features? See [advanced-settings.md](advanced-settings.md).
+- Hosting behind a proxy or running with admin features? See [advanced-settings.md](docs/advanced-settings.md).
 
 ## Deploy to Vercel (gameplay-only)
 
@@ -201,7 +201,7 @@ Daily word endpoints remain available:
 - Meanings are loaded from local files only; no external dictionary API calls are made at runtime.
 - To refresh local meanings from WordNet data (and rebuild indexed lookup artifacts): `npm run definitions:build`.
 - To rebuild only indexed lookup artifacts from the existing definitions file: `npm run definitions:index`.
-- For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see [advanced-settings.md](advanced-settings.md)).
+- For performance tuning, `DEFINITIONS_MODE` supports `memory`, `lazy`, and `indexed` (see [advanced-settings.md](docs/advanced-settings.md)).
 
 ## Daily Link
 

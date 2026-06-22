@@ -13,7 +13,6 @@ playwright.config.js
 eslint.config.cjs
 jest.config.js
 server.js
-test-server-load.js
 lib
 data/dictionaries/en-definitions.json
 data/dictionaries/wordlist-en_US-2020.12.07-README.txt
