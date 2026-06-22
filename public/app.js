@@ -234,6 +234,15 @@ function setMessage(text) {
   messageEl.textContent = text;
 }
 
+function getMeaningSuffix(value) {
+  const meaning = typeof value === "string" ? value.trim() : "";
+  if (!meaning) return "";
+  const formatted = window.i18n
+    ? window.i18n.t("play.meaningPrefix", { meaning })
+    : `Meaning: ${meaning}`;
+  return ` ${formatted}`;
+}
+
 function setSrStatus(text) {
   if (!srStatusEl) return;
   srStatusEl.textContent = text;
@@ -1230,19 +1239,10 @@ async function submitGuess() {
     if (data.isCorrect) {
       locked = true;
       await upsertDailyResult(true, currentRow + 1, maxGuesses);
-      const meaning =
-        typeof data.answerMeaning === "string" && data.answerMeaning.trim()
-          ? data.answerMeaning.trim()
-          : "";
       const baseMessage = window.i18n
         ? window.i18n.t("play.solvedFormat", { tries: currentRow + 1, max: maxGuesses })
         : `Solved in ${currentRow + 1}/${maxGuesses}!`;
-      const suffix = meaning
-        ? ` ${window.i18n
-          ? window.i18n.t("play.solvedMeaningPrefix", { meaning })
-          : `Meaning: ${meaning}`}`
-        : "";
-      setMessage(`${baseMessage}${suffix}`);
+      setMessage(`${baseMessage}${getMeaningSuffix(data.answerMeaning)}`);
       return;
     }
 
@@ -1250,19 +1250,10 @@ async function submitGuess() {
       locked = true;
       await upsertDailyResult(false, maxGuesses, maxGuesses);
       if (data.answer) {
-        const meaning =
-          typeof data.answerMeaning === "string" && data.answerMeaning.trim()
-            ? data.answerMeaning.trim()
-            : "";
         const baseMessage = window.i18n
           ? window.i18n.t("play.outOfTriesAnswer", { answer: data.answer })
           : `Out of tries. Word was ${data.answer}.`;
-        const suffix = meaning
-          ? ` ${window.i18n
-            ? window.i18n.t("play.solvedMeaningPrefix", { meaning })
-            : `Meaning: ${meaning}`}`
-          : "";
-        setMessage(`${baseMessage}${suffix}`);
+        setMessage(`${baseMessage}${getMeaningSuffix(data.answerMeaning)}`);
       } else {
         setMessage(window.i18n ? window.i18n.t("play.outOfTries") : "Out of tries.");
       }
