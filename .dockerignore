@@ -16,7 +16,6 @@ README.md
 !THIRD_PARTY_NOTICES.md
 !data/dictionaries/README.md
 tests
-tasks
 coverage
 .nyc_output
 playwright-report

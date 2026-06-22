@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Mechanical detection of dynamic-key writes to plain objects, the
-// class of bug behind rules 11 + 12 in `docs/review-preflight.md`:
+// Mechanical detection of dynamic-key writes to plain objects:
 //
 //   "Key safety: dynamic object keys are validated against
 //    prototype-pollution sentinels (__proto__, constructor, prototype)
@@ -190,7 +189,7 @@ function isNullProtoObjectLiteral(node) {
   // Critical: only NON-COMPUTED `__proto__` keys actually set the
   // object's prototype to null. `{ ["__proto__"]: null }` is a
   // regular own-property assignment with a `__proto__` name and
-  // does NOT change the prototype. Codex P2 caught this on PR #145.
+  // does NOT change the prototype.
   return (
     node &&
     node.type === "ObjectExpression" &&
@@ -277,8 +276,7 @@ function isLikelyArrayIndexKey(keyNode) {
   // Require BOTH sides of an arithmetic expression to be index-safe.
   // The earlier permissive form (`||`) would accept
   // `obj[req.body.key + 1]` because the right side is a number,
-  // even though the left is request-influenced. Copilot caught
-  // this false-negative on PR #145.
+  // even though the left is request-influenced.
   if (keyNode.type === "BinaryExpression") {
     return isLikelyArrayIndexKey(keyNode.left) && isLikelyArrayIndexKey(keyNode.right);
   }

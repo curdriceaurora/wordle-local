@@ -222,7 +222,6 @@ Daily word endpoints remain available:
 - Streaks are tracked per profile based on consecutive winning daily entries.
 - No local import from historical browser `localStorage` stats is performed.
 - Pitfall: clearing browser storage no longer deletes server stats, but it can clear local UI state such as the active profile selection on that device.
-- Rollout and cutover notes: [docs/server-leaderboard-rollout.md](docs/server-leaderboard-rollout.md)
 - Data contract details: [docs/leaderboard-data-contract.md](docs/leaderboard-data-contract.md)
 
 ## Timed Challenges

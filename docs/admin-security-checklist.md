@@ -37,7 +37,9 @@ Use this checklist for any release that touches `/api/admin/*`, provider imports
 
 5. Secret-handling (enforced by `npm run secrets:check`):
 
-   - Every security-sensitive token/key comparison uses `crypto.timingSafeEqual` after an explicit length pre-check (rule 27 in `docs/review-preflight.md`). `lib/admin-auth.js`'s `timingSafeEqualString` is the canonical helper.
+   - Every security-sensitive token/key comparison uses
+     `crypto.timingSafeEqual` after an explicit length pre-check.
+     `lib/admin-auth.js`'s `timingSafeEqualString` is the canonical helper.
    - `===` / `!==` against a secret-flavored value (`process.env.*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `VAPID_PRIVATE_*`; or any identifier / member access ending in `secret`, `token`, `adminKey`, `apiKey`, `vapidPrivateKey`, etc.) is mechanically rejected by `scripts/check-secret-handling.js` unless the RHS is a categorically-safe shape (boolean / number / null / `""` / `typeof` enum match / `.length` pre-check).
    - Log call sites never splat a secret-bearing object: `console.log(req)`, `console.warn(req.headers)`, `console.error(process.env)`, `console.log({...process.env})`, and analogues are mechanically rejected. Log specific fields (`req.method`, `req.path`, `req.headers['user-agent']`) — never the whole object.
    - If a rare case genuinely needs an exception, add a substring-signature entry to `ALLOWLIST_SITES` (or, for a whole file, to `ALLOWLIST_FILES`) in `scripts/check-secret-handling.js` with a written rationale. Reviewers should treat allowlist additions as security decisions.

@@ -1,8 +1,7 @@
 # Concurrency primitives — lock graph and usage rules
 
 Authoritative reference for every lock, slot, and ref used to coordinate
-writes against `data/`. Distilled from the patterns reviewers caught
-during the #98–#106 campaign.
+writes against `data/`.
 
 **Read this before adding code that:**
 
@@ -20,8 +19,8 @@ during the #98–#106 campaign.
 3. **Per-store atomicity.** Each store has its own write queue so
    concurrent callers don't clobber each other.
 
-Each primitive below addresses one or more of these concerns. **Mixing
-them up was the most common P1 source in the campaign.**
+Each primitive below addresses one or more of these concerns. Mixing
+their roles can cause deadlocks, lost writes, or unsafe backup windows.
 
 ## Quick reference
 
@@ -94,8 +93,7 @@ direct writers against each other.
   and `restoreInProgressRef.waitForRelease()`. If you claim the slot
   from inside the backup/restore route (which sets the data lock
   `true` BEFORE calling `warmInScopeStores()`), you wait forever.
-  This is exactly what bit PR #105 round 3 in the challenge-config
-  bootstrap path. Bootstrap-on-ENOENT in stores intentionally writes
+  Bootstrap-on-ENOENT in stores intentionally writes
   via raw `writeJsonAtomic` (no slot claim) for this reason — see the
   comment block in `lib/challenge-config-store.js` for the full story.
 
@@ -113,16 +111,16 @@ and the scheduler reconciler both serialize through it.
 
 ### `withChallengeAdminUserMutex` (cross-route Promise chain)
 
-Added in PR #105 round 5 specifically because `claimDirectDataWriteSlot`
-is a counter. Serializes admin's `PUT /api/admin/challenges/:id` against
+This mutex is needed because `claimDirectDataWriteSlot` is a counter.
+It serializes admin's `PUT /api/admin/challenges/:id` against
 user's `POST /api/challenges/:id/start` so the admin's hasResults
 observation is atomic with respect to the user's `createSession`.
 
 - **Use when**: two routes touch DIFFERENT stores in a sequence that
   must look atomic from each route's perspective. Per-store commit
   queues serialize within a store; this primitive serializes across.
-- **Pitfall — re-read inside the lock**: PR #105 round 6 caught this.
-  If the route reads its config BEFORE entering the mutex and the
+- **Pitfall — re-read inside the lock**: If the route reads its config
+  BEFORE entering the mutex and the
   other route changes that config inside its own mutex hold, the
   first route writes derived state from the stale config. Always
   re-read authoritative state INSIDE the mutex closure.
@@ -140,8 +138,8 @@ Added in PR for #152. Serializes the 5 admin routes that touch BOTH
 
 The class-delete carve-out path does
 `deleteClassWithCarveOut` → `getSnapshot` → `leaderboardStore.mutate`.
-The `withSlot` wrapping that sequence (Codex P2 on PR #151) closes the
-backup/restore busy-check window but not the cross-store race:
+The `withSlot` wrapping that sequence closes the backup/restore
+busy-check window but not the cross-store race:
 `claimDirectDataWriteSlot` is a counter, so a concurrent
 `/members/bulk` can interleave between the snapshot read and the
 leaderboard mutate and add one of the carve-out IDs to a different
@@ -158,11 +156,10 @@ class. `withClassMembershipMutex` blocks that interleave.
 ### Per-store `commitQueue` / `writeQueue` (per-instance Promise chain)
 
 Each persistent store has its own per-instance Promise chain that
-serializes writes within that store. **Two names exist for historical
-reasons**: older stores call the field `writeQueue` (the original
-naming convention from the leaderboard store); newer stores added
-during the #98–#103 campaign use `commitQueue` paired with a
-private `#commit(updater)` method. Both are the same primitive.
+serializes writes within that store. Two names exist for historical
+reasons: older stores call the field `writeQueue` (the original naming
+convention from the leaderboard store); newer stores use `commitQueue`
+paired with a private `#commit(updater)` method. Both are the same primitive.
 The backup-restore drain path (`drainStoreWriteQueues` in
 `routes/backup.js`) is the authoritative list — when adding a new
 store, append its queue there too.
@@ -229,13 +226,13 @@ predate the slot mechanism's standardization at the store layer).
   a session/object with extra fields, `normalizeStore` strips them
   during persistence — but a naïve `return cloneState(updated)` (where
   `updated` was the raw mutator return) gives the caller pre-normalize
-  state that diverges from disk. Caught by Copilot on PR #105 round 4.
-  Always re-read from `this.state` after `#commit` returns, or
+  state that diverges from disk. Always re-read from `this.state`
+  after `#commit` returns, or
   normalize before storing.
 - **Pitfall — bootstrap on ENOENT**: when `#loadInternal()` hits
   ENOENT, it must NOT claim the slot (deadlock — see
   `claimDirectDataWriteSlot` above) and must NOT skip persistence
-  (breaks backup-warming — see PR #105 rounds 3+4). The pattern
+  (breaks backup-warming). The pattern
   every in-scope store uses: write directly via `writeJsonAtomic`
   with no slot claim. Safe because: (a) all read paths are gated by
   the `/api` middleware which 503s during backup, OR (b) the read
@@ -291,18 +288,17 @@ deliveries even though the import queue itself has cleared.
 ## Anti-patterns and known traps
 
 - **Treating `claimDirectDataWriteSlot` as a mutex.** It's a counter.
-  Two callers can hold it at once. PR #105 round 1 made this mistake.
+  Two callers can hold it at once.
 - **Claiming the slot from a code path that may be called by the
-  backup/restore route.** Deadlock. PR #105 round 3.
+  backup/restore route.** Deadlock.
 - **Reading authoritative state OUTSIDE a cross-store mutex, then
-  computing inside.** Stale read. PR #105 round 6.
+  computing inside.** Stale read.
 - **Returning the mutator's pre-normalize value.** Disk diverges from
-  what the caller sees. PR #105 round 4.
+  what the caller sees.
 - **Detaching a side effect WITHOUT a counter for the busy-check.**
-  Restore rolls back; late emit fires for the reverted action. PR #105
-  round 2.
+  Restore rolls back; late emit fires for the reverted action.
 - **Writing on bootstrap-ENOENT WITH a slot claim.** Deadlock when the
-  call comes from inside backup/restore. PR #105 rounds 3 + 4.
+  call comes from inside backup/restore.
 
 ## When adding a new primitive to this list
 

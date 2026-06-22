@@ -21,8 +21,9 @@ Thanks for your interest in contributing!
 - Include screenshots or recordings for UI tweaks when helpful.
 - Call out any follow-up work or known limitations.
 - Use the repository PR template.
-- Complete the mandatory preflight in `docs/review-preflight.md` before requesting review.
-- After merge, add an entry to `docs/review-preflight.md` under **Merged PR Learnings Log** for any review nits and preventive rule updates.
+- Use deterministic wording for ordering, timestamps, and tie-breaks;
+  avoid ambiguous claims such as "latest" without defining the order.
+- Resolve actionable review threads before merge.
 
 ## Supply-Chain Pinning
 

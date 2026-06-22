@@ -2,11 +2,9 @@
 "use strict";
 
 // Mechanical detection of `writeJsonAtomic` / `writeJsonAtomicSync`
-// call sites that bypass the backup/restore slot. These were the
-// most common P1 source in the #98–#106 campaign — slot bypass in
-// challenge-config-store bootstrap (PR #105 round 1), webhook
-// emit/delivery race conditions, and so on. See `lib/locks.md` for
-// the full lock graph.
+// call sites that bypass the backup/restore slot. Slot bypass can
+// let backup/restore observe a false-idle state while a direct data
+// mutation is active. See `lib/locks.md` for the lock graph.
 //
 // Implementation: parses each .js file with `acorn` (an explicit
 // devDependency — declared in package.json so the check doesn't
@@ -14,7 +12,7 @@
 // walks the AST. The earlier regex-based draft missed every
 // method inside a `class { ... }` body because its function-
 // detector keyed on top-level depth, which was a real correctness
-// bug surfaced by reviewers on PR #108. AST-based scope tracking
+// bug in the earlier implementation. AST-based scope tracking
 // handles classes, nested closures, arrow methods, and other JS
 // forms uniformly.
 //
@@ -79,16 +77,14 @@ const projectRoot = path.resolve(__dirname, "..");
 //
 //   * INTERNAL — store's own `#commit` claims
 //     `claimDirectDataWriteSlot()`. Safe regardless of who calls
-//     the store's public mutators. The modern pattern from PR
-//     #103 onward.
+//     the store's public mutators. This is the preferred pattern.
 //
 //   * CALLER — store does NOT claim internally. Callers MUST
 //     wrap mutators in `withSlot(...)` (admin routes do this) or
 //     run at boot before any concurrency (sync init paths). A
 //     future caller that invokes a store mutator without wrapping
 //     would still pass `locks:check` because of the per-file
-//     exemption — codex named this risk on PR #108 round 10. The
-//     mitigation is `lib/locks.md`'s "Slot-claim ownership"
+//     exemption. The mitigation is `lib/locks.md`'s "Slot-claim ownership"
 //     subsection (audit each new caller) plus the SAFE_PER_FILE
 //     entries below being explicit about which tier each store
 //     belongs to. Long-term, the right fix is to migrate these
@@ -238,8 +234,7 @@ function methodKeyName(keyNode) {
 //     release();
 //   }
 //
-// Treating `try` as conditional would falsely flag this pattern
-// (Copilot caught the issue on PR #108 round 9).
+// Treating `try` as conditional would falsely flag this pattern.
 const CONDITIONAL_NODE_TYPES = new Set([
   "IfStatement",
   "ForStatement",

@@ -5,9 +5,8 @@
 //
 // Two classes of bug this script flags:
 //
-// 1. Non-constant-time secret compare. Rule 27 in
-//    `docs/review-preflight.md` requires every security-sensitive
-//    token/key check to use `crypto.timingSafeEqual` after a length
+// 1. Non-constant-time secret compare. Every security-sensitive
+//    token/key check must use `crypto.timingSafeEqual` after a length
 //    pre-check. A `===` / `!==` compare leaks length + prefix via
 //    timing. This script walks every `.js` file under `routes/`,
 //    `lib/`, and `server.js` with acorn and flags any binary equality
