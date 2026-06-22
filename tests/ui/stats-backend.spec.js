@@ -73,7 +73,30 @@ async function openDaily(page, day, options = {}) {
   // Wait for `domcontentloaded` so bootstrap has had a chance to run
   // before we probe for `#playPanel`.
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForSelector("#playPanel:not(.hidden)");
+  // Under several parallel firefox contexts on a single CI worker the
+  // bootstrap that strips `.hidden` from #playPanel occasionally stalls
+  // past the per-page timeout (the documented race from #142 / PR #143).
+  // Reload once and re-probe so a stalled bootstrap self-heals inside the
+  // helper — cheaper and more deterministic than burning a whole
+  // test-level retry. Both probes use the same explicit 30s budget, so the
+  // worst case is a deterministic 60s — comfortably within the 120s test
+  // budget — rather than 30s plus the 60s page default.
+  const probeReady = () =>
+    page.waitForSelector("#playPanel:not(.hidden)", { timeout: 30000 });
+  try {
+    await probeReady();
+  } catch (err) {
+    // Only self-heal the documented bootstrap stall, which surfaces as a
+    // wait timeout. Re-throw anything else (closed page/context, navigation
+    // error, bad selector) so real failures stay loud instead of being
+    // masked by a reload.
+    if (err.name !== "TimeoutError") {
+      throw err;
+    }
+    await page.reload(gotoOptions);
+    await page.waitForLoadState("domcontentloaded");
+    await probeReady();
+  }
   if (expectProfilePanel) {
     await expect(page.locator("#profilePanel")).toBeVisible();
   }
