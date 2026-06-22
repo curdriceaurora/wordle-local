@@ -33,6 +33,7 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY --chown=node:node --from=build /app/public/dist ./public/dist
 COPY --chown=node:node data ./data
 COPY --chown=node:node lib ./lib
+COPY --chown=node:node routes ./routes
 COPY --chown=node:node server.js ./server.js
 COPY --chown=node:node LICENSE ./LICENSE
 COPY --chown=node:node THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
