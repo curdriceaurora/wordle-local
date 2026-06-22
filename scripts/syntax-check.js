@@ -2,7 +2,8 @@ const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
-const routesDir = path.join(__dirname, "routes");
+const projectRoot = path.join(__dirname, "..");
+const routesDir = path.join(projectRoot, "routes");
 const routeFiles = fs.readdirSync(routesDir)
   .filter((name) => name.endsWith(".js"))
   .sort()
@@ -11,7 +12,7 @@ const routeFiles = fs.readdirSync(routesDir)
 const filesToCheck = ["server.js", ...routeFiles];
 
 for (const file of filesToCheck) {
-  const fullPath = path.join(__dirname, file);
+  const fullPath = path.join(projectRoot, file);
   const result = spawnSync(process.execPath, ["--check", fullPath], { encoding: "utf8" });
   if (result.status !== 0) {
     console.error(`✗ Syntax check failed for ${file}`);
