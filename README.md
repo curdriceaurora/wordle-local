@@ -85,6 +85,7 @@ The header has a language switcher (English, Spanish). Selection persists in the
 - **Opt-in browser push notifications** when the daily puzzle is ready ([docs/notifications.md](docs/notifications.md)).
 - **Outbound webhooks** with HMAC-signed deliveries, retry queue, and recovery on boot ([docs/webhooks.md](docs/webhooks.md)).
 - **Backup / restore** — versioned, schema-checked archives applied atomically ([docs/backup-restore.md](docs/backup-restore.md)).
+- **Optional encryption at rest** — mount `data/` from an encrypted host filesystem ([runbook](docs/security/data-encryption-at-rest.md)).
 - **Usage analytics** — admin dashboard with offline charting ([docs/admin-analytics.md](docs/admin-analytics.md)).
 - **UI internationalization** — English + Spanish at strict per-key parity, switchable from the header ([docs/i18n.md](docs/i18n.md)).
 
