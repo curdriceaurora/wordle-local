@@ -58,6 +58,22 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+// Dual-accept rotation (#204). When rotating ADMIN_KEY:
+//   1. Set ADMIN_KEY=<new>, ADMIN_KEY_PREVIOUS=<old>,
+//      ADMIN_KEY_ROTATION_EXPIRES_AT=<ISO timestamp> in env.
+//   2. Rolling-restart all nodes.
+//   3. Verify with the new key.
+//   4. After ADMIN_KEY_ROTATION_EXPIRES_AT passes, remove
+//      ADMIN_KEY_PREVIOUS + ADMIN_KEY_ROTATION_EXPIRES_AT and
+//      restart again (Phase 2).
+// During the window, requests authenticated with either key
+// succeed. The previous-key acceptance emits a structured
+// `admin.auth.previous_key_used` log so operators can monitor that
+// the rotation is actually retiring the old key, not silently
+// extending its life.
+// See docs/security/admin-key-rotation.md for the full runbook.
+const ADMIN_KEY_PREVIOUS = process.env.ADMIN_KEY_PREVIOUS || "";
+const ADMIN_KEY_ROTATION_EXPIRES_AT = process.env.ADMIN_KEY_ROTATION_EXPIRES_AT || "";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const REQUIRE_ADMIN_KEY = process.env.REQUIRE_ADMIN_KEY === "true" || NODE_ENV === "production";
 const TRUST_PROXY = process.env.TRUST_PROXY
@@ -3313,7 +3329,13 @@ app.use((err, req, res, next) => {
 });
 const requireAdminAccess = requireAdmin({
   adminKey: ADMIN_KEY,
-  requireAdminKey: REQUIRE_ADMIN_KEY
+  // Dual-accept rotation (#204). Empty values are a no-op — the
+  // dual-accept path requires BOTH previous + expiresAt and falls
+  // through to current-key-only when either is missing.
+  adminKeyPrevious: ADMIN_KEY_PREVIOUS,
+  adminKeyRotationExpiresAt: ADMIN_KEY_ROTATION_EXPIRES_AT,
+  requireAdminKey: REQUIRE_ADMIN_KEY,
+  logger
 });
 const adminRateLimiter = rateLimit({
   windowMs: ADMIN_RATE_LIMIT_WINDOW_MS,
