@@ -92,7 +92,7 @@ no `admin.auth.previous_key_used` events for the last hour),
 remove the rotation env vars:
 
 ```bash
-RETIRED_ADMIN_KEY=$ADMIN_KEY_PREVIOUS
+RETIRED_ADMIN_KEY=$ADMIN_KEY_PREVIOUS # local shell variable <!-- claim:skip -->
 unset ADMIN_KEY_PREVIOUS
 unset ADMIN_KEY_ROTATION_EXPIRES_AT
 # ADMIN_KEY stays at the new value
