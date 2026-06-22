@@ -47,9 +47,18 @@
       "package": "js-yaml",
       "severity": "moderate",
       "title": "js-yaml has prototype pollution in merge (<<)",
-      "nodes": ["node_modules/markdownlint-cli2/node_modules/js-yaml"],
+      "nodes": ["node_modules/js-yaml", "node_modules/markdownlint-cli2/node_modules/js-yaml"],
       "scope": "dev",
-      "rationale": "Transitive dev-only via markdownlint-cli2. js-yaml only loads .markdownlint.json/.yaml in dev, never user-supplied YAML at runtime. Production server doesn't import js-yaml. Verified dev-only by `npm audit --omit=dev`. Accepted until markdownlint-cli2 upgrades."
+      "rationale": "Transitive dev-only. js-yaml@4.1.0 reaches us via markdownlint-cli2; js-yaml@3.14.2 reaches us via jest's @jest/core → @jest/transform → babel-plugin-istanbul → @istanbuljs/load-nyc-config chain (newly hoisted to a top-level node_modules/js-yaml path). Both only parse trusted repo-local YAML (.markdownlint.json/.yaml, jest's nyc config) in dev, never user-supplied YAML at runtime. Production server doesn't import js-yaml. Verified dev-only by `npm audit --omit=dev` returning zero advisories for this package. Accepted until both chains upgrade past js-yaml@4.1.1."
+    },
+    {
+      "ghsa": "GHSA-h67p-54hq-rp68",
+      "package": "js-yaml",
+      "severity": "moderate",
+      "title": "JS-YAML: Quadratic-complexity DoS in merge key handling via repeated aliases",
+      "nodes": ["node_modules/js-yaml", "node_modules/markdownlint-cli2/node_modules/js-yaml"],
+      "scope": "dev",
+      "rationale": "Same dev-only chains as GHSA-MH29-5H37-FV8M (markdownlint-cli2's js-yaml@4.1.0 and jest's istanbul nyc-config chain's js-yaml@3.14.2). Only parses trusted repo-local YAML, never attacker-controlled aliases. Verified dev-only by `npm audit --omit=dev` returning zero advisories for this package. Accepted until both chains upgrade past js-yaml@4.1.1."
     },
     {
       "ghsa": "GHSA-38c4-r59v-3vqw",
@@ -59,6 +68,15 @@
       "nodes": ["node_modules/markdown-it"],
       "scope": "dev",
       "rationale": "Transitive dev-only via markdownlint-cli2 → markdownlint → markdown-it. Only parses repo-local trusted markdown during lint. Production server doesn't render markdown. Verified dev-only by `npm audit --omit=dev`. Accepted until markdownlint upgrades."
+    },
+    {
+      "ghsa": "GHSA-6v5v-wf23-fmfq",
+      "package": "markdown-it",
+      "severity": "moderate",
+      "title": "markdown-it: Quadratic complexity DoS in smartquotes rule via replaceAt string operations",
+      "nodes": ["node_modules/markdown-it"],
+      "scope": "dev",
+      "rationale": "Same dev-only chain as GHSA-38C4-R59V-3VQW (markdownlint-cli2 → markdownlint → markdown-it). Only parses repo-local trusted markdown during lint, never attacker-controlled input. Verified dev-only by `npm audit --omit=dev` returning zero advisories for this package. Accepted until markdownlint upgrades."
     }
   ]
 }
