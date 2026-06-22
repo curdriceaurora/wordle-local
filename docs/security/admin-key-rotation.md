@@ -92,23 +92,26 @@ no `admin.auth.previous_key_used` events for the last hour),
 remove the rotation env vars:
 
 ```bash
+RETIRED_ADMIN_KEY=$ADMIN_KEY_PREVIOUS
 unset ADMIN_KEY_PREVIOUS
 unset ADMIN_KEY_ROTATION_EXPIRES_AT
 # ADMIN_KEY stays at the new value
 ```
 
 Rolling-restart again. The dual-accept window is now closed; only
-the new key authenticates.
+the new key authenticates. Keep `RETIRED_ADMIN_KEY` only long enough
+to perform the negative verification below.
 
 ### Verification
 
 After Phase 3:
 
 ```bash
-curl -i -H "x-admin-key: $ADMIN_KEY_PREVIOUS" https://<host>/api/admin/jobs
+curl -i -H "x-admin-key: $RETIRED_ADMIN_KEY" https://<host>/api/admin/jobs
 # expect 401 — old key no longer works
 curl -sf -H "x-admin-key: $ADMIN_KEY" https://<host>/api/admin/jobs
 # expect 200
+unset RETIRED_ADMIN_KEY
 ```
 
 ## Failure modes and recovery
@@ -139,7 +142,8 @@ key is REJECTED. Catch this via local validation:
 
 ```bash
 node -e "const v = process.env.ADMIN_KEY_ROTATION_EXPIRES_AT; \
-  const t = Date.parse(v); \
+  const s = String(v || '').trim(); \
+  const t = /^\d+$/.test(s) ? Number(s) : Date.parse(s); \
   if (!Number.isFinite(t)) throw new Error('invalid'); \
   console.log('OK:', new Date(t).toISOString());"
 ```
