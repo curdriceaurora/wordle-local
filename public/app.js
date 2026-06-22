@@ -1250,13 +1250,21 @@ async function submitGuess() {
       locked = true;
       await upsertDailyResult(false, maxGuesses, maxGuesses);
       if (data.answer) {
-        const suffix =
+        const meaning =
           typeof data.answerMeaning === "string" && data.answerMeaning.trim()
-            ? ` Meaning: ${data.answerMeaning.trim()}`
+            ? data.answerMeaning.trim()
             : "";
-        setMessage(`Out of tries. Word was ${data.answer}.${suffix}`);
+        const baseMessage = window.i18n
+          ? window.i18n.t("play.outOfTriesAnswer", { answer: data.answer })
+          : `Out of tries. Word was ${data.answer}.`;
+        const suffix = meaning
+          ? ` ${window.i18n
+            ? window.i18n.t("play.solvedMeaningPrefix", { meaning })
+            : `Meaning: ${meaning}`}`
+          : "";
+        setMessage(`${baseMessage}${suffix}`);
       } else {
-        setMessage("Out of tries.");
+        setMessage(window.i18n ? window.i18n.t("play.outOfTries") : "Out of tries.");
       }
       return;
     }

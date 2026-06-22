@@ -79,6 +79,8 @@ window.__i18nMessagesEn = {
     "encodedNote": "Encoded links aren't private.",
     "solvedFormat": "Solved in {tries}/{max}!",
     "solvedMeaningPrefix": "Meaning: {meaning}",
+    "outOfTries": "Out of tries.",
+    "outOfTriesAnswer": "Out of tries. Word was {answer}.",
     "guessNotInList": "Not in word list.",
     "guessTooShort": "Guess must be {length} letters."
   },

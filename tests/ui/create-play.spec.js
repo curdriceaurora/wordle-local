@@ -84,6 +84,33 @@ test("reveals a local meaning after final failed guess", async ({ page }) => {
   await expect(page.locator("#message")).toContainText("Meaning:");
 });
 
+test("localizes the final failed guess result in Spanish", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("localePreference", "es"));
+  await page.goto("/", gotoOptions);
+  await waitForLanguages(page);
+  await page.selectOption("#langSelect", "en");
+  await page.fill("#wordInput", "CRANE");
+  await page.click("form#createForm button[type=submit]");
+  await page.waitForSelector("#playPanel:not(.hidden)");
+  await page.click("#board");
+
+  const failedGuesses = ["SLATE", "CRATE", "STONE", "TRAIL", "ABATE", "ADORE"];
+  for (let i = 0; i < failedGuesses.length; i += 1) {
+    await page.keyboard.type(failedGuesses[i]);
+    await page.keyboard.press("Enter");
+    await expect(
+      page.locator(
+        `#board .row:nth-child(${i + 1}) .tile.absent, #board .row:nth-child(${i + 1}) .tile.present, #board .row:nth-child(${i + 1}) .tile.correct`
+      )
+    ).toHaveCount(5);
+  }
+
+  await expect(page.locator("#message")).toContainText(
+    "Se acabaron los intentos. La palabra era CRANE."
+  );
+  await expect(page.locator("#message")).toContainText("Significado:");
+});
+
 test("daily mode requires a player name and updates leaderboard stats", async ({ page }) => {
   const playerName = `Ava ${RUN_TOKEN}`;
   await page.goto(`/?word=yfrqp&lang=en&daily=1&day=${todayLocalDate()}`, gotoOptions);

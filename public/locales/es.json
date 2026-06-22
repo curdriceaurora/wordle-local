@@ -71,6 +71,8 @@
     "encodedNote": "Los enlaces codificados no son privados.",
     "solvedFormat": "¡Resuelto en {tries}/{max}!",
     "solvedMeaningPrefix": "Significado: {meaning}",
+    "outOfTries": "Se acabaron los intentos.",
+    "outOfTriesAnswer": "Se acabaron los intentos. La palabra era {answer}.",
     "guessNotInList": "No está en la lista de palabras.",
     "guessTooShort": "El intento debe tener {length} letras."
   },
