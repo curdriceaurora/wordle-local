@@ -100,7 +100,7 @@ describe("VapidStore constructor", () => {
   test("requires filePath option", () => {
     expect(() => new VapidStore()).toThrow(VapidStoreError);
     expect(() => new VapidStore({})).toThrow(VapidStoreError);
-    expect(() => new VapidStore({ filePath: "/tmp/keys.json" })).not.toThrow();
+    expect(() => new VapidStore({ filePath: path.join(os.tmpdir(), "keys.json") })).not.toThrow();
   });
 
   test("initializes state to null", () => {
