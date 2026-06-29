@@ -76,7 +76,7 @@ describe("buildCsv", () => {
 
   test("handles non-array row as empty line", () => {
     const result = buildCsv([["a"], null, ["b"]]);
-    expect(result).toBe("a" + CRLF + "" + CRLF + "b" + CRLF);
+    expect(result).toBe("a" + CRLF + CRLF + "b" + CRLF);
   });
 
   test("prepends UTF-8 BOM when bom option is true", () => {
